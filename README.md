@@ -429,14 +429,36 @@ docker-compose ps
 | **Redis** | Redis Cloud, AWS ElastiCache |
 | **MinIO** | AWS S3, DigitalOcean Spaces |
 
-**Production Checklist:**
-- [ ] Update all passwords in `.env` files
-- [ ] Enable SSL/TLS for all connections
-- [ ] Set `NODE_ENV=production`
-- [ ] Configure CORS properly
-- [ ] Set up monitoring (Sentry, Datadog)
-- [ ] Enable rate limiting
-- [ ] Configure CDN for static assets
+---
+
+## 🔒 Security & Production Notes
+
+### ⚠️ Before Production Deployment
+
+**1. Rotate All Credentials**
+- `.env` files currently contain development credentials
+- Generate strong passwords: `openssl rand -base64 32`
+- Update: `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`, `JUDGE0_POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`
+
+**2. Update CORS Configuration**
+- Edit `backend/minio-init/init.sh`
+- Replace `localhost` origins with your production domain
+
+**3. Queue Worker Limitation**
+- Current implementation uses `setInterval` in server action
+- ⚠️ **Won't work on serverless platforms** (Vercel, Netlify)
+- ✅ **Works on dedicated servers** (DigitalOcean, AWS EC2)
+- For serverless: Move to separate worker service or use Bull/BullMQ
+
+**4. Production Checklist:**
+- [ ] Credentials rotated (not using dev defaults)
+- [ ] SSL/TLS certificates installed
+- [ ] `NODE_ENV=production` set
+- [ ] CORS configured for production domains
+- [ ] Rate limiting enabled
+- [ ] Error tracking configured (Sentry)
+- [ ] Monitoring set up (Datadog, New Relic)
+- [ ] Database backups automated
 
 ---
 

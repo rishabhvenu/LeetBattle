@@ -169,19 +169,21 @@ redis-cli -h localhost -p 6379 -a redis_dev_password_123 PING
 
 ## Security Notes
 
-### Development Credentials
-- `.env` file is committed with development credentials
-- Safe for local development only
+### Development Setup
+- Create `.env` from `.env.example` template
+- Default credentials provided for local development only
+- **Never commit your actual `.env` file**
 
-### Production Checklist
+### Production Requirements
 ⚠️ Before deploying to production:
-- [ ] Update all passwords in `.env`
+- [ ] Generate strong passwords (use `openssl rand -base64 32`)
+- [ ] Update all credentials in `.env`
 - [ ] Enable authentication for MongoDB
 - [ ] Use TLS/SSL for all connections
 - [ ] Set `NODE_ENV=production`
+- [ ] Update MinIO CORS in `minio-init/init.sh` with your domain
 - [ ] Configure firewall rules
-- [ ] Enable Docker security features
-- [ ] Use secrets management service
+- [ ] Enable Docker security scanning
 
 ## Performance Monitoring
 
