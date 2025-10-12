@@ -21,15 +21,15 @@ export default async function QueuePage() {
     try {
       const reservationData = JSON.parse(existingReservation);
       
-      // Verify the match still exists in Redis before redirecting
-      const matchExists = await redis.exists(RedisKeys.matchKey(reservationData.matchId));
+      // Check if match room still exists in activeMatchesSet
+      const matchActive = await redis.sismember(RedisKeys.activeMatchesSet, reservationData.matchId);
       
-      if (matchExists) {
+      if (matchActive) {
         console.log(`User ${session.user!.id} already has an active match, redirecting to match page`);
         redirect('/match');
       } else {
-        // Match no longer exists, clear the stale reservation
-        console.log(`Match ${reservationData.matchId} no longer exists, clearing stale reservation`);
+        // Match no longer active, clear the stale reservation
+        console.log(`Match ${reservationData.matchId} no longer active, clearing stale reservation`);
         await redis.del(`queue:reservation:${session.user!.id}`);
         // Continue to queue page
       }
