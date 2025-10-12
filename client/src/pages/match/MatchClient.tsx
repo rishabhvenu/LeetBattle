@@ -356,8 +356,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         }
         
         roomRef.current = room;
-      roomRef.current = room;
-      setConnected(true);
+        setConnected(true);
         
         // Setup room event handlers
       room.onMessage('code_update', (payload) => {
@@ -514,7 +513,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         window.removeEventListener('beforeunload', handleBeforeUnload);
       };
     }
-  }, [userId, matchId]);
+  }, [userId]); // Removed matchId from dependencies - it's set inside this effect
 
   useEffect(() => {
     const l = (code.match(/\n/g)?.length || 0) + (code ? 1 : 0);
