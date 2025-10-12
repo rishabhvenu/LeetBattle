@@ -44,9 +44,7 @@ import {
   X,
 } from "lucide-react";
 
-// Global singleton to prevent duplicate connections across React renders
-let globalJoinPromise: Promise<Room> | null = null;
-let globalRoom: Room | null = null;
+// Removed global singletons - now using React refs to prevent leaks
 
 const languages = [
   { value: "javascript", label: "JavaScript" },
@@ -62,6 +60,10 @@ const difficultyConfig: Record<string, { color: string; bg: string; text: string
 };
 
 export default function MatchClient({ userId, username, userAvatar }: { userId: string; username: string; userAvatar?: string | null }) {
+  // Use refs to persist state across renders without leaking across component instances
+  const roomRef = useRef<Room | null>(null);
+  const joinPromiseRef = useRef<Promise<Room> | null>(null);
+  
   const [connected, setConnected] = useState(false);
   const [showMatchupAnimation, setShowMatchupAnimation] = useState(false);
   const [lines, setLines] = useState(0);
@@ -284,15 +286,14 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   }, [matchId, userId, language]);
 
   useEffect(() => {
-    // Use global singleton to prevent duplicate joins from React Strict Mode
-    if (globalRoom) {
+    // Use ref-based singleton to prevent duplicate joins from React Strict Mode
+    if (roomRef.current) {
       console.log('Using existing room connection');
-      roomRef.current = globalRoom;
       setConnected(true);
       // Extract matchId from room metadata if not set
-      if (globalRoom.sessionId) {
+      if (roomRef.current.sessionId) {
         // Try to get matchId from the room's state or metadata
-        const roomMatchId = (globalRoom as unknown as { matchId?: string }).matchId;
+        const roomMatchId = (roomRef.current as unknown as { matchId?: string }).matchId;
         if (roomMatchId && !matchId) {
           setMatchId(roomMatchId);
         }
@@ -301,9 +302,9 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
       return;
     }
     
-    if (globalJoinPromise) {
+    if (joinPromiseRef.current) {
       console.log('Join already in progress, waiting...');
-      globalJoinPromise.then(room => {
+      joinPromiseRef.current.then(room => {
         roomRef.current = room;
         setConnected(true);
         // Extract matchId if not set
@@ -323,7 +324,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         console.log('Reservation result:', res);
         
         if (!res.success || !res.reservation) { 
-          globalJoinPromise = null;
+          joinPromiseRef.current = null;
           setConnected(false); 
           toast.error('Reservation expired.'); 
           window.location.href = '/queue'; 
@@ -350,11 +351,11 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId })
           });
-          globalJoinPromise = null;
+          joinPromiseRef.current = null;
           throw joinError;
         }
         
-        globalRoom = room;
+        roomRef.current = room;
       roomRef.current = room;
       setConnected(true);
         
@@ -481,8 +482,8 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         return room;
       } catch (error) {
         console.error('Error in doJoin:', error);
-        globalJoinPromise = null;
-        globalRoom = null;
+        joinPromiseRef.current = null;
+        roomRef.current = null;
         setConnected(false); 
         toast.error(`Failed to join match: ${error instanceof Error ? error.message : 'Unknown error'}`); 
         window.location.href = '/queue'; 
@@ -490,23 +491,23 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
       }
     };
     
-    // Start the join process with global promise
-    globalJoinPromise = doJoin();
-    globalJoinPromise.catch(() => {});
+    // Start the join process with ref-based promise
+    joinPromiseRef.current = doJoin();
+    joinPromiseRef.current.catch(() => {});
     
     // Cleanup: leave room when window closes
     if (typeof window !== 'undefined') {
       const handleBeforeUnload = () => {
-        if (globalRoom) {
+        if (roomRef.current) {
           try {
-            globalRoom.leave();
+            roomRef.current.leave();
             console.log('Left room on page unload');
           } catch {
             // Ignore errors on leave
           }
         }
-        globalRoom = null;
-        globalJoinPromise = null;
+        roomRef.current = null;
+        joinPromiseRef.current = null;
       };
       window.addEventListener('beforeunload', handleBeforeUnload);
       return () => {

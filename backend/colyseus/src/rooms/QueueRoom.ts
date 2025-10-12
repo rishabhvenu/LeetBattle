@@ -15,17 +15,13 @@ interface QueuedPlayer {
 export class QueueRoom extends Room {
   maxClients = 1000;
   private redis = getRedis();
-  private queuedPlayers: Map<string, QueuedPlayer> = new Map();
-  private matchmakingInterval: any;
-  private isMatching = false; // Prevent concurrent matching
+  // Removed: in-memory Map - now using Redis as single source of truth
+  // Queue is managed via Redis ZSET (lib/queue.ts)
+  // Background worker (workers/matchmaker.ts) handles all matching
 
   async onCreate(options: any) {
-    console.log('QueueRoom created - ready for players');
-    
-    // Run matchmaking every 500ms for faster response
-    this.matchmakingInterval = this.clock.setInterval(() => {
-      this.tryMatchPlayers();
-    }, 500);
+    console.log('QueueRoom created - players managed in Redis, matched by background worker');
+    // Removed: local matchmaking interval - worker handles this
   }
 
   async onJoin(client: Client, options: { userId: string; rating: number }) {
@@ -50,40 +46,31 @@ export class QueueRoom extends Room {
       return;
     }
     
-    console.log(`Player ${userId} added to queue`);
+    console.log(`Player ${userId} added to Redis queue with rating ${rating}`);
     
-    // Add player to queue
-    this.queuedPlayers.set(userId, {
-      userId,
-      sessionId: client.sessionId,
-      rating: rating || 1200,
-      joinedAt: Date.now(),
-    });
+    // Add player to Redis queue (same as HTTP endpoint)
+    // This ensures background worker will match them
+    await this.redis.zadd(RedisKeys.eloQueue, rating || 1200, userId);
     
-    // Immediately try to match
-    await this.tryMatchPlayers();
+    // Send confirmation to client
+    client.send('queued', { position: await this.redis.zcard(RedisKeys.eloQueue) });
   }
 
   async onLeave(client: Client, consented: boolean) {
-    // Remove player from queue
-    const player = Array.from(this.queuedPlayers.values()).find(p => p.sessionId === client.sessionId);
-    if (player) {
-      console.log(`Player ${player.userId} left queue`);
-      this.queuedPlayers.delete(player.userId);
-    }
+    // Note: We don't have userId from client object directly
+    // Client should call /queue/dequeue HTTP endpoint when leaving
+    // Or store sessionId->userId mapping when they join
+    console.log(`Client ${client.sessionId} left queue room`);
   }
 
   async onDispose() {
-    if (this.matchmakingInterval) {
-      this.matchmakingInterval.clear();
-    }
+    console.log('QueueRoom disposed');
   }
 
-  private async tryMatchPlayers() {
-    // Prevent concurrent matching operations
-    if (this.isMatching || this.queuedPlayers.size < 2) {
-      return;
-    }
+  // DEPRECATED: This entire method is no longer used
+  // Background worker (workers/matchmaker.ts) handles all matching from Redis
+  private async tryMatchPlayers_DEPRECATED() {
+    return; // No-op
 
     this.isMatching = true;
 
@@ -145,7 +132,11 @@ export class QueueRoom extends Room {
     }
   }
 
-  private async createMatch(player1: QueuedPlayer, player2: QueuedPlayer) {
+  // Removed: createMatch() - background worker creates matches
+  
+  private async createMatch_DEPRECATED(player1: QueuedPlayer, player2: QueuedPlayer) {
+    // This method is no longer used - kept for reference
+    // Background worker (workers/matchmaker.ts) now handles match creation
     const matchId = this.generateMatchId();
     
     // Select problem based on ratings
@@ -231,12 +222,13 @@ export class QueueRoom extends Room {
   }
 
   private async selectRandomProblem(difficulty: string) {
+    const client = new MongoClient(MONGODB_URI, {
+      monitorCommands: false,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    
     try {
-      const client = new MongoClient(MONGODB_URI, {
-        monitorCommands: false,
-        serverSelectionTimeoutMS: 5000,
-        socketTimeoutMS: 45000,
-      });
       await client.connect();
       
       const db = client.db(DB_NAME);
@@ -248,8 +240,6 @@ export class QueueRoom extends Room {
           { $sample: { size: 1 } }
         ])
         .toArray();
-
-      await client.close();
 
       if (problems.length === 0) {
         return null;
@@ -271,6 +261,9 @@ export class QueueRoom extends Room {
     } catch (error) {
       console.error('Error selecting problem:', error);
       return null;
+    } finally {
+      // Always close connection to prevent leaks
+      await client.close();
     }
   }
 
@@ -280,8 +273,9 @@ export class QueueRoom extends Room {
   }
 
   private async getPlayersInfo(playerIds: string[]): Promise<Record<string, { username: string; avatar: string | null }>> {
+    const client = new MongoClient(MONGODB_URI);
+    
     try {
-      const client = new MongoClient(MONGODB_URI);
       await client.connect();
       
       const db = client.db(DB_NAME);
@@ -294,8 +288,6 @@ export class QueueRoom extends Room {
         .find({ _id: { $in: objectIds } })
         .project({ username: 1, 'profile.avatar': 1 })
         .toArray();
-
-      await client.close();
 
       const result: Record<string, { username: string; avatar: string | null }> = {};
       
@@ -316,6 +308,9 @@ export class QueueRoom extends Room {
     } catch (error) {
       console.error('Error fetching player info:', error);
       return {};
+    } finally {
+      // Always close connection to prevent leaks
+      await client.close();
     }
   }
 }
