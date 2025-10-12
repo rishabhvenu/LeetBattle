@@ -1,0 +1,121 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: codeclashers-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    container_name: codeclashers-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: codeclashers-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./minio-init/init.sh:/init.sh
+    entrypoint: /bin/sh
+    command: /init.sh
+    restart: "no"
+
+  redis:
+    image: redis:7-alpine
+    container_name: codeclashers-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-devpassword}"]
+    restart: unless-stopped
+
+  judge0-server:
+    image: judge0/judge0:latest
+    container_name: codeclashers-judge0
+    depends_on:
+      - judge0-db
+      - redis
+    environment:
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-devpassword}
+      POSTGRES_HOST: codeclashers-judge0-db
+      POSTGRES_USER: ${JUDGE0_POSTGRES_USER:-judge0}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:-judge0_secure_pass_456}
+      POSTGRES_DB: ${JUDGE0_POSTGRES_DB:-judge0}
+    ports:
+      - "2358:2358"
+    restart: unless-stopped
+
+  judge0-worker:
+    image: judge0/judge0:latest
+    container_name: codeclashers-judge0-worker
+    command: ["./scripts/workers"]
+    depends_on:
+      - judge0-db
+      - redis
+    environment:
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-devpassword}
+      POSTGRES_HOST: codeclashers-judge0-db
+      POSTGRES_USER: ${JUDGE0_POSTGRES_USER:-judge0}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:-judge0_secure_pass_456}
+      POSTGRES_DB: ${JUDGE0_POSTGRES_DB:-judge0}
+    privileged: true
+    restart: unless-stopped
+
+  colyseus:
+    build:
+      context: ./colyseus
+      dockerfile: Dockerfile
+    container_name: codeclashers-colyseus
+    environment:
+      PORT: 2567
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-devpassword}
+      MONGODB_URI: mongodb://codeclashers-mongodb:27017
+      JUDGE0_URL: http://codeclashers-judge0:2358
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      - redis
+      - mongodb
+    ports:
+      - "2567:2567"
+    restart: unless-stopped
+
+  judge0-db:
+    image: postgres:15-alpine
+    container_name: codeclashers-judge0-db
+    environment:
+      POSTGRES_DB: ${JUDGE0_POSTGRES_DB:-judge0}
+      POSTGRES_USER: ${JUDGE0_POSTGRES_USER:-judge0}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:-judge0_secure_pass_456}
+    # no volumes => stateless (ephemeral)
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+  minio_data:
+  redis_data:

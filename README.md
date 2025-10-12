@@ -1,36 +1,116 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CodeClashers
+
+A competitive coding platform built with Next.js and MongoDB.
+
+## Project Structure
+
+```
+CodeClashers/
+├── client/                 # Next.js frontend application
+│   ├── src/
+│   │   ├── app/           # App Router pages and API routes
+│   │   ├── components/    # React components
+│   │   ├── lib/          # Utility functions and configurations
+│   │   └── types/        # TypeScript type definitions
+│   └── package.json
+├── backend/               # MongoDB setup and configuration
+│   ├── Dockerfile        # MongoDB container configuration
+│   ├── docker-compose.yml # Docker Compose for MongoDB
+│   ├── init-mongo.js     # MongoDB initialization script
+│   └── package.json      # Backend dependencies
+└── README.md
+```
+
+## Features
+
+- **Session Management**: Server-side session handling with MongoDB storage
+- **Turbopack**: Fast development builds with Turbopack instead of Webpack
+- **Server Components**: Next.js server components for session management
+- **MongoDB Integration**: Persistent session storage in MongoDB
+- **Docker Setup**: Easy MongoDB setup with Docker
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Node.js 18+ 
+- Docker and Docker Compose
+- npm or yarn
+
+### Setup
+
+1. **Start MongoDB with Docker:**
+   ```bash
+   cd backend
+   npm run docker:up
+   ```
+
+2. **Install client dependencies:**
+   ```bash
+   cd client
+   npm install
+   ```
+
+3. **Set up environment variables:**
+   ```bash
+   # Copy the example environment file
+   cp .env.local.example .env.local
+   
+   # Edit .env.local with your configuration
+   ```
+
+4. **Start the development server:**
+   ```bash
+   npm run dev
+   ```
+
+The application will be available at `http://localhost:3000`.
+
+### Environment Variables
+
+Create a `.env.local` file in the client directory:
+
+```env
+# MongoDB Configuration
+MONGODB_URI=mongodb://codeclashers_user:codeclashers_pass@localhost:27017/codeclashers
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=your-nextauth-secret-key-here
+
+# Backend API
+NEXT_PUBLIC_API_URL=http://localhost:3001
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Session Management
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The application uses Next.js server components and API routes for session management:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **API Routes**: `/api/session` handles login, logout, and session validation
+- **Server Components**: `UserProfile`, `LoginForm`, `ProtectedRoute` for UI
+- **MongoDB Storage**: Sessions are stored in MongoDB with automatic expiration
 
-## Learn More
+## Docker Commands
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+# Start MongoDB
+npm run docker:up
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# Stop MongoDB
+npm run docker:down
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# View MongoDB logs
+npm run docker:logs
 
-## Deploy on Vercel
+# Restart MongoDB
+npm run docker:restart
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Development
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **Frontend**: Next.js with Turbopack for fast development
+- **Backend**: MongoDB with Docker for easy setup
+- **Sessions**: Server-side session management with MongoDB storage
+- **TypeScript**: Full TypeScript support throughout the application
+
+## License
+
+MIT
