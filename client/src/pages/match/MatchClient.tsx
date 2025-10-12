@@ -154,6 +154,11 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
       return;
     }
     
+    if (!connected) {
+      console.log('Not connected yet, waiting for room join...');
+      return;
+    }
+    
     console.log('Loading match data for matchId:', matchId);
     
     const loadMatchData = async () => {
@@ -165,6 +170,16 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         
         if (!matchDataResult.success) {
           console.error('Failed to load match data:', matchDataResult.error);
+          
+          // If match key doesn't exist yet, retry after a short delay
+          if (matchDataResult.error === 'match_not_found' && roomRef.current) {
+            console.log('Match data not ready yet, retrying in 500ms...');
+            setTimeout(() => {
+              loadMatchData();
+            }, 500);
+            return;
+          }
+          
           // Clear potentially stale reservation and redirect to queue
           await fetch(`${base}/queue/clear`, {
             method: 'POST',
@@ -283,7 +298,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
     };
     
     loadMatchData();
-  }, [matchId, userId, language]);
+  }, [matchId, userId, language, connected]); // Added connected to wait for room join
 
   useEffect(() => {
     // Use ref-based singleton to prevent duplicate joins from React Strict Mode
