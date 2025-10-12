@@ -17,7 +17,7 @@ function loadProblems(): Record<string, any> {
   }
   
   try {
-    // Load problems.json from backend/colyseus directory (copied during build)
+    // Load problems.json from dist directory (copied during Docker build)
     const file = path.join(__dirname, '..', 'problems.json');
     const raw = fs.readFileSync(file, 'utf-8');
     problemCache = JSON.parse(raw);
