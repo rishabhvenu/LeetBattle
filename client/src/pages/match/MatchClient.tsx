@@ -135,7 +135,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   const [totalTests, setTotalTests] = useState(0);
   const [showResultAnimation, setShowResultAnimation] = useState(false);
   const [matchResult, setMatchResult] = useState<{ winner: boolean; draw: boolean } | null>(null);
-  const roomRef = useRef<Room | null>(null);
+  // roomRef defined at top of component (line 64)
   const matchupAnimationShownRef = useRef(false);
 
   // Animation handlers
