@@ -1,14 +1,18 @@
-# CodeClashers Backend
+# LeetBattle Backend
 
-Backend services for CodeClashers competitive coding platform.
+Backend infrastructure for LeetBattle competitive coding platform.
 
-## Services
+## Architecture Overview
 
-- **MongoDB**: Main database for user data and matches
-- **MinIO**: S3-compatible object storage
-- **Redis**: Caching and pub/sub messaging
-- **Judge0**: Code execution engine
-- **Colyseus**: Real-time game server
+The backend consists of multiple microservices orchestrated via Docker Compose:
+
+### Core Services
+
+- **Colyseus** (Port 2567) - Real-time game server for matches
+- **MongoDB** (Port 27017) - User accounts, sessions, match history
+- **Redis** (Port 6379) - Matchmaking queue, caching, pub/sub events
+- **Judge0** (Port 2358) - Code execution in 89+ languages
+- **MinIO** (Ports 9000-9001) - S3-compatible object storage for avatars
 
 ## Getting Started
 
@@ -35,34 +39,198 @@ docker-compose logs -f
 docker-compose down
 ```
 
-### 3. Access Services
+### 3. Verify Services Are Running
 
-- **Colyseus Server**: http://localhost:2567
-- **MinIO Console**: http://localhost:9001
-- **MongoDB**: mongodb://localhost:27017
-- **Redis**: localhost:6379
-- **Judge0 API**: http://localhost:2358
+```bash
+docker-compose ps
+```
+
+All services should show status "Up" or "healthy".
+
+### 4. Access Services
+
+| Service | URL/Connection | Credentials |
+|---------|---------------|-------------|
+| Colyseus Server | ws://localhost:2567 | - |
+| MinIO Console | http://localhost:9001 | minioadmin / minioadmin123 |
+| MongoDB | mongodb://localhost:27017/codeclashers | No auth (dev) |
+| Redis | localhost:6379 | Password: redis_dev_password_123 |
+| Judge0 API | http://localhost:2358 | - |
+
+## Colyseus Game Server
+
+The Colyseus server handles real-time match logic:
+
+```
+colyseus/
+├── src/
+│   ├── index.ts              # Server entry point
+│   ├── rooms/
+│   │   ├── MatchRoom.ts      # Competitive match room
+│   │   └── QueueRoom.ts      # Matchmaking queue room
+│   ├── lib/
+│   │   ├── codeRunner.ts     # Judge0 integration
+│   │   ├── judge0.ts         # Judge0 API client
+│   │   ├── testExecutor.ts   # Test case execution
+│   │   ├── problemData.ts    # Problem management
+│   │   ├── queue.ts          # Queue operations
+│   │   └── redis.ts          # Redis client
+│   └── workers/
+│       └── matchmaker.ts     # Background matchmaking
+├── Dockerfile
+└── package.json
+```
+
+### Colyseus Development
+
+```bash
+cd colyseus
+npm install
+npm run dev          # Watch mode with auto-reload
+npm run build        # Compile TypeScript
+npm start            # Production mode
+```
+
+## Service Details
+
+### Judge0 Configuration
+
+Judge0 consists of two containers:
+- **judge0-server**: REST API for code submission
+- **judge0-worker**: Executes code in isolated containers
+- **judge0-db**: PostgreSQL for Judge0 metadata
+
+Supported languages: 89+ (JavaScript, Python, C++, Java, Go, Rust, etc.)
+
+### MinIO Setup
+
+MinIO provides S3-compatible object storage:
+- Bucket `codeclashers-avatars` created automatically
+- Public read access for avatars
+- CORS enabled for browser uploads
+
+Access console at http://localhost:9001
+
+### Redis Usage
+
+Redis serves multiple purposes:
+- **Matchmaking queue**: Sorted set by ELO rating
+- **Match state cache**: Active match data
+- **User reservations**: Prevent duplicate queueing
+- **Pub/sub**: Match event notifications
+
+### MongoDB Collections
+
+- `users` - User accounts and profiles
+- `sessions` - Active login sessions (TTL index)
+- `matches` - Match history and results
+- `submissions` - Code submissions and test results
+
+## Troubleshooting
+
+### Judge0 Issues
+
+```bash
+# Check Judge0 logs
+docker-compose logs judge0-server
+docker-compose logs judge0-worker
+
+# Restart Judge0
+docker-compose restart judge0-server judge0-worker judge0-db
+```
+
+### MinIO Bucket Issues
+
+```bash
+# Re-run bucket initialization
+docker-compose restart minio-init
+docker-compose logs minio-init
+```
+
+### Colyseus Connection Issues
+
+```bash
+# Check Colyseus logs
+docker-compose logs colyseus
+
+# Restart Colyseus
+docker-compose restart colyseus
+```
+
+### Redis Connection Issues
+
+```bash
+# Verify Redis password matches .env
+docker-compose logs redis
+
+# Test Redis connection
+redis-cli -h localhost -p 6379 -a redis_dev_password_123 PING
+```
 
 ## Security Notes
 
-### Development vs Production:
-- `.env` file is committed with **development credentials only**
-- For production: Update all passwords before deploying
-- Never commit production credentials to the repository
+### Development Credentials
+- `.env` file is committed with development credentials
+- Safe for local development only
 
-### ❌ NEVER Commit:
-- Production `.env` files with real passwords
-- Database dumps with real user data
-- Private keys or certificates
-- API keys for external services
+### Production Checklist
+⚠️ Before deploying to production:
+- [ ] Update all passwords in `.env`
+- [ ] Enable authentication for MongoDB
+- [ ] Use TLS/SSL for all connections
+- [ ] Set `NODE_ENV=production`
+- [ ] Configure firewall rules
+- [ ] Enable Docker security features
+- [ ] Use secrets management service
 
-## Development
+## Performance Monitoring
 
-For development, you can use weaker passwords in your local `.env` file. 
+### Check Service Health
 
-For production, ensure:
-1. All passwords are strong (20+ random characters)
-2. Change default usernames if possible
-3. Use Docker secrets or environment injection
-4. Enable network security (firewall rules, VPC)
-5. Regular security updates
+```bash
+# View all service status
+docker-compose ps
+
+# Monitor resource usage
+docker stats
+
+# Check specific service logs
+docker-compose logs -f [service-name]
+```
+
+### Database Monitoring
+
+```bash
+# MongoDB connection count
+docker exec codeclashers-mongodb mongosh --eval "db.serverStatus().connections"
+
+# Redis memory usage
+docker exec codeclashers-redis redis-cli -a redis_dev_password_123 INFO memory
+```
+
+## API Documentation
+
+### Colyseus Endpoints
+
+- `ws://localhost:2567` - WebSocket connection
+- Room types: `match`, `queue`
+
+### Judge0 API
+
+- `POST /submissions` - Submit code for execution
+- `GET /submissions/:token` - Get submission results
+- `GET /languages` - List supported languages
+
+Full documentation: https://ce.judge0.com/
+
+## Contributing
+
+When modifying backend services:
+1. Update `docker-compose.yml` if adding/changing services
+2. Document environment variables in `.env.example`
+3. Update this README with new features
+4. Test all services with `docker-compose up`
+
+## License
+
+MIT
