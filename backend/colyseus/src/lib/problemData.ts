@@ -52,14 +52,23 @@ export async function getProblemWithTestCases(problemId: string) {
       return null;
     }
 
+    // Return ALL problem fields (testCases are server-only but we need them for execution)
     return {
       _id: problem._id.toString(),
       title: problem.title,
+      description: problem.description,
       difficulty: problem.difficulty,
       signature: problem.signature,
       testCases: problem.testCases || [],
+      testCasesCount: (problem.testCases || []).length,
       solutions: problem.solutions || {},
-      timeComplexity: problem.timeComplexity
+      timeComplexity: problem.timeComplexity,
+      examples: problem.examples || [],
+      constraints: problem.constraints || [],
+      topics: problem.topics || [],
+      hints: problem.hints || [],
+      starterCode: problem.starterCode || null,
+      followUp: problem.followUp || null,
     };
   } catch (error) {
     console.error('Error fetching problem:', error);

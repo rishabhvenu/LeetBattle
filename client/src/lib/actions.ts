@@ -586,10 +586,13 @@ export async function getMatchData(matchId: string, userId: string) {
       rating: opponentStats.rating || 1200,
     };
     
+    // Remove testCases from client-facing problem data (security)
+    const { testCases, solutions, ...clientProblem } = problem;
+    
     return {
       success: true,
       problem: {
-        ...problem,
+        ...clientProblem,
         starterCode,
       },
       opponent: opponentData,
