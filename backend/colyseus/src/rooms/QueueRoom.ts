@@ -160,6 +160,9 @@ export class QueueRoom extends Room {
     
     console.log(`Creating match ${matchId} with problem: ${problem.title}`);
     
+    // Fetch player info from MongoDB (username, avatar)
+    const playerInfo = await this.getPlayersInfo([player1.userId, player2.userId]);
+    
     // Create match room
     const room = await matchMaker.createRoom('match', { 
       matchId, 
@@ -178,8 +181,16 @@ export class QueueRoom extends Room {
         startedAt: new Date().toISOString(),
         players: [player1.userId, player2.userId], // Array of player IDs
         playerData: {
-          [player1.userId]: { rating: player1.rating },
-          [player2.userId]: { rating: player2.rating },
+          [player1.userId]: { 
+            rating: player1.rating,
+            username: playerInfo[player1.userId]?.username || 'Player 1',
+            avatar: playerInfo[player1.userId]?.avatar || null,
+          },
+          [player2.userId]: { 
+            rating: player2.rating,
+            username: playerInfo[player2.userId]?.username || 'Player 2',
+            avatar: playerInfo[player2.userId]?.avatar || null,
+          },
         },
         playersCode: {},
         linesWritten: {},
@@ -249,6 +260,7 @@ export class QueueRoom extends Room {
         examples: problem.examples || [],
         constraints: problem.constraints || [],
         signature: problem.signature || null,
+        testCasesCount: (problem.testCases || []).length,
       };
     } catch (error) {
       console.error('Error selecting problem:', error);
@@ -258,6 +270,46 @@ export class QueueRoom extends Room {
 
   private generateMatchId(): string {
     return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  }
+
+  private async getPlayersInfo(playerIds: string[]): Promise<Record<string, { username: string; avatar: string | null }>> {
+    try {
+      const client = new MongoClient(MONGODB_URI);
+      await client.connect();
+      
+      const db = client.db(DB_NAME);
+      const usersCollection = db.collection('users');
+
+      const { ObjectId } = await import('mongodb');
+      const objectIds = playerIds.map(id => new ObjectId(id));
+      
+      const users = await usersCollection
+        .find({ _id: { $in: objectIds } })
+        .project({ username: 1, 'profile.avatar': 1 })
+        .toArray();
+
+      await client.close();
+
+      const result: Record<string, { username: string; avatar: string | null }> = {};
+      
+      for (const user of users) {
+        const userId = user._id.toString();
+        const profile = (user as any).profile;
+        const avatar = profile?.avatar || null;
+        
+        result[userId] = {
+          username: user.username as string || 'Player',
+          avatar: avatar,
+        };
+        
+        console.log(`Fetched player ${userId}: username=${result[userId].username}, avatar=${avatar}`);
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Error fetching player info:', error);
+      return {};
+    }
   }
 }
 

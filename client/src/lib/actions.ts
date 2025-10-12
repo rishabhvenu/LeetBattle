@@ -48,12 +48,6 @@ export interface User {
     draws: number;
     rating: number;
   };
-  preferences: {
-    language: string;
-    theme: string;
-    notifications: boolean;
-  };
-  isActive: boolean;
   lastLogin: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -134,12 +128,6 @@ export async function registerUser(formData: FormData) {
         draws: 0,
         rating: 1200,
       },
-      preferences: {
-        language: 'javascript',
-        theme: 'dark',
-        notifications: true,
-      },
-      isActive: true,
       lastLogin: new Date(),
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -303,6 +291,9 @@ async function createSession(userId: string, email: string, username: string) {
     // Get full user data including profile
     const user = await users.findOne({ _id: new ObjectId(userId) });
     
+    // Check both possible locations for avatar (schema migration compatibility)
+    const userAvatar = user?.profile?.avatar || user?.avatarUrl || null;
+    
     // Create session data
     const sessionData = {
       _id: sessionId,
@@ -311,7 +302,7 @@ async function createSession(userId: string, email: string, username: string) {
         id: userId,
         email,
         username,
-        avatar: user?.profile?.avatar || null,
+        avatar: userAvatar,
         firstName: user?.profile?.firstName || '',
         lastName: user?.profile?.lastName || ''
       },
@@ -533,15 +524,67 @@ export async function getMatchData(matchId: string, userId: string) {
     // Get opponent stats
     const opponentStats = await getUserStatsCached(opponentUserId);
     
-    // Get opponent user info for name
-    await connectDB();
-    const client = await getMongoClient();
-    const db = client.db(DB_NAME);
-    const users = db.collection('users');
-    const opponentUser: any = await users.findOne({ _id: new ObjectId(opponentUserId) });
+    // Get current user stats
+    const userStats = await getUserStatsCached(userId);
+    
+    // Get opponent info from Redis playerData
+    const opponentPlayerData = matchData.playerData?.[opponentUserId];
+    
+    let opponentAvatar = null;
+    let opponentUsername = 'Opponent';
+    let opponentName = 'Opponent';
+    
+    // Check Redis first
+    if (opponentPlayerData) {
+      opponentAvatar = opponentPlayerData.avatar || null;
+      opponentUsername = opponentPlayerData.username || 'Opponent';
+    }
+    
+    // If not in Redis, fetch from MongoDB
+    if (!opponentPlayerData) {
+      await connectDB();
+      const client = await getMongoClient();
+      const db = client.db(DB_NAME);
+      const users = db.collection('users');
+      const opponentUser: any = await users.findOne(
+        { _id: new ObjectId(opponentUserId) },
+        { projection: { username: 1, 'profile.firstName': 1, 'profile.lastName': 1, 'profile.avatar': 1 } }
+      );
+      
+      if (opponentUser) {
+        opponentAvatar = opponentUser?.profile?.avatar || null;
+        opponentUsername = opponentUser?.username || 'Opponent';
+        opponentName = `${opponentUser?.profile?.firstName || ''} ${opponentUser?.profile?.lastName || ''}`.trim() || opponentUsername;
+      }
+    } else {
+      // Get full name from MongoDB
+      await connectDB();
+      const client = await getMongoClient();
+      const db = client.db(DB_NAME);
+      const users = db.collection('users');
+      const opponentUser: any = await users.findOne(
+        { _id: new ObjectId(opponentUserId) },
+        { projection: { 'profile.firstName': 1, 'profile.lastName': 1 } }
+      );
+      
+      if (opponentUser) {
+        opponentName = `${opponentUser?.profile?.firstName || ''} ${opponentUser?.profile?.lastName || ''}`.trim() || opponentUsername;
+      }
+    }
     
     // Generate starter code if not present
     const starterCode = problem.starterCode || generateStarterCode(problem.signature);
+    
+    const opponentData = {
+      userId: opponentUserId,
+      username: opponentUsername,
+      name: opponentName,
+      avatar: opponentAvatar,
+      globalRank: opponentStats.globalRank || 1234,
+      gamesWon: opponentStats.wins || 0,
+      winRate: opponentStats.totalMatches > 0 ? Math.round((opponentStats.wins / opponentStats.totalMatches) * 100) : 0,
+      rating: opponentStats.rating || 1200,
+    };
     
     return {
       success: true,
@@ -549,15 +592,12 @@ export async function getMatchData(matchId: string, userId: string) {
         ...problem,
         starterCode,
       },
-      opponent: {
-        userId: opponentUserId,
-        username: opponentUser?.username || 'Opponent',
-        name: `${opponentUser?.profile?.firstName || ''} ${opponentUser?.profile?.lastName || ''}`.trim() || opponentUser?.username || 'Opponent',
-        avatar: opponentUser?.profile?.avatar || null,
-        globalRank: opponentStats.globalRank || 1234,
-        gamesWon: opponentStats.wins || 0,
-        winRate: opponentStats.totalMatches > 0 ? Math.round((opponentStats.wins / opponentStats.totalMatches) * 100) : 0,
-        rating: opponentStats.rating || 1200,
+      opponent: opponentData,
+      userStats: {
+        rating: userStats.rating || 1200,
+        totalMatches: userStats.totalMatches || 0,
+        wins: userStats.wins || 0,
+        winRate: userStats.totalMatches > 0 ? Math.round((userStats.wins / userStats.totalMatches) * 100) : 0,
       },
     };
   } catch (error) {
@@ -1704,4 +1744,116 @@ export async function updateProblem(problemId: string, updates: {
     console.error('Error updating problem:', error);
     return { success: false, error: error.message };
   }
+}
+
+/**
+ * Reset all player data - Delete all matches and submissions, reset user stats, clear Redis data
+ * Note: This does NOT delete user accounts or login information
+ */
+export async function resetAllPlayerData() {
+  // Rate limiting for admin actions
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(adminLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    
+    const db = client.db(DB_NAME);
+    const matchesCollection = db.collection('matches');
+    const submissionsCollection = db.collection('submissions');
+    const usersCollection = db.collection('users');
+
+    // Delete all matches
+    const matchesResult = await matchesCollection.deleteMany({});
+    
+    // Delete all submissions
+    const submissionsResult = await submissionsCollection.deleteMany({});
+    
+    // Reset all user stats (but keep login info)
+    const usersResult = await usersCollection.updateMany(
+      {},
+      { 
+        $set: { 
+          stats: {
+            totalMatches: 0,
+            wins: 0,
+            losses: 0,
+            draws: 0,
+            rating: 1200,
+          },
+          'profile.avatar': null,
+          'profile.bio': null,
+          matchIds: [],
+          updatedAt: new Date(),
+        }
+      }
+    );
+    
+    // Also clear avatars from all sessions
+    const sessionsCollection = db.collection('sessions');
+    await sessionsCollection.updateMany(
+      {},
+      { $set: { 'user.avatar': null } }
+    );
+
+    // Clear all Redis data related to matches, queues, and user data
+    const redis = getRedis();
+    let redisKeysDeleted = 0;
+
+    try {
+      // Clear specific known keys
+      await redis.del(RedisKeys.activeMatchesSet);
+      await redis.del('queue:elo'); // ELO queue from backend
+      await redis.del('user:conn'); // User connection map from backend
+      redisKeysDeleted += 3;
+
+      // Scan and delete all user stats keys (user:*:stats)
+      const userStatsKeys = await scanRedisKeys(redis, 'user:*:stats');
+      if (userStatsKeys.length > 0) {
+        await redis.del(...userStatsKeys);
+        redisKeysDeleted += userStatsKeys.length;
+      }
+
+      // Scan and delete all match keys (match:*)
+      const matchKeys = await scanRedisKeys(redis, 'match:*');
+      if (matchKeys.length > 0) {
+        await redis.del(...matchKeys);
+        redisKeysDeleted += matchKeys.length;
+      }
+
+      console.log(`Cleared ${redisKeysDeleted} Redis keys`);
+    } catch (redisError: any) {
+      console.error('Error clearing Redis data:', redisError);
+      // Continue even if Redis clearing fails - at least DB is cleared
+    }
+
+    return { 
+      success: true, 
+      message: `Reset complete: ${matchesResult.deletedCount} matches, ${submissionsResult.deletedCount} submissions deleted. ${usersResult.modifiedCount} users reset. ${redisKeysDeleted} Redis keys cleared.`
+    };
+  } catch (error: any) {
+    console.error('Error resetting player data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Helper function to scan Redis for keys matching a pattern
+ */
+async function scanRedisKeys(redis: any, pattern: string): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor = '0';
+  
+  do {
+    const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+    cursor = result[0];
+    keys.push(...result[1]);
+  } while (cursor !== '0');
+  
+  return keys;
 }

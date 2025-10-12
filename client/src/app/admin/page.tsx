@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'react-toastify';
-import { generateProblem, verifyProblemSolutions, getUnverifiedProblems, getProblemById, updateProblem } from '@/lib/actions';
+import { generateProblem, verifyProblemSolutions, getUnverifiedProblems, getProblemById, updateProblem, resetAllPlayerData } from '@/lib/actions';
 
 type ProblemExample = {
   input: string;
@@ -78,6 +78,8 @@ export default function AdminPage() {
   const [editingProblem, setEditingProblem] = useState<UnverifiedProblem | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
 
   // Load unverified problems on component mount
   useEffect(() => {
@@ -261,6 +263,24 @@ export default function AdminPage() {
       toast.error(`Save error: ${error.message}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleResetAllData = async () => {
+    setIsResetting(true);
+    try {
+      const result = await resetAllPlayerData();
+      
+      if (result.success) {
+        toast.success(result.message || 'All player data has been reset successfully');
+        setResetDialogOpen(false);
+      } else {
+        toast.error(`Reset failed: ${result.error}`);
+      }
+    } catch (error: any) {
+      toast.error(`Reset error: ${error.message}`);
+    } finally {
+      setIsResetting(false);
     }
   };
 
@@ -592,7 +612,7 @@ export default function AdminPage() {
                             ))}
                           </div>
                           <div className="mt-2 text-xs text-gray-400">
-                            💡 Click "Edit" to see details and fix the test cases
+                            💡 Click &quot;Edit&quot; to see details and fix the test cases
                           </div>
                         </div>
                       )}
@@ -620,6 +640,93 @@ export default function AdminPage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Reset Player Data Section */}
+        <Card className="bg-gray-800 border-gray-700 mt-8">
+          <CardHeader>
+            <CardTitle className="text-2xl text-white">⚠️ Danger Zone</CardTitle>
+            <CardDescription className="text-gray-400">
+              Destructive actions that cannot be undone
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="p-4 bg-red-900/20 border border-red-700 rounded-lg">
+              <h3 className="text-lg font-semibold text-red-400 mb-2">Reset All Player Data</h3>
+              <p className="text-sm text-gray-300 mb-4">
+                This will permanently delete all matches and submissions, reset all user stats to default values, and clear all Redis cache data. 
+                User accounts, login information, and profile details will be preserved.
+              </p>
+              <div className="space-y-2 text-xs text-gray-400 mb-4">
+                <div>• All matches will be deleted</div>
+                <div>• All submissions will be deleted</div>
+                <div>• User stats (wins, losses, rating) will be reset to defaults</div>
+                <div>• Avatars and bios will be cleared</div>
+                <div>• All Redis data (queues, active matches, user cache) will be cleared</div>
+                <div>• User login credentials will remain intact</div>
+              </div>
+              <Button
+                onClick={() => setResetDialogOpen(true)}
+                variant="destructive"
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                Reset All Player Data
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Reset Confirmation Dialog */}
+        <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+          <DialogContent className="bg-gray-800 border-gray-700 text-white">
+            <DialogHeader>
+              <DialogTitle className="text-2xl text-red-400">⚠️ Confirm Reset</DialogTitle>
+              <DialogDescription className="text-gray-300">
+                This action cannot be undone. Are you absolutely sure?
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4 mt-4">
+              <div className="p-4 bg-red-900/30 border border-red-700 rounded">
+                <p className="text-white font-semibold mb-2">This will permanently:</p>
+                <ul className="text-sm text-gray-300 space-y-1">
+                  <li>✓ Delete ALL match history</li>
+                  <li>✓ Delete ALL code submissions</li>
+                  <li>✓ Reset ALL user statistics</li>
+                  <li>✓ Clear ALL user avatars and bios</li>
+                  <li>✓ Clear ALL Redis data (queues, matches, cache)</li>
+                </ul>
+              </div>
+              
+              <div className="p-4 bg-green-900/30 border border-green-700 rounded">
+                <p className="text-white font-semibold mb-2">This will preserve:</p>
+                <ul className="text-sm text-gray-300 space-y-1">
+                  <li>✓ User accounts and login credentials</li>
+                  <li>✓ User profile names</li>
+                  <li>✓ Problem database</li>
+                </ul>
+              </div>
+
+              <div className="flex gap-3 justify-end mt-6">
+                <Button
+                  onClick={() => setResetDialogOpen(false)}
+                  variant="outline"
+                  className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+                  disabled={isResetting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleResetAllData}
+                  disabled={isResetting}
+                  variant="destructive"
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {isResetting ? 'Resetting...' : 'Yes, Reset All Data'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Edit Problem Dialog */}
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>

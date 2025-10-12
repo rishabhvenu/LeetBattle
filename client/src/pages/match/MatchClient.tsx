@@ -66,7 +66,13 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   const [showMatchupAnimation, setShowMatchupAnimation] = useState(false);
   const [lines, setLines] = useState(0);
   const [opponentLines, setOpponentLines] = useState(0);
-  const [language, setLanguage] = useState('javascript');
+  const [language, setLanguage] = useState(() => {
+    // Load last selected language from localStorage
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('preferred-language') || 'javascript';
+    }
+    return 'javascript';
+  });
   const [code, setCode] = useState('');
   const [selectedSubmission, setSelectedSubmission] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState('description');
@@ -81,10 +87,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
       parameters: Array<{ name: string; type: string }>;
       returnType: string;
     };
-    testCases?: Array<{
-      input: Record<string, unknown>;
-      output: unknown;
-    }>;
+    testCasesCount?: number;
     starterCode?: Record<string, string>;
     topics?: string[];
     examples?: Array<{
@@ -101,7 +104,14 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testCaseResults, setTestCaseResults] = useState<TestCaseResult[]>([]);
-  const [opponentStats, setOpponentStats] = useState({
+  const [opponentStats, setOpponentStats] = useState<{
+    name: string;
+    avatar: string | null;
+    globalRank: number;
+    gamesWon: number;
+    winRate: number;
+    rating: number;
+  }>({
     name: 'Opponent',
     avatar: null,
     globalRank: 1234,
@@ -109,6 +119,18 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
     winRate: 65,
     rating: 1200,
   });
+  const [userStats, setUserStats] = useState<{
+    rating: number;
+    winRate: number;
+    totalMatches: number;
+  }>({
+    rating: 1200,
+    winRate: 0,
+    totalMatches: 0,
+  });
+  const [userTestsPassed, setUserTestsPassed] = useState(0);
+  const [opponentTestsPassed, setOpponentTestsPassed] = useState(0);
+  const [totalTests, setTotalTests] = useState(0);
   const [showResultAnimation, setShowResultAnimation] = useState(false);
   const [matchResult, setMatchResult] = useState<{ winner: boolean; draw: boolean } | null>(null);
   const roomRef = useRef<Room | null>(null);
@@ -159,11 +181,34 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         // Set problem data
         if (matchDataResult.problem) {
           setProblem(matchDataResult.problem);
+          // Set total test cases count
+          if (matchDataResult.problem.testCasesCount) {
+            setTotalTests(matchDataResult.problem.testCasesCount);
+          }
         }
         
-        // Set opponent stats
+        // Set opponent stats FIRST before showing animation
         if (matchDataResult.opponent) {
-          setOpponentStats(matchDataResult.opponent);
+          setOpponentStats({
+            name: matchDataResult.opponent.name,
+            avatar: matchDataResult.opponent.avatar,
+            globalRank: matchDataResult.opponent.globalRank,
+            gamesWon: matchDataResult.opponent.gamesWon,
+            winRate: matchDataResult.opponent.winRate,
+            rating: matchDataResult.opponent.rating,
+          });
+          
+          // Force a small delay to ensure state updates
+          await new Promise<void>(resolve => setTimeout(resolve, 100));
+        }
+        
+        // Set current user stats
+        if (matchDataResult.userStats) {
+          setUserStats({
+            rating: matchDataResult.userStats.rating || 1200,
+            winRate: matchDataResult.userStats.winRate || 0,
+            totalMatches: matchDataResult.userStats.totalMatches || 0,
+          });
         }
         
         // Load snapshot for saved code and submissions (time comes from WebSocket now)
@@ -188,10 +233,40 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
               .sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
             setSubmissions(userSubmissions);
             console.log('Loaded', userSubmissions.length, 'submissions');
+            
+            // Find best submission (most tests passed) for both players
+            const allSubmissions = snap.submissions || [];
+            const userBest = allSubmissions
+              .filter((s: any) => s.userId === userId)
+              .reduce((max: any, s: any) => {
+                const passed = s.testResults?.filter((t: any) => t.status === 3).length || 0;
+                const maxPassed = max?.testResults?.filter((t: any) => t.status === 3).length || 0;
+                return passed > maxPassed ? s : max;
+              }, null);
+            
+            const opponentBest = allSubmissions
+              .filter((s: any) => s.userId !== userId)
+              .reduce((max: any, s: any) => {
+                const passed = s.testResults?.filter((t: any) => t.status === 3).length || 0;
+                const maxPassed = max?.testResults?.filter((t: any) => t.status === 3).length || 0;
+                return passed > maxPassed ? s : max;
+              }, null);
+            
+            if (userBest) {
+              const passed = userBest.testResults?.filter((t: any) => t.status === 3).length || 0;
+              setUserTestsPassed(passed);
+            }
+            
+            if (opponentBest) {
+              const passed = opponentBest.testResults?.filter((t: any) => t.status === 3).length || 0;
+              setOpponentTestsPassed(passed);
+            }
           }
         }
         
         // Mark as loaded and show matchup animation (only once)
+        // Delay to ensure opponent stats state has updated
+        await new Promise(resolve => setTimeout(resolve, 50));
         setLoading(false);
         if (!matchupAnimationShownRef.current) {
           setShowMatchupAnimation(true);
@@ -323,15 +398,26 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         }
       });
       
-      // Listen for new submissions (from opponent or on reconnect)
+      // Listen for new submissions (from backend with correct data)
       room.onMessage('new_submission', (payload) => {
         console.log('New submission received:', payload);
-        // Only handle opponent submissions here
-        // Our own submissions are handled in submission_result to avoid duplicates
-        if (payload.userId !== userId) {
+        // Handle submissions for this user
+        if (payload.userId === userId) {
           const formattedSubmission = formatSubmission(payload.submission);
-          // We could show opponent submissions in the future
-          console.log('Opponent submission:', formattedSubmission);
+          setSubmissions(prev => [formattedSubmission, ...prev]);
+          setActiveTab('submissions');
+        } else {
+          // Opponent submission - update their solved count
+          console.log('Opponent submission:', payload.submission);
+          if (payload.submission?.passed) {
+            setOpponentTestsPassed(prev => {
+              const total = problem?.testCases?.length || 0;
+              return total;
+            });
+          } else if (payload.submission?.testResults) {
+            const passed = payload.submission.testResults.filter((t: any) => t.status === 3).length;
+            setOpponentTestsPassed(passed);
+          }
         }
       });
         
@@ -372,106 +458,21 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           setIsSubmitting(false);
           
           if (payload.success) {
-            // Find first failed test from testResults
-            const firstFailedTest = payload.testResults?.find((t: any) => t.status !== 3);
-            let status = 'Accepted';
-            let errorType = { type: '', label: '' };
-            
-            if (!payload.allPassed && firstFailedTest) {
-              errorType = getErrorType(firstFailedTest.status);
-              status = errorType.label;
-            }
-            
-            // Create a new submission entry
-            const newSubmission = {
-              id: Date.now(),
-              status,
-              errorType: errorType.type,
-              language: language.charAt(0).toUpperCase() + language.slice(1),
-              time: 'Just now',
-              runtime: payload.averageTime ? `${payload.averageTime} ms` : '—',
-              memory: payload.averageMemory ? `${payload.averageMemory} MB` : '—',
-              date: new Date().toLocaleString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
-                year: 'numeric', 
-                hour: 'numeric', 
-                minute: 'numeric', 
-                hour12: true 
-              }),
-              passedTests: payload.passedTests || 0,
-              totalTests: payload.totalTests || 0,
-              timeComplexity: 'O(n)',
-              spaceComplexity: 'O(1)',
-              code: code,
-              compileError: firstFailedTest?.error && errorType.type === 'compile' ? firstFailedTest.error : undefined,
-              runtimeError: firstFailedTest?.error && errorType.type === 'runtime' ? firstFailedTest.error : undefined,
-              systemError: firstFailedTest?.error && errorType.type === 'system' ? firstFailedTest.error : undefined,
-              timeoutError: firstFailedTest?.error && errorType.type === 'timeout' ? firstFailedTest.error : undefined,
-              memoryError: firstFailedTest?.error && errorType.type === 'memory' ? firstFailedTest.error : undefined,
-              failedTestCase: firstFailedTest ? {
-                input: firstFailedTest.input || '',
-                expected: firstFailedTest.expectedOutput || '',
-                actual: firstFailedTest.userOutput || '',
-              } : undefined
-            };
-            
-            // Add to submissions list
-            setSubmissions(prev => [newSubmission, ...prev]);
-            
-            // Switch to submissions tab and show result
-            setActiveTab('submissions');
-            
-            // Don't auto-open the modal - let user click to view details
-            // setSelectedSubmission(newSubmission);
-            
+            // Update test cases passed count
             if (payload.allPassed) {
-              toast.success('All test cases passed! Analyzing time complexity... ⏳');
+              setUserTestsPassed(payload.totalTests || problem?.testCases?.length || 0);
             } else {
-              toast.warning(`${payload.passedTests}/${payload.totalTests} test cases passed`);
+              const passed = payload.passedTests || 0;
+              setUserTestsPassed(passed);
             }
-          } else {
-            toast.error(payload.error || 'Submission failed');
           }
         });
 
         room.onMessage('complexity_failed', (payload) => {
           console.log('Complexity check failed:', payload);
-          
-          const complexitySubmission = {
-            id: Date.now(),
-            status: 'Time Complexity Failed',
-            errorType: 'complexity',
-            language: language.charAt(0).toUpperCase() + language.slice(1),
-            time: 'Just now',
-            runtime: '—',
-            memory: '—',
-            date: new Date().toLocaleString('en-US', { 
-              month: 'short', 
-              day: 'numeric', 
-              year: 'numeric', 
-              hour: 'numeric', 
-              minute: 'numeric', 
-              hour12: true 
-            }),
-            passedTests: payload.totalTests || 0,
-            totalTests: payload.totalTests || 0,
-            timeComplexity: payload.derivedComplexity || 'Unknown',
-            expectedComplexity: payload.expectedComplexity,
-            spaceComplexity: 'O(1)',
-            code: code,
-            complexityError: payload.message || 'Your solution does not meet the required time complexity.'
-          };
-          
-          setSubmissions(prev => [complexitySubmission, ...prev]);
-          setActiveTab('submissions');
-          
-          toast.error(
-            `❌ Time Complexity Failed!\n` +
-            `Expected: ${payload.expectedComplexity}\n` +
-            `Your solution: ${payload.derivedComplexity}`,
-            { autoClose: 8000 }
-          );
+          // User passed all tests but failed complexity
+          setUserTestsPassed(problem?.testCases?.length || 0);
+          setIsSubmitting(false);
         });
 
         // Store matchId on room for later access
@@ -530,14 +531,70 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
     }
   };
 
+  // Convert timestamp to relative time (e.g., "5 minutes ago")
+  const getRelativeTime = (timestamp: string | number) => {
+    const now = Date.now();
+    const time = new Date(timestamp).getTime();
+    const diff = now - time;
+    
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (seconds < 60) return 'Just now';
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  };
+
   // Format backend submission to UI format
   const formatSubmission = (submission: any) => {
-    const firstFailedTest = submission.testResults?.find((t: any) => t.status !== 3);
+    // Check if this is a complexity failed submission
+    if (submission.complexityFailed) {
+      return {
+        id: submission.timestamp,
+        status: 'Time Complexity Failed',
+        errorType: 'complexity',
+        language: submission.language.charAt(0).toUpperCase() + submission.language.slice(1),
+        time: getRelativeTime(submission.timestamp),
+        date: getRelativeTime(submission.timestamp),
+        timestamp: submission.timestamp,
+        code: submission.code || '// Code not available',
+        passedTests: submission.testResults?.filter((t: any) => t.status === 3).length || 0,
+        totalTests: submission.testResults?.length || 0,
+        runtime: submission.averageTime ? `${submission.averageTime} ms` : '—',
+        memory: submission.averageMemory ? `${submission.averageMemory} MB` : '—',
+        timeComplexity: submission.derivedComplexity || 'Unknown',
+        expectedComplexity: submission.expectedComplexity,
+        spaceComplexity: 'O(1)',
+        complexityError: 'All tests passed, but your solution does not meet the required time complexity.'
+      };
+    }
+    
+    const firstFailedTest = submission.testResults?.find((t: any) => t.status !== 3 && t.status?.id !== 3);
+    const actualPassedTests = submission.testResults?.filter((t: any) => t.status === 3 || t.status?.id === 3).length || 0;
+    const totalTests = submission.testResults?.length || 0;
+    
     let status = 'Accepted';
     let errorType = { type: '', label: '' };
     
-    if (!submission.passed && firstFailedTest) {
-      errorType = getErrorType(firstFailedTest.status);
+    // Check if submission passed or failed
+    if (!submission.passed) {
+      // Submission failed - determine why
+      if (firstFailedTest) {
+        const statusId = typeof firstFailedTest.status === 'number' ? firstFailedTest.status : firstFailedTest.status?.id;
+        errorType = getErrorType(statusId || 4);
+        status = errorType.label;
+      } else {
+        // No test results but marked as failed
+        status = 'Wrong Answer';
+        errorType = { type: 'wrong', label: 'Wrong Answer' };
+      }
+    } else if (totalTests > 0 && actualPassedTests !== totalTests) {
+      // Has test results but not all passed (shouldn't happen if submission.passed is true, but handle it)
+      const statusId = typeof firstFailedTest?.status === 'number' ? firstFailedTest.status : firstFailedTest?.status?.id;
+      errorType = getErrorType(statusId || 4);
       status = errorType.label;
     }
 
@@ -545,12 +602,13 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
       id: submission.timestamp,
       status,
       errorType: errorType.type,
-      language: submission.language,
-      time: new Date(submission.timestamp).toLocaleString(),
-      date: new Date(submission.timestamp).toLocaleString(),
+      language: submission.language.charAt(0).toUpperCase() + submission.language.slice(1),
+      time: getRelativeTime(submission.timestamp),
+      date: getRelativeTime(submission.timestamp),
+      timestamp: submission.timestamp,
       code: submission.code || '// Code not available',
-      passedTests: submission.testResults?.filter((t: any) => t.status === 3).length || 0,
-      totalTests: submission.testResults?.length || 0,
+      passedTests: actualPassedTests,
+      totalTests: totalTests,
       runtime: submission.averageTime ? `${submission.averageTime} ms` : '—',
       memory: submission.averageMemory ? `${submission.averageMemory} MB` : '—',
       timeComplexity: 'O(n)', // Placeholder
@@ -570,6 +628,11 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
 
   const handleLanguageChange = async (newLang: string) => {
     setLanguage(newLang);
+    
+    // Save to localStorage for persistence across page reloads
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('preferred-language', newLang);
+    }
     
     // Try to load saved code for this language first
     if (matchId) {
@@ -657,12 +720,16 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
 
   // Helper function to render profile picture
   const renderProfilePicture = (avatar: string | null | undefined, isOpponent: boolean = false) => {
+    const avatarUrl = getAvatarUrl(avatar);
     return (
       <img 
-        src={getAvatarUrl(avatar)}
+        src={avatarUrl}
         alt="Profile"
         className="w-10 h-10 rounded-full object-cover border-2"
         style={{ borderColor: isOpponent ? '#ef4444' : '#2599D4' }}
+        onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
+          e.currentTarget.src = '/placeholder_avatar.png';
+        }}
       />
     );
   };
@@ -707,7 +774,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             </div>
             <div>
               <div className="text-sm font-semibold text-black">{username}</div>
-              <div className="text-xs text-black/70">Rating: 1234</div>
+              <div className="text-xs text-black/70">Rating: {userStats.rating}</div>
             </div>
           </div>
 
@@ -715,7 +782,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           <div className="flex items-center gap-4 pl-4 border-l border-blue-200">
             <div className="flex items-center gap-1.5">
               <Trophy className="w-4 h-4 text-yellow-600" />
-              <span className="text-xs text-black/70">Win Rate: 65%</span>
+              <span className="text-xs text-black/70">Win Rate: {userStats.winRate}%</span>
             </div>
             <div className="flex items-center gap-1.5">
               <Target className="w-4 h-4" style={{ color: '#2599D4' }} />
@@ -723,7 +790,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             </div>
             <div className="flex items-center gap-1.5">
               <CheckCircle className="w-4 h-4 text-green-600" />
-              <span className="text-xs text-black/70">Solved: 0/15</span>
+              <span className="text-xs text-black/70">Solved: {userTestsPassed}/{totalTests}</span>
             </div>
           </div>
         </div>
@@ -736,7 +803,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           <div className="flex items-center gap-4 pr-4 border-r border-blue-200">
             <div className="flex items-center gap-1.5">
               <CheckCircle className="w-4 h-4 text-green-600" />
-              <span className="text-xs text-black/70">Solved: 0/15</span>
+              <span className="text-xs text-black/70">Solved: {opponentTestsPassed}/{totalTests}</span>
             </div>
             <div className="flex items-center gap-1.5">
               <Target className="w-4 h-4" style={{ color: '#2599D4' }} />
@@ -899,6 +966,8 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
                                         ? 'bg-indigo-100 text-indigo-600'
                                         : submission.errorType === 'system'
                                         ? 'bg-gray-100 text-gray-600'
+                                        : submission.errorType === 'complexity'
+                                        ? 'bg-rose-100 text-rose-600'
                                         : 'bg-red-100 text-red-600'
                                     }`}>
                                       {submission.errorType === 'wrong' ? 'WA' : 
@@ -907,6 +976,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
                                        submission.errorType === 'timeout' ? 'TLE' :
                                        submission.errorType === 'memory' ? 'MLE' :
                                        submission.errorType === 'system' ? 'SE' :
+                                       submission.errorType === 'complexity' ? 'TCF' :
                                        submission.status}
                     </span>
                   </div>
@@ -1085,7 +1155,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
                   {selectedSubmission.passedTests}/{selectedSubmission.totalTests} testcases passed
                 </p>
                 <p className="text-sm text-gray-500 mt-1">
-                  Player submitted at {selectedSubmission.date}
+                  Submitted {selectedSubmission.date}
                 </p>
               </div>
               <Button
@@ -1205,32 +1275,21 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             {selectedSubmission.errorType === 'complexity' && selectedSubmission.complexityError && (
               <div className="p-6 bg-rose-50 border-b border-rose-200">
                 <h3 className="text-lg font-semibold text-rose-700 mb-4">Time Complexity Failed</h3>
-                <div className="space-y-4">
-                  <div className="bg-rose-100 rounded-lg p-4 border border-rose-300">
-                    <p className="text-sm text-rose-800 mb-3">{selectedSubmission.complexityError}</p>
-                    <div className="grid grid-cols-2 gap-4 mt-3">
-                      <div>
-                        <h4 className="text-xs font-semibold text-rose-700 mb-1">Expected Complexity:</h4>
-                        <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
-                          {selectedSubmission.expectedComplexity || 'N/A'}
-                        </code>
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-semibold text-rose-700 mb-1">Your Complexity:</h4>
-                        <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
-                          {selectedSubmission.timeComplexity}
-                        </code>
-                      </div>
+                <div className="bg-rose-100 rounded-lg p-4 border border-rose-300">
+                  <p className="text-sm text-rose-800 mb-3">{selectedSubmission.complexityError}</p>
+                  <div className="grid grid-cols-2 gap-4 mt-3">
+                    <div>
+                      <h4 className="text-xs font-semibold text-rose-700 mb-1">Expected Complexity:</h4>
+                      <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
+                        {selectedSubmission.expectedComplexity || 'N/A'}
+                      </code>
                     </div>
-                  </div>
-                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                    <h4 className="text-sm font-semibold text-blue-700 mb-2">💡 Optimization Tips:</h4>
-                    <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-                      <li>Review your algorithm for nested loops or recursion</li>
-                      <li>Consider using hash maps/sets for O(1) lookups</li>
-                      <li>Look for opportunities to use sorting or binary search</li>
-                      <li>Avoid redundant computations with dynamic programming</li>
-                    </ul>
+                    <div>
+                      <h4 className="text-xs font-semibold text-rose-700 mb-1">Your Complexity:</h4>
+                      <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
+                        {selectedSubmission.timeComplexity}
+                      </code>
+                    </div>
                   </div>
                 </div>
               </div>

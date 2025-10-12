@@ -143,7 +143,7 @@ async function executeBatchTestCases(
           actualOutput,
           executionTime: result.time,
           memory: result.memory,
-          status: result.status,
+          status: passed ? { id: 3, description: 'Accepted' } : { id: 4, description: 'Wrong Answer' },
         });
       } catch (error) {
         results.push({
@@ -152,7 +152,7 @@ async function executeBatchTestCases(
           error: `Failed to parse output: ${match[1]}`,
           executionTime: result.time,
           memory: result.memory,
-          status: result.status,
+          status: { id: 6, description: 'Runtime Error' },
         });
       }
     } else {
@@ -162,7 +162,7 @@ async function executeBatchTestCases(
         error: `Unexpected output format: ${line}`,
         executionTime: result.time,
         memory: result.memory,
-        status: result.status,
+        status: { id: 4, description: 'Wrong Answer' },
       });
     }
   }
@@ -174,6 +174,7 @@ async function executeBatchTestCases(
       passed: false,
       testCase,
       error: 'No result from batch execution',
+      status: { id: 4, description: 'Wrong Answer' },
     });
   }
   

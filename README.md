@@ -221,22 +221,34 @@ sequenceDiagram
 **1. Smart Matchmaking**
 - ELO-based pairing (within ±200 rating)
 - Fair queue using Redis sorted sets
-- Automatic timeout handling
+- Difficulty-based problem selection (Easy/Medium/Hard)
+- Automatic timeout handling (45-minute matches)
 
 **2. Real-Time Sync**
 - Live opponent code execution status
 - Instant test case results
 - Countdown timer synchronization
+- WebSocket reconnection handling
 
-**3. Code Execution**
-- 89+ programming languages supported
+**3. Code Execution & Validation**
+- 89+ programming languages supported (Judge0)
 - Isolated Docker containers per submission
 - Test case streaming (pass/fail indicators)
+- **AI time complexity analysis** (OpenAI GPT-4o-mini)
+  - Validates submitted code meets optimal Big-O requirements
+  - Uses recurrence relations and loop analysis
+  - Rejects inefficient solutions
 
-**4. Persistence**
-- Connection pooling (17x faster than per-request)
+**4. Persistence & Performance**
+- MongoDB connection pooling (17x faster than per-request)
 - Redis pub/sub for match events
-- Background workers for async operations
+- Background matchmaker (1-second polling)
+- Distributed rate limiting (prevents abuse)
+
+**5. Admin Tools**
+- AI-powered problem generation (OpenAI)
+- Automatic solution verification across languages
+- Bulk problem import/export
 
 ---
 

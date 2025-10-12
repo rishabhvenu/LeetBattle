@@ -31,6 +31,9 @@ export class MatchRoom extends Room {
     this.matchId = options.matchId;
     this.problemId = options.problemId;
     this.startTime = Date.now();
+    
+    // Don't auto-dispose when all clients leave - only dispose on match end
+    this.autoDispose = false;
 
     console.log(`MatchRoom onCreate - matchId: ${this.matchId}, maxClients: ${this.maxClients}`);
 
@@ -174,7 +177,66 @@ export class MatchRoom extends Room {
           error: testResult.error || null
         }));
 
-        // Store submission results
+        // If all tests passed, analyze time complexity BEFORE storing submission
+        if (executionResult.allPassed && problem.timeComplexity) {
+          try {
+            console.log(`Analyzing time complexity for user ${userId}, expected: ${problem.timeComplexity}`);
+            const complexityResult = await analyzeTimeComplexity(source_code, problem.timeComplexity);
+            
+            if (complexityResult.verdict === 'FAIL') {
+              // Complexity check failed - store as failed submission
+              console.log(`Time complexity check failed for user ${userId}. Derived: ${complexityResult.derived_complexity}, Expected: ${problem.timeComplexity}`);
+              
+              const failedSubmission = {
+                userId,
+                language,
+                timestamp: new Date().toISOString(),
+                passed: false,
+                complexityFailed: true,
+                derivedComplexity: complexityResult.derived_complexity,
+                expectedComplexity: problem.timeComplexity,
+                testResults,
+                code: source_code,
+                averageTime: executionResult.averageTime,
+                averageMemory: executionResult.averageMemory,
+              };
+              
+              await this.updateMatchBlob((obj) => {
+                obj.submissions = obj.submissions || [];
+                obj.submissions.push(failedSubmission);
+              });
+              
+              // Send complexity failed event with submission details
+              client.send('complexity_failed', {
+                userId,
+                language,
+                derivedComplexity: complexityResult.derived_complexity,
+                expectedComplexity: problem.timeComplexity,
+                passedTests: executionResult.passedTests,
+                totalTests: executionResult.totalTests,
+                averageTime: executionResult.averageTime,
+                averageMemory: executionResult.averageMemory,
+                code: source_code,
+                message: 'All tests passed, but your solution does not meet the required time complexity.'
+              });
+              
+              // Broadcast new submission
+              client.send('new_submission', {
+                userId,
+                submission: failedSubmission
+              });
+              
+              return; // Don't declare winner, don't send submission_result
+            }
+            
+            console.log(`Time complexity check passed for user ${userId}. Derived: ${complexityResult.derived_complexity}`);
+          } catch (complexityError) {
+            console.error('Error analyzing time complexity:', complexityError);
+            // If complexity analysis fails, we continue with normal flow (fail-safe)
+          }
+        }
+
+        // Store submission results (either tests failed, or tests passed and complexity is OK)
         const submission = {
           userId,
           language,
@@ -209,37 +271,8 @@ export class MatchRoom extends Room {
           submission
         });
 
-        // If all tests passed, analyze time complexity before declaring winner
+        // If all tests passed and we reach here, declare winner
         if (executionResult.allPassed) {
-          // Check if problem has time complexity requirement
-          if (problem.timeComplexity) {
-            try {
-              console.log(`Analyzing time complexity for user ${userId}, expected: ${problem.timeComplexity}`);
-              const complexityResult = await analyzeTimeComplexity(source_code, problem.timeComplexity);
-              
-              if (complexityResult.verdict === 'FAIL') {
-                // Complexity check failed - do not declare winner
-                console.log(`Time complexity check failed for user ${userId}. Derived: ${complexityResult.derived_complexity}, Expected: ${problem.timeComplexity}`);
-                
-                client.send('complexity_failed', {
-                  userId,
-                  derivedComplexity: complexityResult.derived_complexity,
-                  expectedComplexity: problem.timeComplexity,
-                  message: 'All tests passed, but your solution does not meet the required time complexity.'
-                });
-                
-                return; // Don't declare winner
-              }
-              
-              console.log(`Time complexity check passed for user ${userId}. Derived: ${complexityResult.derived_complexity}`);
-            } catch (complexityError) {
-              console.error('Error analyzing time complexity:', complexityError);
-              // If complexity analysis fails, we still declare winner (fail-safe)
-              // This prevents technical issues from blocking valid winners
-            }
-          }
-          
-          // All tests passed and complexity is OK (or no complexity requirement)
           await this.updateMatchBlob((obj) => {
             obj.winnerUserId = userId;
             obj.endedAt = new Date().toISOString();
@@ -465,7 +498,9 @@ export class MatchRoom extends Room {
   }
 
   async onDispose() {
-    // no-op
+    console.log(`MatchRoom disposed - matchId: ${this.matchId}`);
+    // Room disposal happens only when match ends (via disconnect() in endMatch)
+    // NOT when players disconnect temporarily
   }
 
   private ensurePlayer(userId: string) {
@@ -508,6 +543,18 @@ export class MatchRoom extends Room {
         obj.isDraw = true;
       }
     });
+    
+    // Clear reservations for both players ONLY when match actually ends
+    const matchKey = RedisKeys.matchKey(this.matchId);
+    const matchRaw = await this.redis.get(matchKey);
+    if (matchRaw) {
+      const matchData = JSON.parse(matchRaw);
+      const playerIds = matchData.players || [];
+      for (const playerId of playerIds) {
+        await this.redis.del(`queue:reservation:${playerId}`);
+        console.log(`Cleared reservation for player ${playerId} - match ended`);
+      }
+    }
     
     await this.redis.publish(RedisKeys.matchEventsChannel, JSON.stringify({ type: 'match_end', matchId: this.matchId, reason, at: Date.now() }));
     await this.redis.srem(RedisKeys.activeMatchesSet, this.matchId);
