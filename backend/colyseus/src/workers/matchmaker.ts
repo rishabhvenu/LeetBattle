@@ -17,8 +17,8 @@ function loadProblems(): Record<string, any> {
   }
   
   try {
-    // Problems are in client/problems.json - read from there or copy to backend
-    const file = path.join(__dirname, '../../..', 'client', 'problems.json');
+    // Load problems.json from backend/colyseus directory (copied during build)
+    const file = path.join(__dirname, '..', 'problems.json');
     const raw = fs.readFileSync(file, 'utf-8');
     problemCache = JSON.parse(raw);
     problemCacheLoaded = true;
