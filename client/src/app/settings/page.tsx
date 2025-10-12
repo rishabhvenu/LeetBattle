@@ -38,7 +38,7 @@ export default async function SettingsPage() {
   };
 
   return (
-    <Layout session={layoutSession} showNavbar={true} onLogout={logoutUser}>
+    <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
       <Settings restHandler={null} session={settingsSession} />
     </Layout>
   );

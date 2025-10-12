@@ -33,7 +33,7 @@ export default async function QueuePage() {
   const rating = stats.rating ?? 1200;
 
   return (
-    <Layout session={layoutSession} showNavbar={true} onLogout={logoutUser}>
+    <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
       <MatchQueue userId={session.user!.id} rating={rating} />
     </Layout>
   );

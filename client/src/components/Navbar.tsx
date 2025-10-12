@@ -28,18 +28,13 @@ interface NavbarProps {
     _id: string;
     username: string;
   } | null;
-  onLogout: () => Promise<void>;
+  logoutAction: () => Promise<void>;
 }
 
-export default function Navbar({ session, onLogout }: NavbarProps) {
+export default function Navbar({ session, logoutAction }: NavbarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [isExpanded, setIsExpanded] = React.useState(true);
-
-  const handleLogout = async () => {
-    await onLogout();
-    router.push("/landing");
-  };
 
   const toggleNavbar = () => {
     setIsExpanded(!isExpanded);
@@ -134,26 +129,28 @@ export default function Navbar({ session, onLogout }: NavbarProps) {
         </nav>
       </ScrollArea>
       <div className="p-4 border-t border-blue-200 bg-white/50">
-        <Button
-          variant="ghost"
-          className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50 py-4"
-          onClick={handleLogout}
-        >
-          <LogOut className="w-8 h-8 flex-shrink-0" />
-          <AnimatePresence>
-            {isExpanded && (
-              <motion.span
-                className="ml-4 text-xl"
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                transition={{ duration: 0.2 }}
-              >
-                Logout
-              </motion.span>
-            )}
-          </AnimatePresence>
-        </Button>
+        <form action={logoutAction}>
+          <Button
+            type="submit"
+            variant="ghost"
+            className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50 py-4"
+          >
+            <LogOut className="w-8 h-8 flex-shrink-0" />
+            <AnimatePresence>
+              {isExpanded && (
+                <motion.span
+                  className="ml-4 text-xl"
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  Logout
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </Button>
+        </form>
       </div>
     </motion.aside>
   );

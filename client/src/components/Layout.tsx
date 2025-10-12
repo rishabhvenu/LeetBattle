@@ -7,11 +7,11 @@ import Navbar from "./Navbar";
 interface LayoutProps {
   session: { _id: string; username: string } | null;
   showNavbar: boolean;
-  onLogout: () => Promise<void>;
+  logoutAction: () => Promise<void>;
   children: React.ReactNode;
 }
 
-export default function Layout({ session, showNavbar, onLogout, children }: LayoutProps) {
+export default function Layout({ session, showNavbar, logoutAction, children }: LayoutProps) {
   const router = useRouter();
 
   useEffect(() => {
@@ -26,7 +26,7 @@ export default function Layout({ session, showNavbar, onLogout, children }: Layo
 
   return (
     <div className="flex h-screen">
-      {showNavbar && <Navbar session={session} onLogout={onLogout} />}
+      {showNavbar && <Navbar session={session} logoutAction={logoutAction} />}
       <main className="flex-1 overflow-y-auto">
         {children}
       </main>

@@ -1,32 +1,13 @@
 "use client";
 
-import { useEffect, createContext } from "react";
-import PlaceholderSocketService from "@/services/PlaceholderSocketService";
-import PlaceholderRestService from "@/services/PlaceholderRestService";
 import { ToastContainer } from "@/components/ToastContainer";
 import "./globals.css";
-
-const restService = new PlaceholderRestService();
-const socketService = new PlaceholderSocketService(restService);
-
-export const SocketContext = createContext<PlaceholderSocketService | null>(null);
 
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  useEffect(() => {
-    (async () => {
-      await socketService.connect();
-
-      // Removed friend system and messaging handlers - not implemented yet
-    })();
-    return () => {
-      socketService.disconnect();
-    };
-  }, []);
-
   return (
     <html lang="en" className="dark">
       <head>
@@ -36,10 +17,8 @@ export default function RootLayout({
         />
       </head>
       <body>
-        <SocketContext.Provider value={socketService}>
-          <ToastContainer />
-          {children}
-        </SocketContext.Provider>
+        <ToastContainer />
+        {children}
       </body>
     </html>
   );

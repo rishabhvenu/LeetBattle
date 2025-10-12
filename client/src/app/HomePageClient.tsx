@@ -27,7 +27,7 @@ interface HomePageClientProps {
 
 export default function HomePageClient({ homeSession, layoutSession }: HomePageClientProps) {
   return (
-    <Layout session={layoutSession} showNavbar={true} onLogout={logoutUser}>
+    <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
       <Home session={homeSession} restHandler={null} />
     </Layout>
   );

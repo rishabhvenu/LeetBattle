@@ -33,7 +33,7 @@ export default async function PlayPage() {
   };
 
   return (
-    <Layout session={layoutSession} showNavbar={true} onLogout={logoutUser}>
+    <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
       <Play session={playSession} ongoingMatches={ongoingMatches} />
     </Layout>
   );

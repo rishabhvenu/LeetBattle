@@ -19,7 +19,7 @@ export default async function LeaderboardPage() {
   };
 
   return (
-    <Layout session={layoutSession} showNavbar={true} onLogout={logoutUser}>
+    <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
       <Leaderboard restHandler={null} />
     </Layout>
   );

@@ -19,7 +19,7 @@ export default async function LearningPage() {
   };
 
   return (
-    <Layout session={layoutSession} showNavbar={true} onLogout={logoutUser}>
+    <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
       <LearningPath />
     </Layout>
   );
