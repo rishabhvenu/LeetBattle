@@ -885,31 +885,104 @@ pm2 start npm --name leetbattle -- start
 
 ---
 
-## 🔒 Security & Production Notes
+## 🔒 Security & Rate Limiting
 
-### ⚠️ Before Production Deployment
+### Application-Level Rate Limiting
 
-**1. Rotate All Credentials**
-- `.env` files currently contain development credentials
-- Generate strong passwords: `openssl rand -base64 32`
-- Update: `REDIS_PASSWORD`, `JUDGE0_POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`
-- Create new `OPENAI_API_KEY` for production
+**Already Implemented** ✅ - Rate limiting is built into the application using `rate-limiter-flexible` with Redis.
 
-**2. Update Service Endpoints**
-- Replace MinIO with AWS S3
-- Update MongoDB to Atlas connection string
-- Configure S3 bucket CORS for your CloudFront domain
-- Update environment variables in Lambda
+#### Next.js Server Actions (Protected)
 
-**3. Production Checklist:**
-- [ ] Credentials rotated (not using dev defaults)
-- [ ] SSL/TLS certificates installed
-- [ ] `NODE_ENV=production` set
-- [ ] CORS configured for production domains
-- [ ] Rate limiting enabled
-- [ ] Error tracking configured (Sentry)
-- [ ] Monitoring set up (Datadog, New Relic)
-- [ ] Database backups automated
+| Action Type | Limit | Window | Use Case |
+|-------------|-------|--------|----------|
+| **Authentication** | 5 requests | 60s | Login, Register |
+| **Queue Operations** | 20 requests | 10s | Join/Leave queue |
+| **File Uploads** | 2 requests | 60s | Avatar uploads |
+| **Admin Actions** | 3 requests | 60s | Problem generation |
+| **General Actions** | 10 requests | 10s | Other server actions |
+
+**Protected Actions:**
+- ✅ `registerUser()`, `loginUser()` - Auth limiter
+- ✅ `enqueueUser()`, `dequeueUser()` - Queue limiter
+- ✅ `generatePresignedUploadUrl()` - Upload limiter
+- ✅ `generateProblem()`, `verifyProblemSolutions()` - Admin limiter
+
+#### Colyseus Backend (Protected)
+
+| Endpoint Type | Limit | Window | Endpoints |
+|---------------|-------|--------|-----------|
+| **Queue** | 20 requests | 10s | `/queue/enqueue`, `/queue/dequeue` |
+| **Match Data** | 50 requests | 10s | `/match/snapshot`, `/match/submissions` |
+| **Admin** | 5 requests | 60s | `/admin/validate-solutions` |
+
+**Rate Limit Response (429):**
+```json
+{
+  "error": "rate_limit_exceeded",
+  "message": "Too many requests. Please try again in 30 seconds.",
+  "retryAfter": 30
+}
+```
+
+**Benefits:**
+- ✅ DDoS protection at application level
+- ✅ Prevents API abuse and brute force
+- ✅ Redis-backed (works across multiple instances)
+- ✅ User-friendly error messages with retry timing
+
+---
+
+## ⚠️ Before Production Deployment
+
+### Required Actions
+
+**1. Rotate All Credentials** 🔑
+```bash
+# Generate new production secrets
+openssl rand -base64 32  # For NEXTAUTH_SECRET
+openssl rand -base64 32  # For REDIS_PASSWORD
+openssl rand -base64 32  # For JUDGE0_POSTGRES_PASSWORD
+
+# Create new OpenAI key at https://platform.openai.com/api-keys
+```
+
+**Update in:**
+- ✅ `backend/.env` - Backend services
+- ✅ `client/.env.local` - Frontend (for local testing)
+- ✅ Lambda environment variables (AWS Console or SST config)
+
+**2. Update Service Endpoints** 🔗
+- [ ] Replace MinIO with AWS S3
+- [ ] Update MongoDB URI to Atlas connection string
+- [ ] Configure S3 bucket CORS for CloudFront domain
+- [ ] Update all environment variables in Lambda
+- [ ] Point `NEXT_PUBLIC_COLYSEUS_HTTP_URL` to ALB domain
+
+**3. Infrastructure Deployment:** 🏗️
+
+**AWS Setup Required:**
+- [ ] VPC with public + private subnets created
+- [ ] EC2 launched in private subnet (NO public IP)
+- [ ] Application Load Balancer in public subnet
+- [ ] Security groups configured (ALB → EC2 only)
+- [ ] ACM SSL certificate for ALB domain
+- [ ] CloudFront distribution created
+- [ ] AWS WAF attached to CloudFront (rate limiting at edge)
+- [ ] MongoDB Atlas cluster provisioned
+- [ ] S3 bucket created with CORS + policies
+- [ ] Lambda deployed via SST or Serverless Framework
+- [ ] IAM roles configured for Lambda S3 access
+- [ ] CloudWatch alarms set up
+- [ ] Route53 DNS pointing to CloudFront
+
+**Already Implemented in Code:** ✅
+- [x] Application-level rate limiting (Redis-backed)
+- [x] MongoDB connection pooling (singleton pattern)
+- [x] Match persistence with validation
+- [x] Server Actions using proper Next.js patterns
+- [x] Background matchmaker (runs in Colyseus)
+- [x] Session management with TTL indexes
+- [x] CORS configuration templates
 
 ---
 

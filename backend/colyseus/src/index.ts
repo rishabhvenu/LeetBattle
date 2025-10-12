@@ -10,6 +10,12 @@ import { startMatchmaker } from './workers/matchmaker';
 import { enqueueUser, dequeueUser, queueSize } from './lib/queue';
 import { getRedis, RedisKeys } from './lib/redis';
 import jwt from 'jsonwebtoken';
+import { 
+  rateLimitMiddleware, 
+  queueLimiter, 
+  matchLimiter, 
+  adminLimiter 
+} from './lib/rateLimiter';
 
 const app = new Koa();
 const router = new Router();
@@ -17,26 +23,28 @@ app.use(bodyParser());
 app.use(cors({ origin: '*', allowMethods: ['GET','POST','OPTIONS'], allowHeaders: ['Content-Type','Authorization'] }));
 app.use(router.routes());
 app.use(router.allowedMethods());
-router.post('/queue/enqueue', async (ctx) => {
+
+// Queue endpoints with rate limiting
+router.post('/queue/enqueue', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const { userId, rating } = ctx.request.body as { userId: string; rating: number };
   if (!userId || typeof rating !== 'number') { ctx.status = 400; ctx.body = { error: 'userId and rating required' }; return; }
   await enqueueUser(userId, rating);
   ctx.body = { success: true };
 });
 
-router.post('/queue/dequeue', async (ctx) => {
+router.post('/queue/dequeue', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const { userId } = ctx.request.body as { userId: string };
   if (!userId) { ctx.status = 400; ctx.body = { error: 'userId required' }; return; }
   await dequeueUser(userId);
   ctx.body = { success: true };
 });
 
-router.get('/queue/size', async (ctx) => {
+router.get('/queue/size', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const size = await queueSize();
   ctx.body = { size };
 });
 
-router.get('/queue/reservation', async (ctx) => {
+router.get('/queue/reservation', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const userId = (ctx.request.query as any).userId as string;
   if (!userId) { ctx.status = 400; ctx.body = { error: 'userId required' }; return; }
   const redis = getRedis();
@@ -61,7 +69,7 @@ router.get('/queue/reservation', async (ctx) => {
   ctx.body = { token };
 });
 
-router.post('/reserve/consume', async (ctx) => {
+router.post('/reserve/consume', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const { token } = ctx.request.body as { token: string };
   if (!token) { ctx.status = 400; ctx.body = { error: 'token required' }; return; }
   try {
@@ -91,7 +99,7 @@ router.post('/reserve/consume', async (ctx) => {
   }
 });
 
-router.get('/match/snapshot', async (ctx) => {
+router.get('/match/snapshot', rateLimitMiddleware(matchLimiter), async (ctx) => {
   const matchId = (ctx.request.query as any).matchId as string;
   if (!matchId) { ctx.status = 400; ctx.body = { error: 'matchId required' }; return; }
   const redis = getRedis();
@@ -114,7 +122,7 @@ router.get('/match/snapshot', async (ctx) => {
   }
 });
 
-router.get('/match/submissions', async (ctx) => {
+router.get('/match/submissions', rateLimitMiddleware(matchLimiter), async (ctx) => {
   const matchId = (ctx.request.query as any).matchId as string;
   if (!matchId) { ctx.status = 400; ctx.body = { error: 'matchId required' }; return; }
   const redis = getRedis();
@@ -128,7 +136,7 @@ router.get('/match/submissions', async (ctx) => {
   }
 });
 
-router.post('/queue/clear', async (ctx) => {
+router.post('/queue/clear', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const { userId } = ctx.request.body as { userId: string };
   if (!userId) { ctx.status = 400; ctx.body = { error: 'userId required' }; return; }
   const redis = getRedis();
@@ -140,8 +148,8 @@ router.post('/queue/clear', async (ctx) => {
 // Matchmaking is now handled by backend/colyseus/workers/matchmaker.ts
 // which runs automatically in the background
 
-// Validate generated problem solutions (called by Next.js admin)
-router.post('/admin/validate-solutions', async (ctx) => {
+// Admin endpoint with stricter rate limiting
+router.post('/admin/validate-solutions', rateLimitMiddleware(adminLimiter), async (ctx) => {
   const { signature, solutions, testCases } = ctx.request.body as {
     signature: { functionName: string; parameters: Array<{ name: string; type: string }>; returnType: string };
     solutions: { python?: string; cpp?: string; java?: string; js?: string };

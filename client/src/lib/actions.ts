@@ -8,6 +8,15 @@ import { generatePresignedUrl } from './minio';
 import { getRedis, RedisKeys } from './redis';
 import { ensureMatchEventsSubscriber } from './matchEventsSubscriber';
 import { ObjectId } from 'mongodb';
+import { 
+  authLimiter, 
+  generalLimiter, 
+  queueLimiter, 
+  adminLimiter, 
+  uploadLimiter, 
+  rateLimit, 
+  getClientIdentifier 
+} from './rateLimiter';
 
 const MONGODB_URI = process.env.MONGODB_URI!;
 const DB_NAME = 'codeclashers';
@@ -62,6 +71,14 @@ export interface SessionData {
 }
 
 export async function registerUser(formData: FormData) {
+  // Rate limiting
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(authLimiter, identifier);
+  } catch (error: unknown) {
+    return { error: (error as Error).message };
+  }
+
   const username = formData.get('username') as string;
   const email = formData.get('email') as string;
   const password = formData.get('password') as string;
@@ -149,6 +166,14 @@ export async function registerUser(formData: FormData) {
 }
 
 export async function loginUser(formData: FormData) {
+  // Rate limiting
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(authLimiter, identifier);
+  } catch (error: unknown) {
+    return { error: (error as Error).message };
+  }
+
   const email = formData.get('email') as string;
   const password = formData.get('password') as string;
 
@@ -313,6 +338,14 @@ async function createSession(userId: string, email: string, username: string) {
 }
 
 export async function generatePresignedUploadUrl(fileName: string, contentType: string) {
+  // Rate limiting
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(uploadLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
   try {
     const presignedUrl = await generatePresignedUrl(fileName, contentType);
     return { success: true, presignedUrl };
@@ -421,6 +454,14 @@ export async function getOngoingMatchesCount(): Promise<number> {
 // Queueing and match orchestration (server actions)
 // Note: Matchmaking is now handled entirely by backend Colyseus matchmaker
 export async function enqueueUser(userId: string, rating: number) {
+  // Rate limiting
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(queueLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
   ensureMatchEventsSubscriber();
   const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
   const res = await fetch(`${base}/queue/enqueue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, rating }) });
@@ -429,6 +470,14 @@ export async function enqueueUser(userId: string, rating: number) {
 }
 
 export async function dequeueUser(userId: string) {
+  // Rate limiting
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(queueLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
   ensureMatchEventsSubscriber();
   const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
   const res = await fetch(`${base}/queue/dequeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
@@ -1161,6 +1210,14 @@ export async function generateProblem(data: {
   difficulty: 'Easy' | 'Medium' | 'Hard';
   timeComplexity: string;
 }) {
+  // Rate limiting for admin operations
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(adminLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
   try {
     const { title, description, examples, constraints, difficulty, timeComplexity } = data;
 
@@ -1392,6 +1449,14 @@ Task:
  * Verify an existing problem's solutions against test cases
  */
 export async function verifyProblemSolutions(problemId: string) {
+  // Rate limiting for admin operations
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(adminLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
   try {
     console.log(`Verifying problem ${problemId}...`);
     
