@@ -1,9 +1,32 @@
 import { Server, matchMaker } from 'colyseus';
 import { getRedis, RedisKeys } from '../lib/redis';
+import fs from 'fs';
+import path from 'path';
 
 type QueueEntry = { userId: string; rating: number; joinedAt: number };
 
 function now() { return Date.now(); }
+
+// Problem selection (moved from Next.js)
+function chooseProblemId(): string {
+  try {
+    // Problems are in client/problems.json - read from there or copy to backend
+    const file = path.join(__dirname, '../../..', 'client', 'problems.json');
+    const raw = fs.readFileSync(file, 'utf-8');
+    const obj = JSON.parse(raw);
+    const keys = Object.keys(obj);
+    if (!keys.length) return 'two-sum'; // Fallback
+    
+    const difficulty = process.env.MATCH_DIFFICULTY || 'Medium';
+    const filtered = keys.filter((k) => obj[k]?.difficulty === difficulty);
+    const pool = filtered.length ? filtered : keys;
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    return pick;
+  } catch (error) {
+    console.error('Error selecting problem:', error);
+    return 'two-sum'; // Fallback to a safe default
+  }
+}
 
 export function startMatchmaker(server: Server) {
   const redis = getRedis();
@@ -63,12 +86,13 @@ export function startMatchmaker(server: Server) {
       await redis.hset(`match:${matchId}:ratings`, 'userId2', bestPair[1].userId);
       await redis.expire(`match:${matchId}:ratings`, 300); // 5 minute TTL
 
-      // Create a match room (problem will be selected by Next.js when user consumes reservation)
-      const problemId = 'pending'; // Placeholder until Next.js selects problem
+      // Select a problem based on difficulty
+      const problemId = chooseProblemId();
+      console.log(`Matchmaker: Selected problem ${problemId} for match ${matchId}`);
+      
       // Use standalone matchMaker module (Colyseus 0.15 API)
-      console.log('Creating room with matchId:', matchId);
       const room = await matchMaker.createRoom('match', { matchId, problemId, problemData: null });
-      console.log('Room created:', room.roomId);
+      console.log(`Matchmaker: Room created ${room.roomId} with problem ${problemId}`);
       
       await redis.sadd(RedisKeys.activeMatchesSet, matchId);
       

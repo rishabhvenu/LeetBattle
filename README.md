@@ -294,9 +294,9 @@ LeetBattle/
 
 ### Useful Commands
 
-```bash
+   ```bash
 # Backend Services
-cd backend
+   cd backend
 docker-compose logs -f           # View all logs
 docker-compose restart [service] # Restart specific service
 docker-compose down              # Stop all services
@@ -332,7 +332,7 @@ npm run build                    # Compile TypeScript
 <details>
 <summary><b>MongoDB Connection Errors</b></summary>
 
-```bash
+   ```bash
 # Check if MongoDB is running
 docker-compose ps mongodb
 
@@ -354,11 +354,11 @@ REDIS_PASSWORD=redis_dev_password_123
 ```
 
 Restart Next.js after changing env vars:
-```bash
+   ```bash
 cd client
 # Stop with Ctrl+C, then
-npm run dev
-```
+   npm run dev
+   ```
 
 </details>
 
@@ -444,13 +444,7 @@ docker-compose ps
 - Edit `backend/minio-init/init.sh`
 - Replace `localhost` origins with your production domain
 
-**3. Queue Worker Limitation**
-- Current implementation uses `setInterval` in server action
-- ⚠️ **Won't work on serverless platforms** (Vercel, Netlify)
-- ✅ **Works on dedicated servers** (DigitalOcean, AWS EC2)
-- For serverless: Move to separate worker service or use Bull/BullMQ
-
-**4. Production Checklist:**
+**3. Production Checklist:**
 - [ ] Credentials rotated (not using dev defaults)
 - [ ] SSL/TLS certificates installed
 - [ ] `NODE_ENV=production` set

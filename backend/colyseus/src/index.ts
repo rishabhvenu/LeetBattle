@@ -6,7 +6,7 @@ import bodyParser from 'koa-bodyparser';
 import cors from '@koa/cors';
 import { QueueRoom } from './rooms/QueueRoom';
 import { MatchRoom } from './rooms/MatchRoom';
-// Matchmaker moved to Next.js; no longer used here
+import { startMatchmaker } from './workers/matchmaker';
 import { enqueueUser, dequeueUser, queueSize } from './lib/queue';
 import { getRedis, RedisKeys } from './lib/redis';
 import jwt from 'jsonwebtoken';
@@ -136,28 +136,9 @@ router.post('/queue/clear', async (ctx) => {
   ctx.body = { success: true };
 });
 
-// Admin: create match and seat reservations (called by Next.js orchestrator)
-router.post('/admin/create-match', async (ctx) => {
-  const { players, problemId } = ctx.request.body as { players: string[]; problemId: string };
-  if (!players || players.length !== 2 || !problemId) { ctx.status = 400; ctx.body = { error: 'players[2] and problemId required' }; return; }
-  try {
-    const matchId = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-    const room = await (gameServer as any).matchMaker.createRoom('match', { matchId, problemId });
-    const resv1 = await (gameServer as any).matchMaker.reserveSeatFor('match', { matchId, problemId, userId: players[0] });
-    const resv2 = await (gameServer as any).matchMaker.reserveSeatFor('match', { matchId, problemId, userId: players[1] });
-    const redis = getRedis();
-    await redis.sadd('matches:active', matchId);
-    const store1 = { sessionId: resv1.sessionId, roomId: resv1.roomId, processId: resv1.processId, private: resv1.private, valid: resv1.valid, reconnectionToken: resv1.reconnectionToken, matchId, problemId };
-    const store2 = { sessionId: resv2.sessionId, roomId: resv2.roomId, processId: resv2.processId, private: resv2.private, valid: resv2.valid, reconnectionToken: resv2.reconnectionToken, matchId, problemId };
-    await redis.set(`queue:reservation:${players[0]}`, JSON.stringify(store1), 'EX', 300);
-    await redis.set(`queue:reservation:${players[1]}`, JSON.stringify(store2), 'EX', 300);
-    await redis.publish('events:match', JSON.stringify({ type: 'match_created', matchId, players, problemId, at: Date.now() }));
-    ctx.body = { success: true, matchId };
-  } catch (e) {
-    ctx.status = 500;
-    ctx.body = { error: 'create_failed' };
-  }
-});
+// Removed: /admin/create-match endpoint
+// Matchmaking is now handled by backend/colyseus/workers/matchmaker.ts
+// which runs automatically in the background
 
 // Validate generated problem solutions (called by Next.js admin)
 router.post('/admin/validate-solutions', async (ctx) => {
@@ -262,6 +243,9 @@ gameServer.define('match', MatchRoom);
 
 gameServer.listen(port).then(async () => {
   console.log(`Colyseus listening on :${port}`);
-  console.log('Matchmaking is now handled by QueueRoom - players join via joinOrCreate');
+  
+  // Start the background matchmaker
+  startMatchmaker(gameServer);
+  console.log('Background matchmaker started');
 });
 

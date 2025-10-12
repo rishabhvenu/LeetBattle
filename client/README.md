@@ -166,23 +166,6 @@ All authentication and data operations use Next.js server actions:
 - **Real-time State**: Colyseus rooms
 - **Client State**: React hooks (local UI state)
 
-## Known Limitations
-
-### Queue Worker
-⚠️ **Important**: The matchmaking worker runs via `setInterval` in a server action (`lib/queueWorker.ts`)
-
-**Works:**
-- ✅ Local development
-- ✅ Dedicated servers (DigitalOcean, AWS EC2)
-
-**Doesn't Work:**
-- ❌ Serverless platforms (Vercel, Netlify)
-
-**For serverless deployment**, you need to:
-1. Move queue worker to separate Node.js service
-2. Use Bull/BullMQ with Redis for job scheduling
-3. Use external cron job hitting an API endpoint
-
 ## Production Deployment
 
 ### Vercel (Recommended for Frontend)

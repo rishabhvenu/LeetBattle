@@ -93,14 +93,17 @@ services:
       context: ./colyseus
       dockerfile: Dockerfile
     container_name: codeclashers-colyseus
+    env_file:
+      - .env
     environment:
       PORT: 2567
       REDIS_HOST: codeclashers-redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-devpassword}
-      MONGODB_URI: mongodb://codeclashers-mongodb:27017
+      MONGODB_URI: ${MONGODB_URI:-mongodb://codeclashers-mongodb:27017/codeclashers}
       JUDGE0_URL: http://codeclashers-judge0:2358
       NODE_ENV: ${NODE_ENV:-production}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     depends_on:
       - redis
       - mongodb

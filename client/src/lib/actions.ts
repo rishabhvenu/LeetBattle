@@ -7,7 +7,6 @@ import bcrypt from 'bcryptjs';
 import { generatePresignedUrl } from './minio';
 import { getRedis, RedisKeys } from './redis';
 import { ensureMatchEventsSubscriber } from './matchEventsSubscriber';
-import { ensureQueueWorker } from './queueWorker';
 import { ObjectId } from 'mongodb';
 
 const MONGODB_URI = process.env.MONGODB_URI!;
@@ -420,9 +419,9 @@ export async function getOngoingMatchesCount(): Promise<number> {
 }
 
 // Queueing and match orchestration (server actions)
+// Note: Matchmaking is now handled entirely by backend Colyseus matchmaker
 export async function enqueueUser(userId: string, rating: number) {
   ensureMatchEventsSubscriber();
-  ensureQueueWorker();
   const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
   const res = await fetch(`${base}/queue/enqueue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, rating }) });
   if (!res.ok) return { success: false };
@@ -431,7 +430,6 @@ export async function enqueueUser(userId: string, rating: number) {
 
 export async function dequeueUser(userId: string) {
   ensureMatchEventsSubscriber();
-  ensureQueueWorker();
   const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
   const res = await fetch(`${base}/queue/dequeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
   if (!res.ok) return { success: false };
@@ -533,11 +531,11 @@ function generateStarterCode(signature: any) {
   const jsParams = parameters.map((p: any) => p.name).join(', ');
   starterCode.javascript = `class Solution {
     /**
-     * @param {${parameters.map((p: any) => `${p.type} ${p.name}`).join(', ')}}
-     * @return {${returnType}}
-     */
+ * @param {${parameters.map((p: any) => `${p.type} ${p.name}`).join(', ')}}
+ * @return {${returnType}}
+ */
     ${functionName}(${jsParams}) {
-        // Your code here
+    // Your code here
     }
 }`;
   
@@ -545,14 +543,14 @@ function generateStarterCode(signature: any) {
   const pyParams = parameters.map((p: any) => p.name).join(', ');
   starterCode.python = `class Solution:
     def ${functionName}(self, ${pyParams}):
-        """
-        Args:
+    """
+    Args:
             ${parameters.map((p: any) => `${p.name}: ${p.type}`).join('\n            ')}
-        Returns:
-            ${returnType}
-        """
-        # Your code here
-        pass`;
+    Returns:
+        ${returnType}
+    """
+    # Your code here
+    pass`;
   
   // Java
   const javaParams = parameters.map((p: any) => `${convertToJavaType(p.type)} ${p.name}`).join(', ');
@@ -865,12 +863,12 @@ export async function persistMatchFromState(state: any) {
     };
     
     try {
-      const result = await submissions.findOneAndUpdate(
-        { token },
-        { $setOnInsert: doc, $set: { status: doc.status, stdout: doc.stdout, stderr: doc.stderr, compileOutput: doc.compileOutput, time: doc.time, memory: doc.memory } },
-        { upsert: true, returnDocument: 'after' }
-      );
-      if (result.value?._id) insertedIds.push(result.value._id as ObjectId);
+    const result = await submissions.findOneAndUpdate(
+      { token },
+      { $setOnInsert: doc, $set: { status: doc.status, stdout: doc.stdout, stderr: doc.stderr, compileOutput: doc.compileOutput, time: doc.time, memory: doc.memory } },
+      { upsert: true, returnDocument: 'after' }
+    );
+    if (result.value?._id) insertedIds.push(result.value._id as ObjectId);
     } catch (error) {
       console.error(`Error upserting submission ${token}:`, error);
     }
@@ -902,7 +900,7 @@ export async function persistMatchFromState(state: any) {
   } as any;
   
   try {
-    await matches.updateOne({ _id: matchDoc._id }, { $set: matchDoc }, { upsert: true });
+  await matches.updateOne({ _id: matchDoc._id }, { $set: matchDoc }, { upsert: true });
   } catch (error) {
     console.error(`Error upserting match ${state.matchId}:`, error);
     throw error;

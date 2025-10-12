@@ -59,7 +59,7 @@ All services should show status "Up" or "healthy".
 
 ## Colyseus Game Server
 
-The Colyseus server handles real-time match logic:
+The Colyseus server handles real-time match logic and matchmaking:
 
 ```
 colyseus/
@@ -76,10 +76,18 @@ colyseus/
 │   │   ├── queue.ts          # Queue operations
 │   │   └── redis.ts          # Redis client
 │   └── workers/
-│       └── matchmaker.ts     # Background matchmaking
+│       └── matchmaker.ts     # Background matchmaking (runs every 1s)
 ├── Dockerfile
 └── package.json
 ```
+
+**Matchmaking Flow:**
+1. Players join queue via `/queue/enqueue` (adds to Redis sorted set)
+2. Background matchmaker polls every 1 second
+3. Pairs players by ELO rating (±200 range)
+4. Selects random problem from `client/problems.json`
+5. Creates Colyseus MatchRoom
+6. Stores reservations in Redis for players to join
 
 ### Colyseus Development
 
