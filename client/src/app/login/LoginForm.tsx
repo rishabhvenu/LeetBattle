@@ -11,32 +11,32 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { motion } from "framer-motion";
+import { useFormState, useFormStatus } from "react-dom";
+
+function SubmitButton() {
+  const { pending } = useFormStatus();
+  return (
+    <Button
+      type="submit"
+      className="w-full text-white"
+      style={{ backgroundColor: '#2599D4' }}
+      disabled={pending}
+    >
+      {pending ? "Signing In..." : "Sign In"}
+    </Button>
+  );
+}
 
 export default function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSubmit = async (formData: FormData) => {
-    setIsLoading(true);
-    setError('');
-
-    try {
-      const result = await loginUser(formData);
-      
-      if (result?.error) {
-        setError(result.error);
-      }
-    } catch (error) {
-      setError('An error occurred during login. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const [state, formAction] = useFormState(loginUser, { error: '' });
 
   return (
-    <form action={handleSubmit}>
+    <form action={formAction}>
       <CardContent className="space-y-4">
+        {state?.error && (
+          <div className="text-red-600 text-sm text-center">{state.error}</div>
+        )}
         <motion.div
           className="space-y-2"
           initial={{ opacity: 0, x: -20 }}
@@ -85,13 +85,13 @@ export default function LoginForm() {
             </button>
           </div>
         </motion.div>
-        {error && (
+        {state?.error && (
           <motion.div
             className="text-red-600 text-sm text-center p-2 bg-red-50 rounded-md border border-red-200"
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
           >
-            {error}
+            {state.error}
           </motion.div>
         )}
       </CardContent>
@@ -101,14 +101,7 @@ export default function LoginForm() {
           whileHover={{ scale: 1.05 }}
           whileTap={{ scale: 0.95 }}
         >
-          <Button
-            type="submit"
-            className="w-full text-white transition-colors duration-300 rounded-full"
-            style={{ backgroundColor: '#2599D4' }}
-            disabled={isLoading}
-          >
-            {isLoading ? "Signing In..." : "Sign In"}
-          </Button>
+          <SubmitButton />
         </motion.div>
         <motion.div
           className="text-center text-sm text-black/70"

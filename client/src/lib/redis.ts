@@ -18,6 +18,7 @@ export const RedisKeys = {
   matchKey: (matchId: string) => `match:${matchId}`,
   // Per-match, per-user source code storage (hash of language -> code)
   matchUserCodeHash: (matchId: string, userId: string) => `match:${matchId}:code:${userId}`,
+  matchEventsChannel: 'events:match',
 } as const;
 
 

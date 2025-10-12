@@ -12,7 +12,7 @@ export async function ensureMatchEventsSubscriber() {
   started = true;
   const redis = getRedis();
   const sub = redis.duplicate();
-  sub.subscribe(RedisKeys.matchEventsChannel || 'events:match', (err) => {
+  sub.subscribe(RedisKeys.matchEventsChannel, (err) => {
     if (err) { started = false; return; }
   });
   sub.on('message', async (_channel, message) => {

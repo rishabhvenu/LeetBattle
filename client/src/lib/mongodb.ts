@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { MongoClient } from 'mongodb';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -47,6 +48,21 @@ async function connectDB() {
   }
 
   return cached.conn;
+}
+
+// MongoClient singleton for native driver operations
+let clientPromise: Promise<MongoClient> | null = null;
+
+export async function getMongoClient(): Promise<MongoClient> {
+  if (!clientPromise) {
+    const client = new MongoClient(MONGODB_URI, {
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    clientPromise = client.connect();
+  }
+  return clientPromise;
 }
 
 export default connectDB;

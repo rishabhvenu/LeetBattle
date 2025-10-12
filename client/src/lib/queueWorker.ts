@@ -56,7 +56,7 @@ async function tick() {
 
 async function chooseProblemId(): Promise<string> {
   try {
-    const file = path.join(process.cwd(), 'src', 'problems.json');
+    const file = path.join(process.cwd(), 'problems.json');
     const raw = fs.readFileSync(file, 'utf-8');
     const obj = JSON.parse(raw);
     const keys = Object.keys(obj);

@@ -2,13 +2,13 @@
 
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
-import connectDB from './mongodb';
+import connectDB, { getMongoClient } from './mongodb';
 import bcrypt from 'bcryptjs';
 import { generatePresignedUrl } from './minio';
 import { getRedis, RedisKeys } from './redis';
 import { ensureMatchEventsSubscriber } from './matchEventsSubscriber';
 import { ensureQueueWorker } from './queueWorker';
-import { MongoClient, ObjectId } from 'mongodb';
+import { ObjectId } from 'mongodb';
 
 const MONGODB_URI = process.env.MONGODB_URI!;
 const DB_NAME = 'codeclashers';
@@ -85,8 +85,7 @@ export async function registerUser(formData: FormData) {
 
   try {
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const users = db.collection(USERS_COLLECTION);
@@ -97,7 +96,6 @@ export async function registerUser(formData: FormData) {
     });
 
     if (existingUser) {
-      await client.close();
       return { error: 'User with this email or username already exists' };
     }
 
@@ -132,7 +130,6 @@ export async function registerUser(formData: FormData) {
     };
 
     const result = await users.insertOne(newUser);
-    await client.close();
 
     if (result.insertedId) {
       // Create session
@@ -162,15 +159,13 @@ export async function loginUser(formData: FormData) {
 
   try {
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const users = db.collection(USERS_COLLECTION);
 
     // Find user by email
     const user = await users.findOne({ email });
-    await client.close();
 
     if (!user) {
       return { error: 'Invalid credentials' };
@@ -188,7 +183,6 @@ export async function loginUser(formData: FormData) {
       { _id: user._id },
       { $set: { lastLogin: new Date() } }
     );
-    await client.close();
 
     // Create session
     await createSession(user._id.toString(), user.email, user.username);
@@ -214,8 +208,7 @@ export async function getSession(): Promise<SessionData> {
     }
 
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const sessions = db.collection(SESSIONS_COLLECTION);
@@ -226,7 +219,6 @@ export async function getSession(): Promise<SessionData> {
       expires: { $gt: new Date() }
     });
     
-    await client.close();
     
     if (session && session.userId) {
       return {
@@ -258,7 +250,6 @@ export async function logoutUser() {
       
       // Remove session from MongoDB
       await sessions.deleteOne({ _id: sessionId });
-      await client.close();
     }
 
     // Clear cookie
@@ -279,8 +270,7 @@ async function createSession(userId: string, email: string, username: string) {
     const sessionId = crypto.randomUUID();
     
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const users = db.collection(USERS_COLLECTION);
@@ -307,7 +297,6 @@ async function createSession(userId: string, email: string, username: string) {
     
     // Store session in MongoDB
     await sessions.insertOne(sessionData);
-    await client.close();
     
     // Set session cookie
     const cookieStore = await cookies();
@@ -341,8 +330,7 @@ export async function saveUserAvatar(fileName: string) {
     if (!sessionId) return { success: false, error: 'No session' };
 
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
 
     const db = client.db(DB_NAME);
     const sessions = db.collection(SESSIONS_COLLECTION);
@@ -363,7 +351,6 @@ export async function saveUserAvatar(fileName: string) {
       );
     }
 
-    await client.close();
     return { success: true };
   } catch (error) {
     console.error('Error saving user avatar:', error);
@@ -385,8 +372,7 @@ export async function getUserStatsCached(userId: string) {
 
   // Fallback: compute from matches
   await connectDB();
-  const client = new MongoClient(MONGODB_URI);
-  await client.connect();
+  const client = await getMongoClient();
   const db = client.db(DB_NAME);
   const matches = db.collection('matches');
   const users = db.collection('users');
@@ -411,7 +397,6 @@ export async function getUserStatsCached(userId: string) {
     globalRank,
     rating,
   };
-  await client.close();
 
   // Cache with TTL (e.g., 5 minutes)
   await redis.set(key, JSON.stringify(stats), 'EX', 300);
@@ -426,13 +411,11 @@ export async function getOngoingMatchesCount(): Promise<number> {
   if (count && count > 0) return count;
 
   await connectDB();
-  const client = new MongoClient(MONGODB_URI);
-  await client.connect();
+  const client = await getMongoClient();
   const db = client.db(DB_NAME);
   const matches = db.collection('matches');
   // Consider a match ongoing if it has no endedAt
   const mongoCount = await matches.countDocuments({ endedAt: { $exists: false } });
-  await client.close();
   return mongoCount;
 }
 
@@ -505,12 +488,10 @@ export async function getMatchData(matchId: string, userId: string) {
     
     // Get opponent user info for name
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     const db = client.db(DB_NAME);
     const users = db.collection('users');
     const opponentUser: any = await users.findOne({ _id: new ObjectId(opponentUserId) });
-    await client.close();
     
     // Generate starter code if not present
     const starterCode = problem.starterCode || generateStarterCode(problem.signature);
@@ -821,10 +802,9 @@ async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: st
   console.log('Player stats and ratings updated successfully');
 }
 
-async function persistMatchFromState(state: any) {
+export async function persistMatchFromState(state: any) {
   await connectDB();
-  const client = new MongoClient(MONGODB_URI);
-  await client.connect();
+  const client = await getMongoClient();
   const db = client.db(DB_NAME);
   const matches = db.collection('matches');
   const submissions = db.collection('submissions');
@@ -895,7 +875,6 @@ async function persistMatchFromState(state: any) {
   
   console.log(`Successfully cleaned up Redis data for match ${state.matchId}`);
   
-  await client.close();
 }
 
 async function ensureIndexes(db: any) {
@@ -1058,8 +1037,7 @@ function determineDifficultyFromRating(rating1: number, rating2: number): Diffic
 export async function selectRandomProblem(difficulty: Difficulty) {
   try {
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const problemsCollection = db.collection('problems');
@@ -1075,7 +1053,6 @@ export async function selectRandomProblem(difficulty: Difficulty) {
       ])
       .toArray();
 
-    await client.close();
 
     if (problems.length === 0) {
       console.warn(`No verified problems found with difficulty: ${difficulty}`);
@@ -1325,14 +1302,12 @@ Task:
 
     // Connect to MongoDB and insert
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const problemsCollection = db.collection('problems');
 
     const result = await problemsCollection.insertOne(problemDoc);
-    await client.close();
 
     console.log(`Problem stored successfully with ID: ${result.insertedId}`);
 
@@ -1366,8 +1341,7 @@ export async function verifyProblemSolutions(problemId: string) {
     
     // Get the problem from MongoDB
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const problemsCollection = db.collection('problems');
@@ -1375,7 +1349,6 @@ export async function verifyProblemSolutions(problemId: string) {
     const problem = await problemsCollection.findOne({ 
       _id: new ObjectId(problemId) 
     });
-    await client.close();
 
     if (!problem) {
       return { success: false, error: 'Problem not found' };
@@ -1409,8 +1382,7 @@ export async function verifyProblemSolutions(problemId: string) {
 
     // Update problem with verification status (whether success or failure)
     await connectDB();
-    const updateClient = new MongoClient(MONGODB_URI);
-    await updateClient.connect();
+    const updateClient = await getMongoClient();
     
     const updateDb = updateClient.db(DB_NAME);
     const updateProblemsCollection = updateDb.collection('problems');
@@ -1458,7 +1430,6 @@ export async function verifyProblemSolutions(problemId: string) {
           }
         }
       );
-      await updateClient.close();
 
       return {
         success: false,
@@ -1482,7 +1453,6 @@ export async function verifyProblemSolutions(problemId: string) {
         }
       }
     );
-    await updateClient.close();
 
     return {
       success: true,
@@ -1505,8 +1475,7 @@ export async function verifyProblemSolutions(problemId: string) {
 export async function getUnverifiedProblems() {
   try {
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const problemsCollection = db.collection('problems');
@@ -1522,7 +1491,6 @@ export async function getUnverifiedProblems() {
       .sort({ createdAt: -1 }) // Most recent first
       .toArray();
 
-    await client.close();
 
     // Serialize ObjectIds and Dates for client components
     return unverifiedProblems.map(problem => ({
@@ -1547,8 +1515,7 @@ export async function getUnverifiedProblems() {
 export async function getProblemById(problemId: string) {
   try {
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const problemsCollection = db.collection('problems');
@@ -1557,7 +1524,6 @@ export async function getProblemById(problemId: string) {
       _id: new ObjectId(problemId) 
     });
 
-    await client.close();
 
     if (!problem) {
       return null;
@@ -1589,8 +1555,7 @@ export async function updateProblem(problemId: string, updates: {
 }) {
   try {
     await connectDB();
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const problemsCollection = db.collection('problems');
@@ -1612,7 +1577,6 @@ export async function updateProblem(problemId: string, updates: {
       { $set: updateData }
     );
 
-    await client.close();
 
     return { success: true };
   } catch (error: any) {

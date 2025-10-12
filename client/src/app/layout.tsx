@@ -1,11 +1,9 @@
 "use client";
 
-import { StrictMode, useState, useEffect, createContext } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useEffect, createContext } from "react";
 import PlaceholderSocketService from "@/services/PlaceholderSocketService";
 import PlaceholderRestService from "@/services/PlaceholderRestService";
 import { ToastContainer } from "@/components/ToastContainer";
-import { toast } from "react-toastify";
 import "./globals.css";
 
 const restService = new PlaceholderRestService();
@@ -18,9 +16,6 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const router = useRouter();
-  const pathname = usePathname();
-
   useEffect(() => {
     (async () => {
       await socketService.connect();
