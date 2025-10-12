@@ -51,6 +51,18 @@ export class MatchRoom extends Room {
         }
       }
     }
+    
+    // If still no problem data, fetch from MongoDB
+    if (!problemData && this.problemId && this.problemId !== 'pending') {
+      console.log(`Fetching problem ${this.problemId} from MongoDB`);
+      try {
+        problemData = await getProblemWithTestCases(this.problemId);
+        this.problemData = problemData;
+        console.log(`Problem loaded: ${problemData?.title || 'Unknown'}`);
+      } catch (error) {
+        console.error(`Failed to load problem ${this.problemId}:`, error);
+      }
+    }
 
     // Don't use setState - we're not syncing state via Colyseus
     // Everything is stored in Redis
@@ -70,7 +82,8 @@ export class MatchRoom extends Room {
       obj.status = 'ongoing';
       obj.startedAt = new Date().toISOString();
       obj.players = obj.players || []; // Initialize players array if not set
-      if (problemData && !obj.problem) {
+      // Always set problem data if we have it
+      if (problemData) {
         obj.problem = problemData;
       }
     });
