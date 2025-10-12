@@ -745,6 +745,122 @@ OPENAI_API_KEY=sk-proj-...
 
 ---
 
+### 🛡️ Edge-Level Protection (AWS WAF + Shield)
+
+#### Use AWS WAF for CloudFront
+
+**This is the first and easiest layer — handled fully by AWS, no code needed.**
+
+Attach WAF to CloudFront and create rate-based rules:
+
+```bash
+# Create WAF WebACL
+aws wafv2 create-web-acl \
+  --name leetbattle-waf \
+  --scope CLOUDFRONT \
+  --default-action Allow={} \
+  --region us-east-1 \
+  --rules '[
+    {
+      "Name": "RateLimitAPI",
+      "Priority": 1,
+      "Statement": {
+        "RateBasedStatement": {
+          "Limit": 1000,
+          "AggregateKeyType": "IP",
+          "ScopeDownStatement": {
+            "ByteMatchStatement": {
+              "FieldToMatch": {
+                "UriPath": {}
+              },
+              "PositionalConstraint": "STARTS_WITH",
+              "SearchString": "/api/"
+            }
+          }
+        }
+      },
+      "Action": {
+        "Block": {}
+      },
+      "VisibilityConfig": {
+        "SampledRequestsEnabled": true,
+        "CloudWatchMetricsEnabled": true,
+        "MetricName": "RateLimitAPI"
+      }
+    }
+  ]'
+
+# Associate WAF with CloudFront distribution
+aws wafv2 associate-web-acl \
+  --web-acl-arn arn:aws:wafv2:us-east-1:xxx:global/webacl/leetbattle-waf/xxx \
+  --resource-arn arn:aws:cloudfront::xxx:distribution/xxx
+```
+
+#### WAF Configuration
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| **Scope** | CloudFront | Edge-level protection |
+| **Rule Type** | Rate-based | Limit requests per IP |
+| **Limit** | 1000 requests per 5 minutes | Prevent abuse |
+| **Action** | Block or Throttle | Stop excessive requests |
+| **Path Condition** | `/api/*` or `/actions/*` | Protect server actions |
+
+**✅ Handles:**
+- 🛡️ Global DDoS-style spam
+- 🤖 Anonymous scraping and bots
+- 🚫 API abuse and brute force attempts
+- 📊 Provides CloudWatch metrics
+
+#### Additional WAF Rules (Recommended)
+
+```bash
+# Block common attack patterns
+- SQL Injection protection (AWS Managed Rule)
+- XSS protection (AWS Managed Rule)
+- Known bad inputs (AWS Managed Rule)
+- Geographic restrictions (if needed)
+
+# Example: Add AWS Managed Rules
+aws wafv2 update-web-acl \
+  --scope CLOUDFRONT \
+  --id xxx \
+  --name leetbattle-waf \
+  --add-managed-rule-group-statement \
+    Name=AWSManagedRulesCommonRuleSet
+```
+
+#### AWS Shield Standard (Free DDoS Protection)
+
+**Automatically enabled for CloudFront and ALB:**
+- ✅ Protection against common DDoS attacks (SYN floods, UDP floods)
+- ✅ Automatic attack detection and mitigation
+- ✅ No additional cost
+- ✅ Works alongside WAF
+
+**Optional: AWS Shield Advanced ($3000/month)**
+- 24/7 DDoS Response Team (DRT)
+- Advanced attack mitigation
+- Cost protection (refunds for scaling costs during attacks)
+- Only needed for high-value targets
+
+#### CloudWatch Alarms for WAF
+
+```bash
+# Alert on rate limit triggers
+aws cloudwatch put-metric-alarm \
+  --alarm-name leetbattle-rate-limit-alert \
+  --metric-name BlockedRequests \
+  --namespace AWS/WAFV2 \
+  --statistic Sum \
+  --period 300 \
+  --threshold 100 \
+  --comparison-operator GreaterThanThreshold \
+  --evaluation-periods 1
+```
+
+---
+
 ### Alternative: All-in-One VPS Deployment
 
 For simpler deployment (single DigitalOcean/Linode droplet):
