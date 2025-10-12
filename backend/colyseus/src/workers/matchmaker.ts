@@ -1,48 +1,67 @@
 import { Server, matchMaker } from 'colyseus';
 import { getRedis, RedisKeys } from '../lib/redis';
-import fs from 'fs';
-import path from 'path';
+import { MongoClient, ObjectId } from 'mongodb';
 
 type QueueEntry = { userId: string; rating: number; joinedAt: number };
 
 function now() { return Date.now(); }
 
-// Cache problem list to avoid re-reading file on every tick
-let problemCache: Record<string, any> | null = null;
-let problemCacheLoaded = false;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
+const DB_NAME = 'codeclashers';
 
-function loadProblems(): Record<string, any> {
-  if (problemCacheLoaded && problemCache) {
-    return problemCache;
+// MongoDB client singleton
+let mongoClient: MongoClient | null = null;
+
+async function getMongoClient(): Promise<MongoClient> {
+  if (!mongoClient) {
+    mongoClient = new MongoClient(MONGODB_URI, {
+      maxPoolSize: 10,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    await mongoClient.connect();
   }
-  
-  try {
-    // Load problems.json from dist directory (copied during Docker build)
-    const file = path.join(__dirname, '..', 'problems.json');
-    const raw = fs.readFileSync(file, 'utf-8');
-    problemCache = JSON.parse(raw);
-    problemCacheLoaded = true;
-    console.log(`[Matchmaker] Loaded ${Object.keys(problemCache!).length} problems from problems.json`);
-    return problemCache!;
-  } catch (error) {
-    console.error('Error loading problems:', error);
-    problemCache = { 'two-sum': { difficulty: 'Easy' } }; // Fallback
-    problemCacheLoaded = true;
-    return problemCache;
-  }
+  return mongoClient;
 }
 
-// Problem selection (moved from Next.js)
-function chooseProblemId(): string {
-  const obj = loadProblems();
-  const keys = Object.keys(obj);
-  if (!keys.length) return 'two-sum'; // Fallback
-  
-  const difficulty = process.env.MATCH_DIFFICULTY || 'Medium';
-  const filtered = keys.filter((k) => obj[k]?.difficulty === difficulty);
-  const pool = filtered.length ? filtered : keys;
-  const pick = pool[Math.floor(Math.random() * pool.length)];
-  return pick;
+// Select random problem from MongoDB by difficulty
+async function chooseProblemId(difficulty: string = 'Medium'): Promise<string> {
+  try {
+    const client = await getMongoClient();
+    const db = client.db(DB_NAME);
+    const problemsCollection = db.collection('problems');
+    
+    // Select random problem matching difficulty
+    const problems = await problemsCollection
+      .aggregate([
+        { $match: { difficulty, verified: true } },
+        { $sample: { size: 1 } }
+      ])
+      .toArray();
+    
+    if (problems.length === 0) {
+      console.warn(`No verified ${difficulty} problems found, trying any difficulty`);
+      // Fallback: try any verified problem
+      const anyProblems = await problemsCollection
+        .aggregate([
+          { $match: { verified: true } },
+          { $sample: { size: 1 } }
+        ])
+        .toArray();
+      
+      if (anyProblems.length > 0) {
+        return anyProblems[0]._id.toString();
+      }
+      
+      throw new Error('No verified problems found in database');
+    }
+    
+    return problems[0]._id.toString();
+  } catch (error) {
+    console.error('Error selecting problem from MongoDB:', error);
+    // Return null to fail gracefully - match creation will be skipped
+    throw error;
+  }
 }
 
 export function startMatchmaker(server: Server) {
@@ -103,9 +122,12 @@ export function startMatchmaker(server: Server) {
       await redis.hset(`match:${matchId}:ratings`, 'userId2', bestPair[1].userId);
       await redis.expire(`match:${matchId}:ratings`, 300); // 5 minute TTL
 
-      // Select a problem based on difficulty
-      const problemId = chooseProblemId();
-      console.log(`Matchmaker: Selected problem ${problemId} for match ${matchId}`);
+      // Select a problem from MongoDB based on average rating
+      const avgRating = (bestPair[0].rating + bestPair[1].rating) / 2;
+      const difficulty = avgRating < 1400 ? 'Easy' : avgRating < 1800 ? 'Medium' : 'Hard';
+      
+      const problemId = await chooseProblemId(difficulty);
+      console.log(`Matchmaker: Selected problem ${problemId} (${difficulty}) for match ${matchId}`);
       
       // Use standalone matchMaker module (Colyseus 0.15 API)
       const room = await matchMaker.createRoom('match', { matchId, problemId, problemData: null });
