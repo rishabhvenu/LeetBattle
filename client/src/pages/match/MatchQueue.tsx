@@ -84,6 +84,30 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
       }
     };
 
+    // Poll for match reservation (background worker creates matches)
+    const checkForMatch = async () => {
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL}/queue/reservation?userId=${userId}`
+        );
+        
+        if (response.ok) {
+          console.log('Match reservation found! Redirecting...');
+          setQueueStatus('matched');
+          shouldCancelRef.current = false;
+          
+          // Leave queue room
+          if (queueRoomRef.current) {
+            try { queueRoomRef.current.leave(); } catch {}
+          }
+          
+          router.push('/match');
+        }
+      } catch (error) {
+        // No reservation yet, keep waiting
+      }
+    };
+
     const fetchQueueStats = async () => {
       // Mock stats for now
       setQueueStats({
@@ -97,10 +121,12 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
     fetchQueueStats();
 
     const statsInterval = setInterval(fetchQueueStats, 5000);
+    const matchCheckInterval = setInterval(checkForMatch, 1000); // Check every second
 
     return () => {
       isMounted = false;
       clearInterval(statsInterval);
+      clearInterval(matchCheckInterval);
       
       // Leave queue room on unmount if still waiting
       if (queueRoomRef.current && shouldCancelRef.current) {
