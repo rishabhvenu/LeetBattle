@@ -168,20 +168,36 @@ All authentication and data operations use Next.js server actions:
 
 ## Production Deployment
 
-### Vercel (Recommended for Frontend)
+### AWS Lambda + CloudFront (Recommended)
+
+**Deploy Next.js to Lambda using SST:**
 
 ```bash
-# Install Vercel CLI
-npm i -g vercel
+# Install SST
+npm install -g sst
 
-# Deploy
-vercel --prod
+# Initialize SST
+sst init
+
+# Deploy to AWS
+sst deploy --stage production
 ```
 
-**Environment Variables:**
-- Add all `.env.local` variables in Vercel dashboard
-- Update URLs to production domains
-- ⚠️ Queue worker won't work - deploy Colyseus separately
+**Environment Variables in Lambda:**
+- Set all `.env.local` variables in Lambda configuration
+- Update URLs to production domains:
+  - `NEXT_PUBLIC_COLYSEUS_HTTP_URL=https://api.yourapp.com`
+  - `NEXT_PUBLIC_COLYSEUS_WS_URL=wss://api.yourapp.com`
+  - `S3_ENDPOINT=https://s3.amazonaws.com`
+- Use MongoDB Atlas connection string
+- Configure IAM role for S3 access (preferred over access keys)
+
+**CloudFront Configuration:**
+- Origin 1: S3 bucket (static `_next` assets)
+- Origin 2: Lambda function URL (SSR, API routes)
+- Custom domain with SSL certificate from ACM
+
+See main README.md for complete Lambda deployment guide.
 
 ### Self-Hosted
 

@@ -423,17 +423,21 @@ docker-compose ps
 ```mermaid
 graph TB
     Internet[Internet] -->|HTTPS| CF[CloudFront CDN]
-    CF -->|Static Assets| Vercel[Vercel - Next.js]
+    CF -->|Static Assets| S3Static[S3 Static Assets]
+    CF -->|Dynamic Routes| Lambda[AWS Lambda<br/>Next.js SSR]
     
     Internet -->|WSS/HTTPS| ALB[Application Load Balancer<br/>Public Subnet]
     ALB -->|Private Network| EC2[AWS EC2 - Private Subnet<br/>Colyseus + Judge0 + Redis]
     
-    Vercel -->|Server Actions| ALB
-    EC2 -->|Secure Connection| Atlas[MongoDB Atlas]
-    EC2 -->|S3 API| S3[AWS S3<br/>Avatar Storage]
+    Lambda -->|Server Actions| ALB
+    Lambda -->|Database| Atlas[MongoDB Atlas]
+    EC2 -->|Database| Atlas
+    EC2 -->|S3 API| S3Avatars[AWS S3<br/>Avatar Storage]
+    Lambda -->|S3 API| S3Avatars
     
     style EC2 fill:#f9f,stroke:#333,stroke-width:4px
     style ALB fill:#bbf,stroke:#333,stroke-width:2px
+    style Lambda fill:#ffa,stroke:#333,stroke-width:2px
     style Internet fill:#ddd,stroke:#333,stroke-width:2px
 ```
 
@@ -441,11 +445,12 @@ graph TB
 
 | Service | Platform | Notes |
 |---------|----------|-------|
-| **Frontend (Next.js)** | Vercel / Netlify | Serverless, auto-scaling |
+| **Frontend (Next.js)** | CloudFront + Lambda | Serverless, auto-scaling, global CDN |
+| **Static Assets** | S3 + CloudFront | CSS, JS, images cached at edge |
 | **Backend (Colyseus + Judge0)** | AWS EC2 (Private Subnet) | t3.medium or larger |
-| **Redis** | AWS ElastiCache OR run on EC2 | Low-latency required |
-| **MongoDB** | MongoDB Atlas | Managed, backups included |
-| **Storage (Avatars)** | AWS S3 | Replace MinIO in production |
+| **Redis** | Run on EC2 (or ElastiCache) | Low-latency required for matchmaking |
+| **MongoDB** | MongoDB Atlas | Managed, backups, monitoring included |
+| **Storage (Avatars)** | AWS S3 | Native S3, not MinIO |
 
 ---
 
@@ -631,24 +636,112 @@ aws elbv2 create-listener \
   --default-actions Type=forward,TargetGroupArn=arn:...
 ```
 
-#### Step 5: Frontend (Vercel)
+#### Step 5: Frontend (CloudFront + Lambda)
+
+**Option A: Using SST (Recommended)**
 
 ```bash
-# Deploy to Vercel
-cd client
-vercel --prod
+# Install SST
+npm install -g sst
 
-# Set environment variables in Vercel dashboard:
-MONGODB_URI=mongodb+srv://...  # Atlas connection
+# Initialize SST in client directory
+cd client
+sst init
+
+# Create sst.config.ts
+cat > sst.config.ts <<EOF
+import { SSTConfig } from "sst";
+import { NextjsSite } from "sst/constructs";
+
+export default {
+  config(_input) {
+    return {
+      name: "leetbattle",
+      region: "us-east-1",
+    };
+  },
+  stacks(app) {
+    app.stack(function Site({ stack }) {
+      const site = new NextjsSite(stack, "site", {
+        environment: {
+          MONGODB_URI: process.env.MONGODB_URI!,
+          NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET!,
+          NEXT_PUBLIC_COLYSEUS_HTTP_URL: "https://api.yourapp.com",
+          NEXT_PUBLIC_COLYSEUS_WS_URL: "wss://api.yourapp.com",
+          AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID!,
+          AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY!,
+          S3_BUCKET_NAME: "leetbattle-avatars",
+          REDIS_HOST: process.env.REDIS_HOST!,
+          REDIS_PASSWORD: process.env.REDIS_PASSWORD!,
+        },
+      });
+      
+      stack.addOutputs({
+        SiteUrl: site.url,
+      });
+    });
+  },
+} satisfies SSTConfig;
+EOF
+
+# Deploy to AWS
+sst deploy --stage production
+```
+
+**Option B: Using Serverless Framework**
+
+```bash
+# Install Serverless Next.js
+npm install -g serverless
+npm install --save-dev serverless-nextjs-plugin
+
+# Create serverless.yml
+cat > serverless.yml <<EOF
+service: leetbattle-frontend
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+
+plugins:
+  - serverless-nextjs-plugin
+
+custom:
+  nextjs:
+    bucket: leetbattle-nextjs-bucket
+    cloudFront:
+      priceClass: PriceClass_100
+      defaultTTL: 0
+      minTTL: 0
+      maxTTL: 31536000
+EOF
+
+# Deploy
+serverless deploy
+```
+
+**Environment Variables for Lambda:**
+
+Set in AWS Lambda console or via SST/Serverless config:
+```env
+MONGODB_URI=mongodb+srv://...       # MongoDB Atlas
+NEXTAUTH_SECRET=...                 # Generate with openssl rand -base64 32
 NEXT_PUBLIC_COLYSEUS_HTTP_URL=https://api.yourapp.com
 NEXT_PUBLIC_COLYSEUS_WS_URL=wss://api.yourapp.com
-AWS_ACCESS_KEY_ID=AKIA...      # IAM user for S3
+AWS_ACCESS_KEY_ID=AKIA...          # IAM role (better) or access key
 AWS_SECRET_ACCESS_KEY=...
 S3_ENDPOINT=https://s3.amazonaws.com
 S3_BUCKET_NAME=leetbattle-avatars
-REDIS_HOST=your-ec2-private-ip  # Or ElastiCache endpoint
+REDIS_HOST=10.0.2.10               # EC2 private IP or ElastiCache
 REDIS_PASSWORD=your-production-password
+OPENAI_API_KEY=sk-proj-...
 ```
+
+**CloudFront Distribution:**
+- Origin 1: S3 bucket (static assets - `_next/static/*`)
+- Origin 2: Lambda function URL (SSR pages, API routes)
+- Cache behavior: Static assets cached, dynamic content forwarded to Lambda
 
 ---
 
@@ -683,11 +776,14 @@ pm2 start npm --name leetbattle -- start
 **1. Rotate All Credentials**
 - `.env` files currently contain development credentials
 - Generate strong passwords: `openssl rand -base64 32`
-- Update: `MINIO_ROOT_PASSWORD`, `REDIS_PASSWORD`, `JUDGE0_POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`
+- Update: `REDIS_PASSWORD`, `JUDGE0_POSTGRES_PASSWORD`, `NEXTAUTH_SECRET`
+- Create new `OPENAI_API_KEY` for production
 
-**2. Update CORS Configuration**
-- Edit `backend/minio-init/init.sh`
-- Replace `localhost` origins with your production domain
+**2. Update Service Endpoints**
+- Replace MinIO with AWS S3
+- Update MongoDB to Atlas connection string
+- Configure S3 bucket CORS for your CloudFront domain
+- Update environment variables in Lambda
 
 **3. Production Checklist:**
 - [ ] Credentials rotated (not using dev defaults)
