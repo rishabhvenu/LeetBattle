@@ -56,6 +56,7 @@ let clientPromise: Promise<MongoClient> | null = null;
 export async function getMongoClient(): Promise<MongoClient> {
   if (!clientPromise) {
     const client = new MongoClient(MONGODB_URI, {
+      monitorCommands: false,
       maxPoolSize: 10,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,

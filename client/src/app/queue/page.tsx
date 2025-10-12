@@ -18,8 +18,26 @@ export default async function QueuePage() {
   const existingReservation = await redis.get(`queue:reservation:${session.user!.id}`);
   
   if (existingReservation) {
-    console.log(`User ${session.user!.id} already has an active match, redirecting to match page`);
-    redirect('/match');
+    try {
+      const reservationData = JSON.parse(existingReservation);
+      
+      // Verify the match still exists in Redis before redirecting
+      const matchExists = await redis.exists(RedisKeys.matchKey(reservationData.matchId));
+      
+      if (matchExists) {
+        console.log(`User ${session.user!.id} already has an active match, redirecting to match page`);
+        redirect('/match');
+      } else {
+        // Match no longer exists, clear the stale reservation
+        console.log(`Match ${reservationData.matchId} no longer exists, clearing stale reservation`);
+        await redis.del(`queue:reservation:${session.user!.id}`);
+        // Continue to queue page
+      }
+    } catch (error) {
+      console.error('Error checking reservation:', error);
+      // Clear potentially corrupted reservation
+      await redis.del(`queue:reservation:${session.user!.id}`);
+    }
   }
 
   // Transform session for Layout component

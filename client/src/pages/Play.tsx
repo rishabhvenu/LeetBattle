@@ -69,10 +69,25 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
       const response = await fetch(`${base}/queue/reservation?userId=${encodeURIComponent(session._id)}`);
       
       if (response.ok) {
-        // User already has an active match reservation
-        console.log('User already has an active match, redirecting to match page');
-        router.push("/match");
-        return;
+        const data = await response.json();
+        
+        // Verify the match still exists before redirecting
+        const matchCheckResponse = await fetch(`${base}/match/snapshot?matchId=${encodeURIComponent(data.matchId)}`);
+        
+        if (matchCheckResponse.ok) {
+          // Match exists, redirect to it
+          console.log('User already has an active match, redirecting to match page');
+          router.push("/match");
+          return;
+        } else {
+          // Match doesn't exist, clear stale reservation
+          console.log('Match no longer exists, clearing stale reservation');
+          await fetch(`${base}/queue/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: session._id })
+          });
+        }
       }
     } catch (error) {
       // No active match or error checking, proceed to queue

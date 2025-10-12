@@ -139,18 +139,31 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         // Load full match data (problem and opponent)
         const matchDataResult = await getMatchData(matchId, userId);
         
-        if (matchDataResult.success) {
-          console.log('Match data loaded successfully');
-          
-          // Set problem data
-          if (matchDataResult.problem) {
-            setProblem(matchDataResult.problem);
-          }
-          
-          // Set opponent stats
-          if (matchDataResult.opponent) {
-            setOpponentStats(matchDataResult.opponent);
-          }
+        if (!matchDataResult.success) {
+          console.error('Failed to load match data:', matchDataResult.error);
+          // Clear potentially stale reservation and redirect to queue
+          await fetch(`${base}/queue/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId })
+          });
+          toast.error('Match no longer exists. Redirecting to queue...');
+          setTimeout(() => {
+            window.location.href = '/queue';
+          }, 2000);
+          return;
+        }
+        
+        console.log('Match data loaded successfully');
+        
+        // Set problem data
+        if (matchDataResult.problem) {
+          setProblem(matchDataResult.problem);
+        }
+        
+        // Set opponent stats
+        if (matchDataResult.opponent) {
+          setOpponentStats(matchDataResult.opponent);
         }
         
         // Load snapshot for saved code and submissions (time comes from WebSocket now)
@@ -256,6 +269,12 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           console.log('Successfully joined room:', room.id);
         } catch (joinError) {
           console.error('Join failed:', joinError);
+          // Clear the reservation since we couldn't join
+          await fetch(`${process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL}/queue/clear`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId })
+          });
           globalJoinPromise = null;
           throw joinError;
         }
@@ -304,13 +323,15 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         }
       });
       
-      // Listen for new submissions
+      // Listen for new submissions (from opponent or on reconnect)
       room.onMessage('new_submission', (payload) => {
         console.log('New submission received:', payload);
-        if (payload.userId === userId) {
-          // Add our own submission to the list
+        // Only handle opponent submissions here
+        // Our own submissions are handled in submission_result to avoid duplicates
+        if (payload.userId !== userId) {
           const formattedSubmission = formatSubmission(payload.submission);
-          setSubmissions(prev => [formattedSubmission, ...prev]);
+          // We could show opponent submissions in the future
+          console.log('Opponent submission:', formattedSubmission);
         }
       });
         
@@ -398,11 +419,11 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             // Add to submissions list
             setSubmissions(prev => [newSubmission, ...prev]);
             
-            // Switch to submissions tab
+            // Switch to submissions tab and show result
             setActiveTab('submissions');
             
-            // Open the modal with the new submission
-            setSelectedSubmission(newSubmission);
+            // Don't auto-open the modal - let user click to view details
+            // setSelectedSubmission(newSubmission);
             
             if (payload.allPassed) {
               toast.success('All test cases passed! You won! 🎉');
