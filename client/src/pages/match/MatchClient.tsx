@@ -426,13 +426,52 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             // setSelectedSubmission(newSubmission);
             
             if (payload.allPassed) {
-              toast.success('All test cases passed! You won! 🎉');
+              toast.success('All test cases passed! Analyzing time complexity... ⏳');
             } else {
               toast.warning(`${payload.passedTests}/${payload.totalTests} test cases passed`);
             }
           } else {
             toast.error(payload.error || 'Submission failed');
           }
+        });
+
+        room.onMessage('complexity_failed', (payload) => {
+          console.log('Complexity check failed:', payload);
+          
+          const complexitySubmission = {
+            id: Date.now(),
+            status: 'Time Complexity Failed',
+            errorType: 'complexity',
+            language: language.charAt(0).toUpperCase() + language.slice(1),
+            time: 'Just now',
+            runtime: '—',
+            memory: '—',
+            date: new Date().toLocaleString('en-US', { 
+              month: 'short', 
+              day: 'numeric', 
+              year: 'numeric', 
+              hour: 'numeric', 
+              minute: 'numeric', 
+              hour12: true 
+            }),
+            passedTests: payload.totalTests || 0,
+            totalTests: payload.totalTests || 0,
+            timeComplexity: payload.derivedComplexity || 'Unknown',
+            expectedComplexity: payload.expectedComplexity,
+            spaceComplexity: 'O(1)',
+            code: code,
+            complexityError: payload.message || 'Your solution does not meet the required time complexity.'
+          };
+          
+          setSubmissions(prev => [complexitySubmission, ...prev]);
+          setActiveTab('submissions');
+          
+          toast.error(
+            `❌ Time Complexity Failed!\n` +
+            `Expected: ${payload.expectedComplexity}\n` +
+            `Your solution: ${payload.derivedComplexity}`,
+            { autoClose: 8000 }
+          );
         });
 
         // Store matchId on room for later access
@@ -1158,6 +1197,41 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
                 <h3 className="text-lg font-semibold text-gray-700 mb-4">System Error</h3>
                 <div className="bg-gray-100 rounded-lg p-4 border border-gray-300">
                   <pre className="text-sm text-gray-800 font-mono whitespace-pre-wrap">{selectedSubmission.systemError}</pre>
+                </div>
+              </div>
+            )}
+
+            {/* Time Complexity Failed Section */}
+            {selectedSubmission.errorType === 'complexity' && selectedSubmission.complexityError && (
+              <div className="p-6 bg-rose-50 border-b border-rose-200">
+                <h3 className="text-lg font-semibold text-rose-700 mb-4">Time Complexity Failed</h3>
+                <div className="space-y-4">
+                  <div className="bg-rose-100 rounded-lg p-4 border border-rose-300">
+                    <p className="text-sm text-rose-800 mb-3">{selectedSubmission.complexityError}</p>
+                    <div className="grid grid-cols-2 gap-4 mt-3">
+                      <div>
+                        <h4 className="text-xs font-semibold text-rose-700 mb-1">Expected Complexity:</h4>
+                        <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
+                          {selectedSubmission.expectedComplexity || 'N/A'}
+                        </code>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-rose-700 mb-1">Your Complexity:</h4>
+                        <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
+                          {selectedSubmission.timeComplexity}
+                        </code>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
+                    <h4 className="text-sm font-semibold text-blue-700 mb-2">💡 Optimization Tips:</h4>
+                    <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
+                      <li>Review your algorithm for nested loops or recursion</li>
+                      <li>Consider using hash maps/sets for O(1) lookups</li>
+                      <li>Look for opportunities to use sorting or binary search</li>
+                      <li>Avoid redundant computations with dynamic programming</li>
+                    </ul>
+                  </div>
                 </div>
               </div>
             )}

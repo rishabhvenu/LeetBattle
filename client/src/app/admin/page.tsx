@@ -30,6 +30,7 @@ type UnverifiedProblem = {
     explanation: string | null;
   }>;
   constraints: string[];
+  timeComplexity?: string;
   signature?: {
     functionName: string;
     parameters: Array<{ name: string; type: string }>;
@@ -486,6 +487,11 @@ export default function AdminPage() {
                             <Badge variant="secondary" className="bg-gray-600 text-white">
                               {problem.difficulty}
                             </Badge>
+                            {problem.timeComplexity && (
+                              <Badge variant="outline" className="border-blue-500 text-blue-300">
+                                {problem.timeComplexity}
+                              </Badge>
+                            )}
                             {problem.topics && problem.topics.length > 0 && (
                               <Badge variant="outline" className="border-gray-500 text-gray-300">
                                 {problem.topics.join(', ')}

@@ -3,6 +3,7 @@ import { getRedis, RedisKeys } from '../lib/redis';
 import { submitToJudge0, pollJudge0 } from '../lib/judge0';
 import { executeAllTestCases } from '../lib/testExecutor';
 import { getProblemWithTestCases } from '../lib/problemData';
+import { analyzeTimeComplexity } from '../lib/complexityAnalyzer';
 
 type PlayerState = {
   code: Record<string, string>;             // language -> code
@@ -208,8 +209,37 @@ export class MatchRoom extends Room {
           submission
         });
 
-        // If all tests passed, declare winner
+        // If all tests passed, analyze time complexity before declaring winner
         if (executionResult.allPassed) {
+          // Check if problem has time complexity requirement
+          if (problem.timeComplexity) {
+            try {
+              console.log(`Analyzing time complexity for user ${userId}, expected: ${problem.timeComplexity}`);
+              const complexityResult = await analyzeTimeComplexity(source_code, problem.timeComplexity);
+              
+              if (complexityResult.verdict === 'FAIL') {
+                // Complexity check failed - do not declare winner
+                console.log(`Time complexity check failed for user ${userId}. Derived: ${complexityResult.derived_complexity}, Expected: ${problem.timeComplexity}`);
+                
+                client.send('complexity_failed', {
+                  userId,
+                  derivedComplexity: complexityResult.derived_complexity,
+                  expectedComplexity: problem.timeComplexity,
+                  message: 'All tests passed, but your solution does not meet the required time complexity.'
+                });
+                
+                return; // Don't declare winner
+              }
+              
+              console.log(`Time complexity check passed for user ${userId}. Derived: ${complexityResult.derived_complexity}`);
+            } catch (complexityError) {
+              console.error('Error analyzing time complexity:', complexityError);
+              // If complexity analysis fails, we still declare winner (fail-safe)
+              // This prevents technical issues from blocking valid winners
+            }
+          }
+          
+          // All tests passed and complexity is OK (or no complexity requirement)
           await this.updateMatchBlob((obj) => {
             obj.winnerUserId = userId;
             obj.endedAt = new Date().toISOString();

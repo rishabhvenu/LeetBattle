@@ -531,25 +531,28 @@ function generateStarterCode(signature: any) {
   
   // JavaScript
   const jsParams = parameters.map((p: any) => p.name).join(', ');
-  starterCode.javascript = `/**
- * @param {${parameters.map((p: any) => `${p.type} ${p.name}`).join(', ')}}
- * @return {${returnType}}
- */
-function ${functionName}(${jsParams}) {
-    // Your code here
+  starterCode.javascript = `class Solution {
+    /**
+     * @param {${parameters.map((p: any) => `${p.type} ${p.name}`).join(', ')}}
+     * @return {${returnType}}
+     */
+    ${functionName}(${jsParams}) {
+        // Your code here
+    }
 }`;
   
   // Python
   const pyParams = parameters.map((p: any) => p.name).join(', ');
-  starterCode.python = `def ${functionName}(${pyParams}):
-    """
-    Args:
-        ${parameters.map((p: any) => `${p.name}: ${p.type}`).join('\n        ')}
-    Returns:
-        ${returnType}
-    """
-    # Your code here
-    pass`;
+  starterCode.python = `class Solution:
+    def ${functionName}(self, ${pyParams}):
+        """
+        Args:
+            ${parameters.map((p: any) => `${p.name}: ${p.type}`).join('\n            ')}
+        Returns:
+            ${returnType}
+        """
+        # Your code here
+        pass`;
   
   // Java
   const javaParams = parameters.map((p: any) => `${convertToJavaType(p.type)} ${p.name}`).join(', ');
@@ -810,46 +813,100 @@ export async function persistMatchFromState(state: any) {
   const submissions = db.collection('submissions');
   await ensureIndexes(db);
 
-  const tokens: string[] = Array.isArray(state.submissions) ? state.submissions : [];
-  const playerIds: string[] = Array.isArray(state.players) ? state.players : Object.keys(state.players || {});
+  // Extract player IDs from state
+  // Handle both array format and object format (keyed by userId)
+  let playerIds: string[] = [];
+  if (Array.isArray(state.players)) {
+    playerIds = state.players;
+  } else if (state.players && typeof state.players === 'object') {
+    playerIds = Object.keys(state.players);
+  }
 
+  // Process submissions - handle different formats
+  // Colyseus may store full submission objects or just tokens
   const insertedIds: ObjectId[] = [];
-  for (const token of tokens) {
-    const res = state.submissionResults?.[token];
-    if (!res) continue;
-    // upsert by unique token
+  const submissionsData = state.submissions || [];
+  
+  for (const item of submissionsData) {
+    let token: string;
+    let submissionData: any;
+    
+    // If item is a string, it's a token and we need to look up results
+    if (typeof item === 'string') {
+      token = item;
+      submissionData = state.submissionResults?.[token];
+      if (!submissionData) {
+        console.warn(`No submission results found for token: ${token}`);
+        continue;
+      }
+    } 
+    // If item is an object, it might be the full submission data
+    else if (typeof item === 'object' && item !== null) {
+      token = item.token || item.id;
+      submissionData = item;
+    } else {
+      console.warn(`Invalid submission item:`, item);
+      continue;
+    }
+
     const doc = {
       token,
       matchId: state.matchId,
       problemId: state.problemId,
-      userId: res?.meta?.userId || null,
-      language: res?.language?.name || res?.language_id || null,
-      status: res?.status,
-      stdout: res?.stdout || null,
-      stderr: res?.stderr || null,
-      compileOutput: res?.compile_output || null,
-      time: res?.time || null,
-      memory: res?.memory || null,
+      userId: submissionData?.meta?.userId || submissionData?.userId || null,
+      language: submissionData?.language?.name || submissionData?.language || submissionData?.language_id || null,
+      status: submissionData?.status || null,
+      stdout: submissionData?.stdout || null,
+      stderr: submissionData?.stderr || null,
+      compileOutput: submissionData?.compile_output || submissionData?.compileOutput || null,
+      time: submissionData?.time || null,
+      memory: submissionData?.memory || null,
       createdAt: new Date(),
     };
-    const result = await submissions.findOneAndUpdate(
-      { token },
-      { $setOnInsert: doc, $set: { status: doc.status, stdout: doc.stdout, stderr: doc.stderr, compileOutput: doc.compileOutput, time: doc.time, memory: doc.memory } },
-      { upsert: true, returnDocument: 'after' }
-    );
-    if (result.value?._id) insertedIds.push(result.value._id as ObjectId);
+    
+    try {
+      const result = await submissions.findOneAndUpdate(
+        { token },
+        { $setOnInsert: doc, $set: { status: doc.status, stdout: doc.stdout, stderr: doc.stderr, compileOutput: doc.compileOutput, time: doc.time, memory: doc.memory } },
+        { upsert: true, returnDocument: 'after' }
+      );
+      if (result.value?._id) insertedIds.push(result.value._id as ObjectId);
+    } catch (error) {
+      console.error(`Error upserting submission ${token}:`, error);
+    }
   }
+
+  // Safely convert player IDs to ObjectId format
+  const playerObjectIds = playerIds
+    .filter(id => id && typeof id === 'string')
+    .map((id) => {
+      try {
+        // Only convert if it's a valid ObjectId string
+        if (/^[0-9a-fA-F]{24}$/.test(id)) {
+          return new ObjectId(id);
+        }
+        return id;
+      } catch {
+        return id;
+      }
+    });
 
   const matchDoc = {
     _id: state.matchId,
-    playerIds: (playerIds || []).map((id) => new ObjectId(id).toString() === id ? new ObjectId(id) : id),
-    problemId: new ObjectId(state.problemId).toString() === state.problemId ? new ObjectId(state.problemId) : state.problemId,
+    playerIds: playerObjectIds,
+    problemId: state.problemId,
     status: 'finished',
-    winnerUserId: state.winnerUserId ? (new ObjectId(state.winnerUserId).toString() === state.winnerUserId ? new ObjectId(state.winnerUserId) : state.winnerUserId) : null,
+    winnerUserId: state.winnerUserId || null,
     endedAt: state.endedAt ? new Date(state.endedAt) : new Date(),
     submissionIds: insertedIds,
   } as any;
-  await matches.updateOne({ _id: matchDoc._id }, { $set: matchDoc }, { upsert: true });
+  
+  try {
+    await matches.updateOne({ _id: matchDoc._id }, { $set: matchDoc }, { upsert: true });
+  } catch (error) {
+    console.error(`Error upserting match ${state.matchId}:`, error);
+    throw error;
+  }
   
   // Update player stats and ratings
   const isDraw = state.isDraw || (!state.winnerUserId && state.endReason === 'timeout');
@@ -1290,10 +1347,11 @@ Task:
     // Skip verification for now - store problem immediately
     console.log('Storing problem without verification (can verify later)...');
 
-    // Combine both LLM responses with difficulty
+    // Combine both LLM responses with difficulty and timeComplexity
     const problemDoc = {
       ...generatedProblem,
       difficulty,
+      timeComplexity,
       solutions: solutionsData.solutions,
       testCases: solutionsData.testCases,
       createdAt: new Date(),

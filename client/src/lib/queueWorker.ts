@@ -4,6 +4,26 @@ import { getRedis, RedisKeys } from './redis';
 import fs from 'fs';
 import path from 'path';
 
+/**
+ * ⚠️ PRODUCTION WARNING: Queue Worker Architecture Issue
+ * 
+ * This implementation runs setInterval() inside a server action, which has critical limitations:
+ * 
+ * PROBLEMS:
+ * - Serverless platforms (Vercel, Netlify) don't support long-running intervals
+ * - Timers may leak across requests in development
+ * - Not guaranteed to run consistently in production
+ * - Single point of failure
+ * 
+ * RECOMMENDED SOLUTIONS:
+ * 1. Separate worker service (see SECURITY.md for Docker setup)
+ * 2. Use Bull/BullMQ job queue with Redis
+ * 3. External cron job calling an API endpoint
+ * 
+ * CURRENT STATUS: Works for development and dedicated servers only
+ * See SECURITY.md for detailed migration instructions
+ */
+
 const g: any = globalThis as any;
 let started = g.__queue_worker_started__ || false;
 g.__queue_worker_started__ = true;

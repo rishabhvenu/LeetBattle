@@ -58,7 +58,8 @@ export async function getProblemWithTestCases(problemId: string) {
       difficulty: problem.difficulty,
       signature: problem.signature,
       testCases: problem.testCases || [],
-      solutions: problem.solutions || {}
+      solutions: problem.solutions || {},
+      timeComplexity: problem.timeComplexity
     };
   } catch (error) {
     console.error('Error fetching problem:', error);

@@ -21,6 +21,7 @@ export interface ProblemDoc {
   description: string;
   examples: { input: string; output: string; explanation: string | null }[];
   constraints: string[];
+  timeComplexity?: string; // Target time complexity (e.g., "O(n)", "O(n log n)")
   signature?: {
     functionName: string;
     parameters: { name: string; type: string }[];
