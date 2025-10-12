@@ -405,29 +405,274 @@ docker-compose logs minio-init
 
 ## 📦 Deployment
 
-### Docker Compose (Recommended for VPS)
+### Development (Docker Compose)
 
 ```bash
-# Update environment variables for production
+# Local development - all services in Docker
 cd backend
-nano .env  # Set strong passwords
-
-# Build and start
-docker-compose up -d --build
+docker-compose up -d
 
 # Check all services
 docker-compose ps
 ```
 
-### Cloud Deployment Options
+### Production Architecture
 
-| Service | Recommended Platform |
-|---------|---------------------|
-| **Frontend** | Vercel, Netlify, Railway |
-| **Colyseus** | DigitalOcean Droplet, AWS EC2, Railway |
-| **MongoDB** | MongoDB Atlas (managed) |
-| **Redis** | Redis Cloud, AWS ElastiCache |
-| **MinIO** | AWS S3, DigitalOcean Spaces |
+#### Recommended AWS Setup
+
+```mermaid
+graph TB
+    Internet[Internet] -->|HTTPS| CF[CloudFront CDN]
+    CF -->|Static Assets| Vercel[Vercel - Next.js]
+    
+    Internet -->|WSS/HTTPS| ALB[Application Load Balancer<br/>Public Subnet]
+    ALB -->|Private Network| EC2[AWS EC2 - Private Subnet<br/>Colyseus + Judge0 + Redis]
+    
+    Vercel -->|Server Actions| ALB
+    EC2 -->|Secure Connection| Atlas[MongoDB Atlas]
+    EC2 -->|S3 API| S3[AWS S3<br/>Avatar Storage]
+    
+    style EC2 fill:#f9f,stroke:#333,stroke-width:4px
+    style ALB fill:#bbf,stroke:#333,stroke-width:2px
+    style Internet fill:#ddd,stroke:#333,stroke-width:2px
+```
+
+#### Production Services Distribution
+
+| Service | Platform | Notes |
+|---------|----------|-------|
+| **Frontend (Next.js)** | Vercel / Netlify | Serverless, auto-scaling |
+| **Backend (Colyseus + Judge0)** | AWS EC2 (Private Subnet) | t3.medium or larger |
+| **Redis** | AWS ElastiCache OR run on EC2 | Low-latency required |
+| **MongoDB** | MongoDB Atlas | Managed, backups included |
+| **Storage (Avatars)** | AWS S3 | Replace MinIO in production |
+
+---
+
+### 🔒 Production EC2 Security Setup
+
+#### 1️⃣ Keep EC2 Backend in Private Network
+
+**Goal:** Backend should NOT be publicly accessible from the internet.
+
+**Recommended Setup:**
+
+```
+VPC (10.0.0.0/16)
+├── Public Subnet (10.0.1.0/24)
+│   └── Application Load Balancer (ALB)
+│       - Security Group: Allow 443 from 0.0.0.0/0
+│       - SSL Certificate from ACM
+│
+└── Private Subnet (10.0.2.0/24)
+    └── EC2 Instance (NO PUBLIC IP)
+        - Colyseus (port 2567)
+        - Judge0 (port 2358)
+        - Redis (port 6379)
+        - Security Group: Only allow traffic from ALB security group
+```
+
+**Security Group Rules:**
+
+```hcl
+# ALB Security Group
+resource "aws_security_group" "alb" {
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]  # Public HTTPS
+  }
+  
+  egress {
+    from_port       = 2567
+    to_port         = 2567
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ec2.id]  # To EC2 only
+  }
+}
+
+# EC2 Security Group
+resource "aws_security_group" "ec2" {
+  ingress {
+    from_port       = 2567
+    to_port         = 2567
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]  # From ALB only
+  }
+  
+  ingress {
+    from_port       = 2358
+    to_port         = 2358
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]  # Judge0 from ALB
+  }
+  
+  # No public internet access
+}
+```
+
+**Why Private Subnet?**
+- ✅ Backend not exposed to internet attacks
+- ✅ Only accessible through ALB
+- ✅ ALB handles SSL termination
+- ✅ Can still access MongoDB Atlas and S3 via NAT Gateway
+- ✅ Better security posture
+
+---
+
+### Production Deployment Steps
+
+#### Step 1: Database (MongoDB Atlas)
+
+```bash
+# Create MongoDB Atlas cluster (free tier available)
+# 1. Go to https://www.mongodb.com/cloud/atlas
+# 2. Create cluster (M10+ for production)
+# 3. Whitelist EC2 private IP
+# 4. Get connection string
+```
+
+**Connection String:**
+```
+mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/leetbattle?retryWrites=true&w=majority
+```
+
+#### Step 2: Storage (AWS S3)
+
+```bash
+# Create S3 bucket
+aws s3 mb s3://leetbattle-avatars --region us-east-1
+
+# Enable public read for avatars
+aws s3api put-bucket-policy --bucket leetbattle-avatars --policy '{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "PublicReadGetObject",
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::leetbattle-avatars/*"
+  }]
+}'
+
+# Configure CORS
+aws s3api put-bucket-cors --bucket leetbattle-avatars --cors-configuration '{
+  "CORSRules": [{
+    "AllowedOrigins": ["https://yourapp.com"],
+    "AllowedMethods": ["GET", "PUT", "POST"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"]
+  }]
+}'
+```
+
+#### Step 3: Backend (EC2 in Private Subnet)
+
+```bash
+# Launch EC2 instance
+# - AMI: Ubuntu 22.04 LTS
+# - Instance Type: t3.medium (2 vCPU, 4GB RAM minimum)
+# - VPC: Your VPC
+# - Subnet: PRIVATE subnet (no auto-assign public IP)
+# - Security Group: ec2-backend-sg (allow 2567, 2358 from ALB only)
+
+# SSH via bastion host or AWS Systems Manager Session Manager
+# Install Docker
+sudo apt update && sudo apt install -y docker.io docker-compose
+
+# Deploy backend
+cd /opt
+git clone https://github.com/rishabhvenu/LeetBattle.git
+cd LeetBattle/backend
+
+# Create .env with PRODUCTION credentials
+cat > .env <<EOF
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/leetbattle
+REDIS_PASSWORD=$(openssl rand -base64 32)
+JUDGE0_POSTGRES_PASSWORD=$(openssl rand -base64 32)
+OPENAI_API_KEY=sk-proj-your-production-key
+NODE_ENV=production
+EOF
+
+# Start services (no MinIO - using S3)
+# Remove minio and minio-init from docker-compose or create production override
+docker-compose up -d
+```
+
+#### Step 4: Application Load Balancer
+
+```bash
+# Create Target Group
+aws elbv2 create-target-group \
+  --name leetbattle-backend \
+  --protocol HTTP \
+  --port 2567 \
+  --vpc-id vpc-xxxxx \
+  --health-check-path /
+
+# Register EC2 instance
+aws elbv2 register-targets \
+  --target-group-arn arn:aws:elasticloadbalancing:... \
+  --targets Id=i-xxxxx
+
+# Create ALB in public subnet
+aws elbv2 create-load-balancer \
+  --name leetbattle-alb \
+  --subnets subnet-public1 subnet-public2 \
+  --security-groups sg-alb
+
+# Create HTTPS listener (requires SSL cert from ACM)
+aws elbv2 create-listener \
+  --load-balancer-arn arn:aws:elasticloadbalancing:... \
+  --protocol HTTPS \
+  --port 443 \
+  --certificates CertificateArn=arn:aws:acm:... \
+  --default-actions Type=forward,TargetGroupArn=arn:...
+```
+
+#### Step 5: Frontend (Vercel)
+
+```bash
+# Deploy to Vercel
+cd client
+vercel --prod
+
+# Set environment variables in Vercel dashboard:
+MONGODB_URI=mongodb+srv://...  # Atlas connection
+NEXT_PUBLIC_COLYSEUS_HTTP_URL=https://api.yourapp.com
+NEXT_PUBLIC_COLYSEUS_WS_URL=wss://api.yourapp.com
+AWS_ACCESS_KEY_ID=AKIA...      # IAM user for S3
+AWS_SECRET_ACCESS_KEY=...
+S3_ENDPOINT=https://s3.amazonaws.com
+S3_BUCKET_NAME=leetbattle-avatars
+REDIS_HOST=your-ec2-private-ip  # Or ElastiCache endpoint
+REDIS_PASSWORD=your-production-password
+```
+
+---
+
+### Alternative: All-in-One VPS Deployment
+
+For simpler deployment (single DigitalOcean/Linode droplet):
+
+```bash
+# On VPS with public IP
+git clone https://github.com/rishabhvenu/LeetBattle.git
+cd LeetBattle
+
+# Set up .env files with production credentials
+# Start everything with Docker Compose
+cd backend
+docker-compose up -d
+
+cd ../client
+npm install && npm run build
+pm2 start npm --name leetbattle -- start
+```
+
+**Pros:** Simple, all-in-one  
+**Cons:** Less scalable, single point of failure
 
 ---
 

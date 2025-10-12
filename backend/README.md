@@ -16,28 +16,38 @@ The backend consists of multiple microservices orchestrated via Docker Compose:
 
 ## Getting Started
 
-### 1. Environment Variables
-
-The `.env` file is included in the repository with development credentials. 
-
-For production deployments:
-- Update all passwords in `.env` with secure values
-- `MINIO_ROOT_PASSWORD`: Use a strong password (min 8 characters)
-- `REDIS_PASSWORD`: Use a strong password  
-- `JUDGE0_POSTGRES_PASSWORD`: Use a strong password
-
-### 2. Start Services
+### Development Setup
 
 ```bash
-# Start all services
+# 1. Create .env from template
+cp .env.example .env
+
+# 2. Edit .env with your values (dev defaults work for local)
+nano .env
+
+# 3. Start all services
 docker-compose up -d
 
-# View logs
-docker-compose logs -f
+# 4. Verify services
+docker-compose ps
 
-# Stop services
-docker-compose down
+# 5. View logs
+docker-compose logs -f
 ```
+
+### Production Deployment (AWS)
+
+**Production Stack:**
+- **EC2 (Private Subnet)** - Colyseus + Judge0 + Redis
+- **MongoDB Atlas** - Managed MongoDB (not local container)
+- **AWS S3** - Avatar storage (not MinIO)
+
+See main README.md for complete production deployment guide with:
+- VPC and subnet configuration
+- Security group rules
+- ALB setup for private EC2
+- MongoDB Atlas connection
+- S3 bucket configuration
 
 ### 3. Verify Services Are Running
 
