@@ -220,8 +220,14 @@ export class QueueRoom extends Room {
   }
 
   private getDifficultyFromRating(avgRating: number): string {
-    // Always return Easy for now
-    return 'Easy';
+    // Map ELO rating to problem difficulty
+    if (avgRating < 1400) {
+      return 'Easy';
+    } else if (avgRating < 1800) {
+      return 'Medium';
+    } else {
+      return 'Hard';
+    }
   }
 
   private async selectRandomProblem(difficulty: string) {
@@ -269,7 +275,8 @@ export class QueueRoom extends Room {
   }
 
   private generateMatchId(): string {
-    return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    // Use crypto for collision-resistant match IDs
+    return require('crypto').randomBytes(16).toString('hex');
   }
 
   private async getPlayersInfo(playerIds: string[]): Promise<Record<string, { username: string; avatar: string | null }>> {

@@ -120,8 +120,23 @@ async function executeBatchTestCases(
     };
   }
   
-  // Parse batch output
-  const batchOutput = result.stdout.trim();
+  // Parse batch output (guard against null/undefined stdout)
+  const batchOutput = result.stdout?.trim() || '';
+  if (!batchOutput) {
+    return {
+      allPassed: false,
+      totalTests: testCases.length,
+      passedTests: 0,
+      failedTests: testCases.length,
+      results: testCases.map(testCase => ({
+        passed: false,
+        testCase,
+        error: 'No output from code execution',
+        status: result.status,
+      })),
+    };
+  }
+  
   const results: TestResult[] = [];
   
   // Parse each test result from batch output

@@ -1,6 +1,5 @@
 import { Client, Room } from 'colyseus';
 import { getRedis, RedisKeys } from '../lib/redis';
-import { submitToJudge0, pollJudge0 } from '../lib/judge0';
 import { executeAllTestCases } from '../lib/testExecutor';
 import { getProblemWithTestCases } from '../lib/problemData';
 import { analyzeTimeComplexity } from '../lib/complexityAnalyzer';
@@ -20,6 +19,7 @@ export class MatchRoom extends Room {
   private redis = getRedis();
   private matchId!: string;
   private problemId!: string;
+  private problemData: any = null; // Cache problem data to avoid re-fetching
   private startTime!: number;
   private maxDuration = 45 * 60 * 1000;
   private lastSubmitAt: Record<string, number> = {};
@@ -30,6 +30,7 @@ export class MatchRoom extends Room {
   async onCreate(options: { matchId: string; problemId: string; problemData?: any }) {
     this.matchId = options.matchId;
     this.problemId = options.problemId;
+    this.problemData = options.problemData; // Cache if provided
     this.startTime = Date.now();
     
     // Don't auto-dispose when all clients leave - only dispose on match end
@@ -128,8 +129,11 @@ export class MatchRoom extends Room {
       this.lastSubmitAt[userId] = now;
 
       try {
-        // Fetch problem with testCases from MongoDB
-        const problem = await getProblemWithTestCases(this.problemId);
+        // Fetch problem with testCases from MongoDB (cached after first fetch)
+        if (!this.problemData) {
+          this.problemData = await getProblemWithTestCases(this.problemId);
+        }
+        const problem = this.problemData;
         
         if (!problem || !problem.signature || !problem.testCases || problem.testCases.length === 0) {
           client.send('submission_result', {
@@ -220,11 +224,12 @@ export class MatchRoom extends Room {
                 message: 'All tests passed, but your solution does not meet the required time complexity.'
               });
               
-              // Broadcast new submission
+              // Broadcast new submission to both players
               client.send('new_submission', {
                 userId,
                 submission: failedSubmission
               });
+              this.broadcast('new_submission', { userId, submission: failedSubmission }, { except: client });
               
               return; // Don't declare winner, don't send submission_result
             }
@@ -265,11 +270,12 @@ export class MatchRoom extends Room {
           averageMemory: executionResult.averageMemory
         });
         
-        // Broadcast new submission to the user
+        // Broadcast new submission to both players
         client.send('new_submission', {
           userId,
           submission
         });
+        this.broadcast('new_submission', { userId, submission }, { except: client });
 
         // If all tests passed and we reach here, declare winner
         if (executionResult.allPassed) {
@@ -308,8 +314,11 @@ export class MatchRoom extends Room {
       this.testCounter[userId] = rec;
 
       try {
-        // Fetch problem with testCases from MongoDB
-        const problem = await getProblemWithTestCases(this.problemId);
+        // Fetch problem with testCases from MongoDB (cached after first fetch)
+        if (!this.problemData) {
+          this.problemData = await getProblemWithTestCases(this.problemId);
+        }
+        const problem = this.problemData;
         
         if (!problem || !problem.signature || !problem.testCases || problem.testCases.length === 0) {
           client.send('test_submission_result', {

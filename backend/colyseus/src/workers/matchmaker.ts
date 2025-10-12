@@ -7,25 +7,42 @@ type QueueEntry = { userId: string; rating: number; joinedAt: number };
 
 function now() { return Date.now(); }
 
-// Problem selection (moved from Next.js)
-function chooseProblemId(): string {
+// Cache problem list to avoid re-reading file on every tick
+let problemCache: Record<string, any> | null = null;
+let problemCacheLoaded = false;
+
+function loadProblems(): Record<string, any> {
+  if (problemCacheLoaded && problemCache) {
+    return problemCache;
+  }
+  
   try {
     // Problems are in client/problems.json - read from there or copy to backend
     const file = path.join(__dirname, '../../..', 'client', 'problems.json');
     const raw = fs.readFileSync(file, 'utf-8');
-    const obj = JSON.parse(raw);
-    const keys = Object.keys(obj);
-    if (!keys.length) return 'two-sum'; // Fallback
-    
-    const difficulty = process.env.MATCH_DIFFICULTY || 'Medium';
-    const filtered = keys.filter((k) => obj[k]?.difficulty === difficulty);
-    const pool = filtered.length ? filtered : keys;
-    const pick = pool[Math.floor(Math.random() * pool.length)];
-    return pick;
+    problemCache = JSON.parse(raw);
+    problemCacheLoaded = true;
+    console.log(`[Matchmaker] Loaded ${Object.keys(problemCache!).length} problems from problems.json`);
+    return problemCache!;
   } catch (error) {
-    console.error('Error selecting problem:', error);
-    return 'two-sum'; // Fallback to a safe default
+    console.error('Error loading problems:', error);
+    problemCache = { 'two-sum': { difficulty: 'Easy' } }; // Fallback
+    problemCacheLoaded = true;
+    return problemCache;
   }
+}
+
+// Problem selection (moved from Next.js)
+function chooseProblemId(): string {
+  const obj = loadProblems();
+  const keys = Object.keys(obj);
+  if (!keys.length) return 'two-sum'; // Fallback
+  
+  const difficulty = process.env.MATCH_DIFFICULTY || 'Medium';
+  const filtered = keys.filter((k) => obj[k]?.difficulty === difficulty);
+  const pool = filtered.length ? filtered : keys;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  return pick;
 }
 
 export function startMatchmaker(server: Server) {
@@ -115,8 +132,8 @@ export function startMatchmaker(server: Server) {
 }
 
 function cryptoRandomId() {
-  // Simple random ID (not cryptographically secure). Good enough for internal match ids in PoC.
-  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  // Use crypto for collision-resistant match IDs
+  return require('crypto').randomBytes(16).toString('hex');
 }
 
 
