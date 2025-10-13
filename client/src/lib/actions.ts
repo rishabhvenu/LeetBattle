@@ -978,7 +978,10 @@ export async function persistMatchFromState(state: any) {
     problemId: state.problemId,
     status: 'finished',
     winnerUserId: state.winnerUserId || null,
+    isDraw: state.isDraw || false,
+    startedAt: state.startedAt ? new Date(state.startedAt) : new Date(),
     endedAt: state.endedAt ? new Date(state.endedAt) : new Date(),
+    endReason: state.endReason || null,
     submissionIds: insertedIds,
   } as any;
   
