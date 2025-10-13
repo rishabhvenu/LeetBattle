@@ -252,7 +252,7 @@ export class MatchRoom extends Room {
               try {
                 const client = await getMongoClient();
                 const db = client.db(DB_NAME);
-                const submissions = db.collection('submissions');
+                const submissions = db.collection('submissions') as any;
                 
                 const submissionId = `${this.matchId}_${userId}_${failedSubmission.timestamp}`;
                 const submissionDoc = {
@@ -282,7 +282,7 @@ export class MatchRoom extends Room {
                 console.log(`Saved complexity-failed submission ${submissionId} to MongoDB`);
                 
                 // Update match document with submission ID
-                const matches = db.collection('matches');
+                const matches = db.collection('matches') as any;
                 await matches.updateOne(
                   { _id: this.matchId },
                   { 
@@ -352,7 +352,7 @@ export class MatchRoom extends Room {
         try {
           const client = await getMongoClient();
           const db = client.db(DB_NAME);
-          const submissions = db.collection('submissions');
+          const submissions = db.collection('submissions') as any;
           
           const submissionId = `${this.matchId}_${userId}_${submission.timestamp}`;
           const submissionDoc = {
@@ -379,7 +379,7 @@ export class MatchRoom extends Room {
           console.log(`Saved submission ${submissionId} to MongoDB`);
           
           // Update match document with submission ID
-          const matches = db.collection('matches');
+          const matches = db.collection('matches') as any;
           await matches.updateOne(
             { _id: this.matchId },
             { 
