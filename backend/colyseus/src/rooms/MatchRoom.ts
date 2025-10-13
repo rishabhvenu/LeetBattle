@@ -286,7 +286,7 @@ export class MatchRoom extends Room {
                 await matches.updateOne(
                   { _id: this.matchId },
                   { 
-                    $addToSet: { submissionIds: new ObjectId(submissionId as any) },
+                    $addToSet: { submissionIds: submissionId },
                     $setOnInsert: {
                       playerIds: [],
                       problemId: this.problemId,
@@ -383,7 +383,7 @@ export class MatchRoom extends Room {
           await matches.updateOne(
             { _id: this.matchId },
             { 
-              $addToSet: { submissionIds: new ObjectId(submissionId as any) },
+              $addToSet: { submissionIds: submissionId },
               $setOnInsert: {
                 playerIds: [], // Will be updated properly on match end
                 problemId: this.problemId,
