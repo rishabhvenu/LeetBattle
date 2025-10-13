@@ -542,10 +542,10 @@ export async function getMatchData(matchId: string, userId: string) {
     
     // If not in Redis, fetch from MongoDB
     if (!opponentPlayerData) {
-      await connectDB();
+    await connectDB();
       const client = await getMongoClient();
-      const db = client.db(DB_NAME);
-      const users = db.collection('users');
+    const db = client.db(DB_NAME);
+    const users = db.collection('users');
       const opponentUser: any = await users.findOne(
         { _id: new ObjectId(opponentUserId) },
         { projection: { username: 1, 'profile.firstName': 1, 'profile.lastName': 1, 'profile.avatar': 1 } }
@@ -576,14 +576,14 @@ export async function getMatchData(matchId: string, userId: string) {
     const starterCode = problem.starterCode || generateStarterCode(problem.signature);
     
     const opponentData = {
-      userId: opponentUserId,
+        userId: opponentUserId,
       username: opponentUsername,
       name: opponentName,
       avatar: opponentAvatar,
-      globalRank: opponentStats.globalRank || 1234,
-      gamesWon: opponentStats.wins || 0,
-      winRate: opponentStats.totalMatches > 0 ? Math.round((opponentStats.wins / opponentStats.totalMatches) * 100) : 0,
-      rating: opponentStats.rating || 1200,
+        globalRank: opponentStats.globalRank || 1234,
+        gamesWon: opponentStats.wins || 0,
+        winRate: opponentStats.totalMatches > 0 ? Math.round((opponentStats.wins / opponentStats.totalMatches) * 100) : 0,
+        rating: opponentStats.rating || 1200,
     };
     
     // Remove testCases from client-facing problem data (security)
@@ -912,57 +912,48 @@ export async function persistMatchFromState(state: any) {
     playerIds = Object.keys(state.players);
   }
 
-  // Process submissions - handle different formats
-  // Colyseus may store full submission objects or just tokens
+  // Process submissions - handle new format from MatchRoom
   const insertedIds: ObjectId[] = [];
   const submissionsData = state.submissions || [];
   
-  for (const item of submissionsData) {
-    let token: string;
-    let submissionData: any;
-    
-    // If item is a string, it's a token and we need to look up results
-    if (typeof item === 'string') {
-      token = item;
-      submissionData = state.submissionResults?.[token];
-      if (!submissionData) {
-        console.warn(`No submission results found for token: ${token}`);
-        continue;
-      }
-    } 
-    // If item is an object, it might be the full submission data
-    else if (typeof item === 'object' && item !== null) {
-      token = item.token || item.id;
-      submissionData = item;
-    } else {
-      console.warn(`Invalid submission item:`, item);
+  for (const submission of submissionsData) {
+    if (!submission || typeof submission !== 'object') {
+      console.warn(`Invalid submission item:`, submission);
       continue;
     }
 
+    // Generate a unique ID for this submission (combination of matchId, userId, timestamp)
+    const submissionId = `${state.matchId}_${submission.userId}_${submission.timestamp}`;
+    
     const doc = {
-      token,
+      _id: submissionId,
       matchId: state.matchId,
       problemId: state.problemId,
-      userId: submissionData?.meta?.userId || submissionData?.userId || null,
-      language: submissionData?.language?.name || submissionData?.language || submissionData?.language_id || null,
-      status: submissionData?.status || null,
-      stdout: submissionData?.stdout || null,
-      stderr: submissionData?.stderr || null,
-      compileOutput: submissionData?.compile_output || submissionData?.compileOutput || null,
-      time: submissionData?.time || null,
-      memory: submissionData?.memory || null,
+      userId: submission.userId,
+      language: submission.language,
+      code: submission.code || null,
+      passed: submission.passed || false,
+      testResults: submission.testResults || [],
+      averageTime: submission.averageTime || null,
+      averageMemory: submission.averageMemory || null,
+      complexityFailed: submission.complexityFailed || false,
+      derivedComplexity: submission.derivedComplexity || null,
+      expectedComplexity: submission.expectedComplexity || null,
+      timestamp: submission.timestamp ? new Date(submission.timestamp) : new Date(),
       createdAt: new Date(),
     };
     
     try {
     const result = await submissions.findOneAndUpdate(
-      { token },
-      { $setOnInsert: doc, $set: { status: doc.status, stdout: doc.stdout, stderr: doc.stderr, compileOutput: doc.compileOutput, time: doc.time, memory: doc.memory } },
+        { _id: submissionId },
+        { $set: doc },
       { upsert: true, returnDocument: 'after' }
     );
-    if (result.value?._id) insertedIds.push(result.value._id as ObjectId);
+      if (result.value?._id) {
+        insertedIds.push(new ObjectId(result.value._id as any));
+      }
     } catch (error) {
-      console.error(`Error upserting submission ${token}:`, error);
+      console.error(`Error upserting submission ${submissionId}:`, error);
     }
   }
 
@@ -1036,7 +1027,7 @@ async function ensureIndexes(db: any) {
     { key: { userId: 1 } },
     { key: { problemId: 1 } },
     { key: { createdAt: -1 } },
-    { key: { token: 1 }, unique: true },
+    { key: { timestamp: -1 } },
   ]);
 }
 
