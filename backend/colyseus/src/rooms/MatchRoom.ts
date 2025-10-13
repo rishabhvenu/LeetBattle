@@ -3,6 +3,31 @@ import { getRedis, RedisKeys } from '../lib/redis';
 import { executeAllTestCases } from '../lib/testExecutor';
 import { getProblemWithTestCases } from '../lib/problemData';
 import { analyzeTimeComplexity } from '../lib/complexityAnalyzer';
+import { MongoClient, ObjectId } from 'mongodb';
+
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
+const DB_NAME = 'codeclashers';
+
+let mongoClientCache: MongoClient | null = null;
+
+async function getMongoClient(): Promise<MongoClient> {
+  if (mongoClientCache) {
+    try {
+      await mongoClientCache.db(DB_NAME).admin().ping();
+      return mongoClientCache;
+    } catch {
+      mongoClientCache = null;
+    }
+  }
+  mongoClientCache = new MongoClient(MONGODB_URI, {
+    monitorCommands: false,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+    maxPoolSize: 10,
+  });
+  await mongoClientCache.connect();
+  return mongoClientCache;
+}
 
 type PlayerState = {
   code: Record<string, string>;             // language -> code
@@ -223,6 +248,58 @@ export class MatchRoom extends Room {
                 obj.submissions.push(failedSubmission);
               });
               
+              // IMMEDIATELY persist complexity-failed submission to MongoDB
+              try {
+                const client = await getMongoClient();
+                const db = client.db(DB_NAME);
+                const submissions = db.collection('submissions');
+                
+                const submissionId = `${this.matchId}_${userId}_${failedSubmission.timestamp}`;
+                const submissionDoc = {
+                  _id: submissionId,
+                  matchId: this.matchId,
+                  problemId: this.problemId,
+                  userId,
+                  language,
+                  code: source_code,
+                  passed: false,
+                  complexityFailed: true,
+                  derivedComplexity: complexityResult.derived_complexity,
+                  expectedComplexity: problem.timeComplexity,
+                  testResults,
+                  averageTime: executionResult.averageTime,
+                  averageMemory: executionResult.averageMemory,
+                  timestamp: new Date(failedSubmission.timestamp),
+                  createdAt: new Date(),
+                };
+                
+                await submissions.updateOne(
+                  { _id: submissionId },
+                  { $set: submissionDoc },
+                  { upsert: true }
+                );
+                
+                console.log(`Saved complexity-failed submission ${submissionId} to MongoDB`);
+                
+                // Update match document with submission ID
+                const matches = db.collection('matches');
+                await matches.updateOne(
+                  { _id: this.matchId },
+                  { 
+                    $addToSet: { submissionIds: new ObjectId(submissionId as any) },
+                    $setOnInsert: {
+                      playerIds: [],
+                      problemId: this.problemId,
+                      status: 'ongoing',
+                      startedAt: new Date(this.startTime),
+                    }
+                  },
+                  { upsert: true }
+                );
+              } catch (dbError) {
+                console.error('Failed to save complexity-failed submission to MongoDB:', dbError);
+              }
+              
               // Send complexity failed event with submission details
               client.send('complexity_failed', {
                 userId,
@@ -270,6 +347,58 @@ export class MatchRoom extends Room {
           obj.submissions = obj.submissions || [];
           obj.submissions.push(submission);
         });
+        
+        // IMMEDIATELY persist submission to MongoDB
+        try {
+          const client = await getMongoClient();
+          const db = client.db(DB_NAME);
+          const submissions = db.collection('submissions');
+          
+          const submissionId = `${this.matchId}_${userId}_${submission.timestamp}`;
+          const submissionDoc = {
+            _id: submissionId,
+            matchId: this.matchId,
+            problemId: this.problemId,
+            userId,
+            language,
+            code: source_code,
+            passed: executionResult.allPassed,
+            testResults,
+            averageTime: executionResult.averageTime,
+            averageMemory: executionResult.averageMemory,
+            timestamp: new Date(submission.timestamp),
+            createdAt: new Date(),
+          };
+          
+          await submissions.updateOne(
+            { _id: submissionId },
+            { $set: submissionDoc },
+            { upsert: true }
+          );
+          
+          console.log(`Saved submission ${submissionId} to MongoDB`);
+          
+          // Update match document with submission ID
+          const matches = db.collection('matches');
+          await matches.updateOne(
+            { _id: this.matchId },
+            { 
+              $addToSet: { submissionIds: new ObjectId(submissionId as any) },
+              $setOnInsert: {
+                playerIds: [], // Will be updated properly on match end
+                problemId: this.problemId,
+                status: 'ongoing',
+                startedAt: new Date(this.startTime),
+              }
+            },
+            { upsert: true }
+          );
+          
+          console.log(`Added submission ${submissionId} to match ${this.matchId}`);
+        } catch (dbError) {
+          console.error('Failed to save submission to MongoDB:', dbError);
+          // Don't fail the submission if DB save fails
+        }
 
         // Send results back to client
         client.send('submission_result', {
