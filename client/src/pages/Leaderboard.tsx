@@ -14,13 +14,11 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { User } from "@/types/rest";
-import RestHandler from "@/rest/RestHandler";
 import Link from "next/link";
 import { getAvatarUrl } from "@/lib/utils";
+import { getLeaderboardData } from "@/lib/actions";
 
-interface LeaderboardProps {
-  restHandler: RestHandler;
-}
+interface LeaderboardProps {}
 
 function LeaderboardTable({
   data,
@@ -96,7 +94,7 @@ function LeaderboardTable({
                       </AvatarFallback>
                     </Avatar>
                     <Link
-                      to={`/profile/${user._id}`}
+                      href={`/profile/${user._id}`}
                       className="hover:underline transition-colors duration-200"
                       style={{ color: '#2599D4' }}
                     >
@@ -118,7 +116,7 @@ function LeaderboardTable({
   );
 }
 
-export default function Leaderboard({ restHandler }: LeaderboardProps) {
+export default function Leaderboard({}: LeaderboardProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [users, setUsers] = useState<Partial<User>[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -134,12 +132,9 @@ export default function Leaderboard({ restHandler }: LeaderboardProps) {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await restHandler.getTopRankedUsers(
-        currentPage,
-        entriesPerPage
-      );
-      setUsers(response);
-      setTotalPages(10);
+      const data = await getLeaderboardData(currentPage, entriesPerPage);
+      setUsers(data.users || []);
+      setTotalPages(data.totalPages || 1);
     } catch (err) {
       console.error("Error fetching users:", err);
       setError("Failed to fetch leaderboard data. Please try again later.");

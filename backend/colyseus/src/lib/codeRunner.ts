@@ -3,6 +3,13 @@
  * Generates runnable code by wrapping Solution classes with test harness
  */
 
+import { 
+  hasComplexDataTypes, 
+  getHelpersForLanguage, 
+  isListNodeType, 
+  isTreeNodeType 
+} from './dataStructureHelpers';
+
 interface FunctionSignature {
   functionName: string;
   parameters: Array<{ name: string; type: string }>;
@@ -22,12 +29,33 @@ export function generatePythonRunner(
   signature: FunctionSignature,
   testInput: Record<string, unknown>
 ): string {
-  const { functionName, parameters } = signature;
+  const { functionName, parameters, returnType } = signature;
   
-  // Build function call arguments from test input
-  const args = parameters.map(param => `input_data["${param.name}"]`).join(', ');
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('python') : '';
   
-  return `${solutionCode}
+  // Build function call arguments from test input with deserialization
+  const args = parameters.map(param => {
+    if (isListNodeType(param.type)) {
+      return `deserialize_list(input_data["${param.name}"])`;
+    } else if (isTreeNodeType(param.type)) {
+      return `deserialize_tree(input_data["${param.name}"])`;
+    } else {
+      return `input_data["${param.name}"]`;
+    }
+  }).join(', ');
+  
+  // Handle output serialization
+  let outputSerialization = 'result';
+  if (isListNodeType(returnType)) {
+    outputSerialization = 'serialize_list(result)';
+  } else if (isTreeNodeType(returnType)) {
+    outputSerialization = 'serialize_tree(result)';
+  }
+  
+  return `${helpers}
+${solutionCode}
 
 import json
 import sys
@@ -37,7 +65,7 @@ if __name__ == "__main__":
     solution = Solution()
     input_data = ${JSON.stringify(testInput)}
     result = solution.${functionName}(${args})
-    print(json.dumps(result))
+    print(json.dumps(${outputSerialization}))
 `;
 }
 
@@ -49,18 +77,39 @@ export function generateJavaScriptRunner(
   signature: FunctionSignature,
   testInput: Record<string, unknown>
 ): string {
-  const { functionName, parameters } = signature;
+  const { functionName, parameters, returnType } = signature;
   
-  // Build function call arguments from test input
-  const args = parameters.map(param => `input.${param.name}`).join(', ');
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('javascript') : '';
   
-  return `${solutionCode}
+  // Build function call arguments from test input with deserialization
+  const args = parameters.map(param => {
+    if (isListNodeType(param.type)) {
+      return `deserializeList(input.${param.name})`;
+    } else if (isTreeNodeType(param.type)) {
+      return `deserializeTree(input.${param.name})`;
+    } else {
+      return `input.${param.name}`;
+    }
+  }).join(', ');
+  
+  // Handle output serialization
+  let outputSerialization = 'result';
+  if (isListNodeType(returnType)) {
+    outputSerialization = 'serializeList(result)';
+  } else if (isTreeNodeType(returnType)) {
+    outputSerialization = 'serializeTree(result)';
+  }
+  
+  return `${helpers}
+${solutionCode}
 
 // Test runner
 const solution = new Solution();
 const input = ${JSON.stringify(testInput)};
 const result = solution.${functionName}(${args});
-console.log(JSON.stringify(result));
+console.log(JSON.stringify(${outputSerialization}));
 `;
 }
 
@@ -74,6 +123,10 @@ export function generateJavaRunner(
 ): string {
   const { functionName, parameters, returnType } = signature;
   
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('java') : '';
+  
   // Map type names to Java types
   const mapType = (type: string): string => {
     const typeMap: Record<string, string> = {
@@ -85,6 +138,8 @@ export function generateJavaRunner(
       'double': 'double',
       'float': 'float',
       'long': 'long',
+      'ListNode': 'ListNode',
+      'TreeNode': 'TreeNode',
     };
     return typeMap[type.toLowerCase()] || type;
   };
@@ -95,8 +150,14 @@ export function generateJavaRunner(
   const inputParsing = parameters.map((param, idx) => {
     const javaType = mapType(param.type);
     
-    // Handle different types
-    if (param.type.toLowerCase().includes('int[]')) {
+    // Handle complex data types
+    if (isListNodeType(param.type)) {
+      return `        ListNode ${param.name} = ListHelper.deserializeList((List<Integer>) input.get("${param.name}"));`;
+    } else if (isTreeNodeType(param.type)) {
+      return `        TreeNode ${param.name} = TreeHelper.deserializeTree((List<Integer>) input.get("${param.name}"));`;
+    }
+    // Handle different primitive types
+    else if (param.type.toLowerCase().includes('int[]')) {
       return `        int[] ${param.name} = parseIntArray(input.get("${param.name}"));`;
     } else if (param.type.toLowerCase().includes('string[]')) {
       return `        String[] ${param.name} = parseStringArray(input.get("${param.name}"));`;
@@ -111,11 +172,20 @@ export function generateJavaRunner(
   }).join('\n');
 
   const args = parameters.map(param => param.name).join(', ');
+  
+  // Handle output serialization
+  let outputSerialization = 'gson.toJson(result)';
+  if (isListNodeType(returnType)) {
+    outputSerialization = 'gson.toJson(ListHelper.serializeList(result))';
+  } else if (isTreeNodeType(returnType)) {
+    outputSerialization = 'gson.toJson(TreeHelper.serializeTree(result))';
+  }
 
   return `import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import java.util.*;
 
+${helpers}
 ${solutionCode}
 
 public class Main {
@@ -129,7 +199,7 @@ ${inputParsing}
         Solution solution = new Solution();
         ${javaReturnType} result = solution.${functionName}(${args});
         
-        System.out.println(gson.toJson(result));
+        System.out.println(${outputSerialization});
     }
     
     private static int[] parseIntArray(Object obj) {
@@ -159,6 +229,10 @@ export function generateCppRunner(
 ): string {
   const { functionName, parameters, returnType } = signature;
   
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('cpp') : '';
+  
   // Map type names to C++ types
   const mapType = (type: string): string => {
     const typeMap: Record<string, string> = {
@@ -170,6 +244,8 @@ export function generateCppRunner(
       'double': 'double',
       'float': 'float',
       'long': 'long',
+      'ListNode': 'ListNode*',
+      'TreeNode': 'TreeNode*',
     };
     return typeMap[type.toLowerCase()] || type;
   };
@@ -180,7 +256,14 @@ export function generateCppRunner(
   const inputParsing = parameters.map((param, idx) => {
     const cppType = mapType(param.type);
     
-    if (param.type.toLowerCase().includes('int[]')) {
+    // Handle complex data types
+    if (isListNodeType(param.type)) {
+      return `    ListNode* ${param.name} = deserializeList(input["${param.name}"].get<vector<int>>());`;
+    } else if (isTreeNodeType(param.type)) {
+      return `    TreeNode* ${param.name} = deserializeTree(input["${param.name}"].get<vector<int>>());`;
+    }
+    // Handle primitive types
+    else if (param.type.toLowerCase().includes('int[]')) {
       return `    vector<int> ${param.name} = input["${param.name}"].get<vector<int>>();`;
     } else if (param.type.toLowerCase().includes('string[]')) {
       return `    vector<string> ${param.name} = input["${param.name}"].get<vector<string>>();`;
@@ -195,15 +278,25 @@ export function generateCppRunner(
   }).join('\n');
 
   const args = parameters.map(param => param.name).join(', ');
+  
+  // Handle output serialization
+  let outputSerialization = 'result';
+  if (isListNodeType(returnType)) {
+    outputSerialization = 'serializeList(result)';
+  } else if (isTreeNodeType(returnType)) {
+    outputSerialization = 'serializeTree(result)';
+  }
 
   return `#include <iostream>
 #include <vector>
 #include <string>
+#include <queue>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
 using namespace std;
 
+${helpers}
 ${solutionCode}
 
 int main() {
@@ -215,7 +308,7 @@ ${inputParsing}
     Solution solution;
     ${cppReturnType} result = solution.${functionName}(${args});
     
-    json output = result;
+    json output = ${outputSerialization};
     cout << output.dump() << endl;
     
     return 0;
@@ -254,9 +347,35 @@ export function generateBatchPythonRunner(
   signature: FunctionSignature,
   testCases: Array<{ input: Record<string, unknown>; output: unknown }>
 ): string {
-  const { functionName, parameters } = signature;
+  const { functionName, parameters, returnType } = signature;
   
-  return `${solutionCode}
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('python') : '';
+  
+  // Build argument deserialization
+  const argsDeserialization = parameters.map(param => {
+    if (isListNodeType(param.type)) {
+      return `        ${param.name} = deserialize_list(input_data["${param.name}"])`;
+    } else if (isTreeNodeType(param.type)) {
+      return `        ${param.name} = deserialize_tree(input_data["${param.name}"])`;
+    } else {
+      return `        ${param.name} = input_data["${param.name}"]`;
+    }
+  }).join('\n');
+  
+  // Handle output serialization
+  let outputSerialization = 'result';
+  if (isListNodeType(returnType)) {
+    outputSerialization = 'serialize_list(result)';
+  } else if (isTreeNodeType(returnType)) {
+    outputSerialization = 'serialize_tree(result)';
+  }
+  
+  const args = parameters.map(param => param.name).join(', ');
+  
+  return `${helpers}
+${solutionCode}
 
 import json
 import sys
@@ -270,11 +389,10 @@ if __name__ == "__main__":
         input_data = test_case["input"]
         expected = test_case["output"]
         
-        args = [input_data["${parameters[0].name}"]]
-        ${parameters.slice(1).map(p => `args.append(input_data["${p.name}"])`).join('\n        ')}
+${argsDeserialization}
         
-        result = solution.${functionName}(*args)
-        print(f"Test {i}: {json.dumps(result)}")
+        result = solution.${functionName}(${args})
+        print(f"Test {i}: {json.dumps(${outputSerialization})}")
 `;
 }
 
@@ -286,9 +404,35 @@ export function generateBatchJavaScriptRunner(
   signature: FunctionSignature,
   testCases: Array<{ input: Record<string, unknown>; output: unknown }>
 ): string {
-  const { functionName, parameters } = signature;
+  const { functionName, parameters, returnType } = signature;
   
-  return `${solutionCode}
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('javascript') : '';
+  
+  // Build argument deserialization
+  const argsDeserialization = parameters.map(param => {
+    if (isListNodeType(param.type)) {
+      return `    const ${param.name} = deserializeList(input.${param.name});`;
+    } else if (isTreeNodeType(param.type)) {
+      return `    const ${param.name} = deserializeTree(input.${param.name});`;
+    } else {
+      return `    const ${param.name} = input.${param.name};`;
+    }
+  }).join('\n');
+  
+  // Handle output serialization
+  let outputSerialization = 'result';
+  if (isListNodeType(returnType)) {
+    outputSerialization = 'serializeList(result)';
+  } else if (isTreeNodeType(returnType)) {
+    outputSerialization = 'serializeTree(result)';
+  }
+  
+  const args = parameters.map(param => param.name).join(', ');
+  
+  return `${helpers}
+${solutionCode}
 
 const solution = new Solution();
 const testCases = ${JSON.stringify(testCases)};
@@ -298,8 +442,10 @@ for (let i = 0; i < testCases.length; i++) {
     const input = testCase.input;
     const expected = testCase.output;
     
-    const result = solution.${functionName}(${parameters.map(p => `input.${p.name}`).join(', ')});
-    console.log(\`Test \${i}: \${JSON.stringify(result)}\`);
+${argsDeserialization}
+    
+    const result = solution.${functionName}(${args});
+    console.log(\`Test \${i}: \${JSON.stringify(${outputSerialization})}\`);
 }
 `;
 }
@@ -312,33 +458,96 @@ export function generateBatchJavaRunner(
   signature: FunctionSignature,
   testCases: Array<{ input: Record<string, unknown>; output: unknown }>
 ): string {
-  const { functionName, parameters } = signature;
+  const { functionName, parameters, returnType } = signature;
+  
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('java') : '';
+  
+  // Map return type to Java type
+  const mapReturnType = (type: string): string => {
+    const typeMap: Record<string, string> = {
+      'int[]': 'int[]',
+      'string[]': 'String[]',
+      'double[]': 'double[]',
+      'float[]': 'float[]',
+      'long[]': 'long[]',
+      'boolean[]': 'boolean[]',
+      'char[]': 'char[]',
+      'int': 'int',
+      'string': 'String',
+      'boolean': 'boolean',
+      'double': 'double',
+      'float': 'float',
+      'long': 'long',
+      'char': 'char',
+      'byte': 'byte',
+      'short': 'short',
+      'ListNode': 'ListNode',
+      'TreeNode': 'TreeNode',
+    };
+    return typeMap[type.toLowerCase()] || type;
+  };
+
+  const javaReturnType = mapReturnType(returnType);
   
   // Remove 'public' from Solution class to avoid filename conflicts
   const fixedSolutionCode = solutionCode.replace(/public\s+class\s+Solution/g, 'class Solution');
   
   // Generate hardcoded test cases since Java doesn't have easy JSON parsing in Judge0
   const testCode = testCases.map((testCase, index) => {
+    // Build deserialized arguments
     const args = parameters.map(p => {
       const value = testCase.input[p.name];
-      if (Array.isArray(value)) {
-        return `new int[]{${value.join(', ')}}`;
+      const type = p.type.toLowerCase();
+
+      // Handle complex data types
+      if (isListNodeType(p.type)) {
+        const arrayValue = Array.isArray(value) ? value : [];
+        return `ListHelper.deserializeList(java.util.Arrays.asList(${arrayValue.map(v => String(v)).join(', ')}))`;
+      } else if (isTreeNodeType(p.type)) {
+        const arrayValue = Array.isArray(value) ? value : [];
+        return `TreeHelper.deserializeTree(java.util.Arrays.asList(${arrayValue.map(v => v === null ? 'null' : String(v)).join(', ')}))`;
       }
+      // Handle primitive arrays
+      else if (Array.isArray(value)) {
+        if (type === 'int[]') return `new int[]{${value.join(', ')}}`;
+        if (type === 'string[]') return `new String[]{${value.map(v => `"${v}"`).join(', ')}}`;
+        if (type === 'double[]') return `new double[]{${value.join(', ')}}`;
+        if (type === 'float[]') return `new float[]{${value.join('f, ')}f}`; // append 'f' suffix
+        if (type === 'long[]') return `new long[]{${value.join('L, ')}L}`;
+      }
+
+      if (type === 'string') return `"${value}"`;
+      if (type === 'char') return `'${value}'`;
+      if (type === 'boolean') return value ? 'true' : 'false';
       return String(value);
     }).join(', ');
     
+    // Generate output based on return type
+    let outputCode;
+    if (isListNodeType(returnType)) {
+      outputCode = `System.out.println("Test ${index}: " + ListHelper.serializeList(result${index}));`;
+    } else if (isTreeNodeType(returnType)) {
+      outputCode = `System.out.println("Test ${index}: " + TreeHelper.serializeTree(result${index}));`;
+    } else if (javaReturnType.includes('[]')) {
+      outputCode = `System.out.println("Test ${index}: " + java.util.Arrays.toString(result${index}));`;
+    } else {
+      outputCode = `System.out.println("Test ${index}: " + result${index});`;
+    }
+    
     return `        // Test ${index + 1}
-        result = solution.${functionName}(${args});
-        System.out.println("Test ${index}: " + java.util.Arrays.toString(result));`;
+        ${javaReturnType} result${index} = solution.${functionName}(${args});
+        ${outputCode}`;
   }).join('\n');
   
   return `import java.util.*;
+${helpers}
 ${fixedSolutionCode}
 
 public class Main {
     public static void main(String[] args) {
         Solution solution = new Solution();
-        int[] result;
         
 ${testCode}
     }
@@ -354,7 +563,30 @@ export function generateBatchCppRunner(
   signature: FunctionSignature,
   testCases: Array<{ input: Record<string, unknown>; output: unknown }>
 ): string {
-  const { functionName, parameters } = signature;
+  const { functionName, parameters, returnType } = signature;
+  
+  // Check if we need helper functions for complex data types
+  const needsHelpers = hasComplexDataTypes(signature);
+  const helpers = needsHelpers ? getHelpersForLanguage('cpp') : '';
+  
+  // Map return type to C++ type
+  const mapReturnType = (type: string): string => {
+    const typeMap: Record<string, string> = {
+      'int[]': 'vector<int>',
+      'string[]': 'vector<string>',
+      'int': 'int',
+      'string': 'string',
+      'boolean': 'bool',
+      'double': 'double',
+      'float': 'float',
+      'long': 'long',
+      'ListNode': 'ListNode*',
+      'TreeNode': 'TreeNode*',
+    };
+    return typeMap[type.toLowerCase()] || type;
+  };
+
+  const cppReturnType = mapReturnType(returnType);
   
   // Generate hardcoded test cases - create variables first to avoid reference issues
   const testCode = testCases.map((testCase, index) => {
@@ -363,7 +595,18 @@ export function generateBatchCppRunner(
       .map((p, pIdx) => {
         const value = testCase.input[p.name];
         if (Array.isArray(value)) {
-          return `    vector<int> test${index}_${p.name} = {${value.join(', ')}};`;
+          // Handle complex data types
+          if (isListNodeType(p.type)) {
+            const arrayValue = value.map(v => v === null ? -1 : v); // Use -1 for null in C++
+            return `    vector<int> test${index}_${p.name}_arr = {${arrayValue.join(', ')}};
+    ListNode* test${index}_${p.name} = deserializeList(test${index}_${p.name}_arr);`;
+          } else if (isTreeNodeType(p.type)) {
+            const arrayValue = value.map(v => v === null ? -1 : v); // Use -1 for null in C++
+            return `    vector<int> test${index}_${p.name}_arr = {${arrayValue.join(', ')}};
+    TreeNode* test${index}_${p.name} = deserializeTree(test${index}_${p.name}_arr);`;
+          } else {
+            return `    vector<int> test${index}_${p.name} = {${value.join(', ')}};`;
+          }
         }
         return null;
       })
@@ -373,33 +616,61 @@ export function generateBatchCppRunner(
     const args = parameters.map(p => {
       const value = testCase.input[p.name];
       if (Array.isArray(value)) {
-        return `test${index}_${p.name}`;
+        if (isListNodeType(p.type) || isTreeNodeType(p.type)) {
+          return `test${index}_${p.name}`;
+        } else {
+          return `test${index}_${p.name}`;
+        }
       }
       return String(value);
     }).join(', ');
     
-    return `    // Test ${index + 1}
-${arrayVars}
-    result = solution.${functionName}(${args});
+    // Generate output based on return type
+    let outputCode;
+    if (isListNodeType(returnType)) {
+      outputCode = `    vector<int> result${index}_serialized = serializeList(result${index});
     cout << "Test ${index}: [";
-    for (int i = 0; i < result.size(); i++) {
-        cout << result[i];
-        if (i < result.size() - 1) cout << ",";
+    for (int i = 0; i < result${index}_serialized.size(); i++) {
+        cout << result${index}_serialized[i];
+        if (i < result${index}_serialized.size() - 1) cout << ",";
     }
     cout << "]" << endl;`;
+    } else if (isTreeNodeType(returnType)) {
+      outputCode = `    vector<int> result${index}_serialized = serializeTree(result${index});
+    cout << "Test ${index}: [";
+    for (int i = 0; i < result${index}_serialized.size(); i++) {
+        cout << result${index}_serialized[i];
+        if (i < result${index}_serialized.size() - 1) cout << ",";
+    }
+    cout << "]" << endl;`;
+    } else if (cppReturnType.includes('vector')) {
+      outputCode = `    cout << "Test ${index}: [";
+    for (int i = 0; i < result${index}.size(); i++) {
+        cout << result${index}[i];
+        if (i < result${index}.size() - 1) cout << ",";
+    }
+    cout << "]" << endl;`;
+    } else {
+      outputCode = `    cout << "Test ${index}: " << result${index} << endl;`;
+    }
+    
+    return `    // Test ${index + 1}
+${arrayVars}
+    ${cppReturnType} result${index} = solution.${functionName}(${args});
+${outputCode}`;
   }).join('\n');
   
   return `#include <iostream>
 #include <vector>
 #include <string>
-#include <unordered_map>
+#include <queue>
 using namespace std;
 
+${helpers}
 ${solutionCode}
 
 int main() {
     Solution solution;
-    vector<int> result;
     
 ${testCode}
     

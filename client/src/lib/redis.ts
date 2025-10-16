@@ -14,6 +14,7 @@ export function getRedis(): Redis {
 
 export const RedisKeys = {
   userStats: (userId: string) => `user:${userId}:stats`,
+  userActivity: (userId: string) => `user:${userId}:activity`,
   activeMatchesSet: 'matches:active',
   matchKey: (matchId: string) => `match:${matchId}`,
   // Per-match, per-user source code storage (hash of language -> code)

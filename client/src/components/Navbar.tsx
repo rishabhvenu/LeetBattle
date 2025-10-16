@@ -9,6 +9,7 @@ import {
   Trophy,
   ChevronLeft,
   Menu,
+  History,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import { motion, AnimatePresence } from "framer-motion";
 const navItems = [
   { to: "/", icon: Home, label: "Home" },
   { to: "/play", icon: Play, label: "Play" },
+  { to: "/match-history", icon: History, label: "History" },
   { to: "/leaderboard", icon: Trophy, label: "Leaderboard" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];

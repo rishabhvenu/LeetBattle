@@ -44,3 +44,62 @@ export type RunInfo = {
   expectedOutput: any;
   runSuccess: boolean;
 };
+
+// Match History Types
+export interface MatchHistoryItem {
+  matchId: string;
+  opponent: {
+    userId: string;
+    username: string;
+    avatar?: string;
+    rating: number;
+  };
+  problem: {
+    title: string;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+    topics: string[];
+  };
+  result: 'win' | 'loss' | 'draw';
+  ratingChange: number;
+  duration: number; // in milliseconds
+  endedAt: string;
+  startedAt: string;
+}
+
+export interface PlayerMatchStats {
+  userId: string;
+  username: string;
+  avatar?: string;
+  ratingBefore: number;
+  ratingAfter: number;
+  ratingChange: number;
+  submissionsCount: number;
+  testsPassed: number;
+  totalTests: number;
+  bestSubmission?: {
+    code: string;
+    language: string;
+    runtime?: string;
+    memory?: string;
+    timeComplexity?: string;
+    spaceComplexity?: string;
+  };
+}
+
+export interface MatchDetails {
+  matchId: string;
+  problem: {
+    title: string;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+    topics: string[];
+    description: string;
+  };
+  result: 'win' | 'loss' | 'draw';
+  duration: number;
+  startedAt: string;
+  endedAt: string;
+  players: {
+    currentUser: PlayerMatchStats;
+    opponent: PlayerMatchStats;
+  };
+}

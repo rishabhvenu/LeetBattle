@@ -42,6 +42,14 @@ export interface ProblemDoc {
   verifiedAt?: Date;
   verificationResults?: Record<string, any>;
   verificationError?: string[];
+  allTestCases?: Record<string, Array<{
+    testNumber: number;
+    input: any;
+    expected: any;
+    actual: any;
+    error?: string;
+    passed: boolean;
+  }>>;
   failedTestCases?: Record<string, Array<{
     testNumber: number;
     input: any;
@@ -84,6 +92,8 @@ export interface MatchDoc {
   testRunIds?: ObjectId[];        // ref -> SubmissionDoc[] with submissionType='test' (optional)
   winnerUserId?: ObjectId | null; // ref -> UserDoc (null for draw)
   endedAt?: Date;                 // end timestamp of the match
+  startedAt?: Date;               // start timestamp of the match
+  createdAt?: Date;               // creation timestamp of the match
   // Additional metadata
   mode?: 'public' | 'private';
   ratingDelta?: number;           // optional rating change

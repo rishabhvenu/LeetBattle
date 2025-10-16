@@ -1,8 +1,9 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useSpring, animated, config } from "react-spring";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
-import { Crown, Scale } from "lucide-react";
+import { Crown, Scale, Home, Swords } from "lucide-react";
 import { getAvatarUrl } from "@/lib/utils";
+import { Button } from "./ui/button";
 
 interface PlayerInfo {
   name: string;
@@ -10,22 +11,30 @@ interface PlayerInfo {
   avatar: string | null;
   initials: string;
   isWinner: boolean;
+  ratingChange?: {
+    oldRating: number;
+    newRating: number;
+    change: number;
+  };
 }
 
 interface MatchResultAnimationProps {
   player1: PlayerInfo;
   player2: PlayerInfo;
-  onAnimationComplete: () => void;
+  onBackToHome: () => void;
+  onJoinQueue: () => void;
 }
 
 const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
   player1,
   player2,
-  onAnimationComplete,
+  onBackToHome,
+  onJoinQueue,
 }) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const hasPlayedRef = useRef(false);
   const isDraw = !player1.isWinner && !player2.isWinner;
+  const [showButtons, setShowButtons] = useState(false);
 
   useEffect(() => {
     // Play sound only once
@@ -37,7 +46,10 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
       hasPlayedRef.current = true;
     }
 
-    const timer = setTimeout(onAnimationComplete, 3000);
+    // Show buttons after animation completes
+    const timer = setTimeout(() => {
+      setShowButtons(true);
+    }, 2500);
     
     return () => {
       clearTimeout(timer);
@@ -47,7 +59,7 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
         audioRef.current.currentTime = 0;
       }
     };
-  }, [onAnimationComplete]);
+  }, []);
 
   const [leftSwordProps] = useSpring(() => ({
     from: { transform: "translateX(-100%) rotate(45deg)" },
@@ -142,56 +154,108 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
       >
         {player.isWinner ? "Winner" : isDraw ? "Draw" : "Loser"}
       </span>
+      {player.ratingChange && (
+        <div className="mt-3 flex flex-col items-center gap-1">
+          <div className="text-slate-300 text-sm">
+            {player.ratingChange.oldRating} → {player.ratingChange.newRating}
+          </div>
+          <div
+            className={`font-bold text-lg ${
+              player.ratingChange.change > 0
+                ? "text-green-400"
+                : player.ratingChange.change < 0
+                ? "text-red-400"
+                : "text-slate-400"
+            }`}
+          >
+            {player.ratingChange.change > 0 ? "+" : ""}
+            {player.ratingChange.change}
+          </div>
+        </div>
+      )}
     </div>
   );
+
+  const [buttonProps] = useSpring(() => ({
+    from: { opacity: 0, transform: "translateY(20px)" },
+    to: { 
+      opacity: showButtons ? 1 : 0, 
+      transform: showButtons ? "translateY(0px)" : "translateY(20px)" 
+    },
+    config: { tension: 300, friction: 20 },
+  }), [showButtons]);
 
   return (
     <div className="absolute inset-0 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-md"></div>
-      <div className="relative flex items-center justify-center gap-12 z-10">
-        <PlayerDisplay player={player1} />
+      <div className="relative flex flex-col items-center justify-center gap-12 z-10">
+        <div className="flex items-center justify-center gap-12">
+          <PlayerDisplay player={player1} />
 
-        {/* Swords in the middle */}
-        <div className="relative w-80 h-48 flex items-center justify-center">
-          {isDraw && (
+          {/* Swords in the middle */}
+          <div className="relative w-80 h-48 flex items-center justify-center">
+            {isDraw && (
+              <animated.div
+                style={scaleProps}
+                className="absolute inset-0 flex items-center justify-center z-20"
+              >
+                <Scale className="w-20 h-20 text-blue-400 drop-shadow-[0_0_8px_rgba(0,128,255,0.7)]" />
+              </animated.div>
+            )}
             <animated.div
-              style={scaleProps}
-              className="absolute inset-0 flex items-center justify-center z-20"
+              style={leftSwordProps}
+              className="w-24 h-48 absolute left-1/2 -ml-12 z-10"
             >
-              <Scale className="w-20 h-20 text-blue-400 drop-shadow-[0_0_8px_rgba(0,128,255,0.7)]" />
+              <img
+                src="/sword-left.svg"
+                alt="Left sword"
+                className={`w-full h-full ${
+                  player1.isWinner || isDraw
+                    ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"
+                    : "filter brightness-75"
+                }`}
+              />
             </animated.div>
-          )}
-          <animated.div
-            style={leftSwordProps}
-            className="w-24 h-48 absolute left-1/2 -ml-12 z-10"
-          >
-            <img
-              src="/sword-left.svg"
-              alt="Left sword"
-              className={`w-full h-full ${
-                player1.isWinner || isDraw
-                  ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"
-                  : "filter brightness-75"
-              }`}
-            />
-          </animated.div>
-          <animated.div
-            style={rightSwordProps}
-            className="w-24 h-48 absolute right-1/2 -mr-12 z-10"
-          >
-            <img
-              src="/sword-right.svg"
-              alt="Right sword"
-              className={`w-full h-full ${
-                player2.isWinner || isDraw
-                  ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"
-                  : "filter brightness-75"
-              }`}
-            />
-          </animated.div>
+            <animated.div
+              style={rightSwordProps}
+              className="w-24 h-48 absolute right-1/2 -mr-12 z-10"
+            >
+              <img
+                src="/sword-right.svg"
+                alt="Right sword"
+                className={`w-full h-full ${
+                  player2.isWinner || isDraw
+                    ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"
+                    : "filter brightness-75"
+                }`}
+              />
+            </animated.div>
+          </div>
+
+          <PlayerDisplay player={player2} />
         </div>
 
-        <PlayerDisplay player={player2} />
+        {/* Navigation buttons */}
+        {showButtons && (
+          <animated.div style={buttonProps} className="flex gap-4 mt-8">
+            <Button
+              onClick={onBackToHome}
+              className="bg-slate-700 hover:bg-slate-600 text-white px-6 py-3 rounded-lg flex items-center gap-2 transition-colors"
+              size="lg"
+            >
+              <Home className="w-5 h-5" />
+              Back to Home
+            </Button>
+            <Button
+              onClick={onJoinQueue}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg flex items-center gap-2 transition-colors"
+              size="lg"
+            >
+              <Swords className="w-5 h-5" />
+              Join Queue
+            </Button>
+          </animated.div>
+        )}
       </div>
     </div>
   );

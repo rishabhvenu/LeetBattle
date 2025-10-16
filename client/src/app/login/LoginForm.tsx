@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { motion } from "framer-motion";
-import { useFormState, useFormStatus } from "react-dom";
+import { useActionState } from "react";
+import { useFormStatus } from "react-dom";
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -29,7 +30,7 @@ function SubmitButton() {
 
 export default function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
-  const [state, formAction] = useFormState(loginUser, { error: '' });
+  const [state, formAction] = useActionState(loginUser, { error: '' });
 
   return (
     <form action={formAction}>

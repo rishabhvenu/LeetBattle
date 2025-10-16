@@ -47,18 +47,43 @@ export default function Running({
     >
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="relative px-6 py-4 border-b border-blue-200 flex items-center justify-between bg-white/90">
-          <h2 className="text-xl font-bold text-black">
-            Test Cases
-          </h2>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-black/70 hover:text-black"
-            onClick={() => setRunningPage(false)}
-          >
-            <X className="h-5 w-5" />
-          </Button>
+        <div className="relative px-6 py-4 border-b border-blue-200 bg-white/90">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold text-black">
+              Test Cases
+            </h2>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-black/70 hover:text-black"
+              onClick={() => setRunningPage(false)}
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+          
+          {/* Test Summary */}
+          {testCaseResults.length > 0 && (
+            <div className="mt-3 flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <Check className="h-4 w-4 text-green-600" />
+                  <span className="text-sm font-medium text-green-600">
+                    {testCaseResults.filter(result => result.status === 3).length} Passed
+                  </span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <AlertCircle className="h-4 w-4 text-red-600" />
+                  <span className="text-sm font-medium text-red-600">
+                    {testCaseResults.filter(result => result.status !== 3).length} Failed
+                  </span>
+                </div>
+              </div>
+              <div className="text-sm text-black/70">
+                {testCaseResults.filter(result => result.status === 3).length}/{testCaseResults.length} total
+              </div>
+            </div>
+          )}
         </div>
 
         {isLoading ? (
@@ -96,25 +121,43 @@ export default function Running({
               </div>
 
               <ScrollArea className="space-y-2">
-                {testCaseResults.map((_, index) => (
-                  <Button
-                    key={index}
-                    variant="ghost"
-                    className={`w-full justify-start gap-2 ${
-                      selectedCase === index + 1
-                        ? checkStatus(index)
-                          ? "bg-green-100 text-green-600 hover:bg-green-200"
-                          : "bg-red-100 text-red-600 hover:bg-red-200"
-                        : "text-black/70 hover:text-black hover:bg-white/50"
-                    }`}
-                    onClick={() => {
-                      setSelectedCase(index + 1);
-                    }}
-                  >
-                    <Code2 className="h-4 w-4" />
-                    Test Case {index + 1}
-                  </Button>
-                ))}
+                {testCaseResults.map((_, index) => {
+                  const isPassed = checkStatus(index);
+                  const isSelected = selectedCase === index + 1;
+                  
+                  return (
+                    <Button
+                      key={index}
+                      variant="ghost"
+                      className={`w-full justify-between gap-2 ${
+                        isSelected
+                          ? isPassed
+                            ? "bg-green-100 text-green-600 hover:bg-green-200"
+                            : "bg-red-100 text-red-600 hover:bg-red-200"
+                          : "text-black/70 hover:text-black hover:bg-white/50"
+                      }`}
+                      onClick={() => {
+                        setSelectedCase(index + 1);
+                      }}
+                    >
+                      <div className="flex items-center gap-2">
+                        {isPassed ? (
+                          <Check className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 text-red-600" />
+                        )}
+                        <span>Test Case {index + 1}</span>
+                      </div>
+                      <div className={`text-xs px-2 py-1 rounded ${
+                        isPassed 
+                          ? "bg-green-200 text-green-700" 
+                          : "bg-red-200 text-red-700"
+                      }`}>
+                        {isPassed ? "PASS" : "FAIL"}
+                      </div>
+                    </Button>
+                  );
+                })}
               </ScrollArea>
             </div>
 

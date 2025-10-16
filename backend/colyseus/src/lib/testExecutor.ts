@@ -24,6 +24,7 @@ interface TestResult {
   error?: string;
   executionTime?: string;
   memory?: string;
+  testNumber?: number;
   status?: {
     id: number;
     description: string;
@@ -102,18 +103,25 @@ async function executeBatchTestCases(
   
   // Check if execution was successful
   if (result.status.id !== 3) {
+    // For general execution errors (like 400 UTF-8 errors), we still want to show
+    // which specific test cases would have been tested, but mark them all as failed
+    // due to the general error
+    const generalError = result.stderr || result.compile_output || result.message || result.status.description;
+    
     return {
       allPassed: false,
       totalTests: testCases.length,
       passedTests: 0,
       failedTests: testCases.length,
-      results: testCases.map(testCase => ({
+      results: testCases.map((testCase, index) => ({
         passed: false,
         testCase,
-        error: result.stderr || result.compile_output || result.message || result.status.description,
+        actualOutput: undefined, // No actual output due to general error
+        error: `General execution error: ${generalError}`,
         status: result.status,
         executionTime: result.time,
         memory: result.memory,
+        testNumber: index + 1, // Add test number for better identification
       })),
       averageTime: result.time ? parseFloat(result.time) : undefined,
       averageMemory: result.memory ? parseFloat(result.memory) : undefined,
@@ -128,11 +136,13 @@ async function executeBatchTestCases(
       totalTests: testCases.length,
       passedTests: 0,
       failedTests: testCases.length,
-      results: testCases.map(testCase => ({
+      results: testCases.map((testCase, index) => ({
         passed: false,
         testCase,
+        actualOutput: undefined,
         error: 'No output from code execution',
         status: result.status,
+        testNumber: index + 1,
       })),
     };
   }
@@ -159,25 +169,30 @@ async function executeBatchTestCases(
           executionTime: result.time,
           memory: result.memory,
           status: passed ? { id: 3, description: 'Accepted' } : { id: 4, description: 'Wrong Answer' },
+          testNumber: i + 1,
         });
       } catch (error) {
         results.push({
           passed: false,
           testCase,
+          actualOutput: undefined,
           error: `Failed to parse output: ${match[1]}`,
           executionTime: result.time,
           memory: result.memory,
           status: { id: 6, description: 'Runtime Error' },
+          testNumber: i + 1,
         });
       }
     } else {
       results.push({
         passed: false,
         testCase,
+        actualOutput: undefined,
         error: `Unexpected output format: ${line}`,
         executionTime: result.time,
         memory: result.memory,
         status: { id: 4, description: 'Wrong Answer' },
+        testNumber: i + 1,
       });
     }
   }
@@ -188,8 +203,10 @@ async function executeBatchTestCases(
     results.push({
       passed: false,
       testCase,
+      actualOutput: undefined,
       error: 'No result from batch execution',
       status: { id: 4, description: 'Wrong Answer' },
+      testNumber: results.length + 1,
     });
   }
   
@@ -216,14 +233,16 @@ async function executeBatchTestCases(
       totalTests: testCases.length,
       passedTests: 0,
       failedTests: testCases.length,
-      results: testCases.map(testCase => ({
+      results: testCases.map((testCase, index) => ({
         passed: false,
         testCase,
+        actualOutput: undefined,
         error: errorMessage,
         status: {
           id: 13,  // Internal Error
           description: 'System Error'
-        }
+        },
+        testNumber: index + 1,
       })),
     };
   }

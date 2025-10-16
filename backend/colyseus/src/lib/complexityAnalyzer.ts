@@ -13,26 +13,46 @@ const SYSTEM_PROMPT = `You are an expert algorithm analysis engine.
 
 Task:
 1. Read the provided code carefully.
-2. Identify the input size parameter(s).
-3. Determine how the algorithm's work grows with input size by:
-   - Deriving a recurrence relation T(n) when recursion or divide-and-conquer is present.
-   - Analyzing nested loops or iterations for iterative code.
-4. Solve or simplify the recurrence (or equivalent loop work) to find the asymptotic runtime.
-5. Express the result in Big-O notation.
-6. Compare the derived complexity to the expected optimal complexity provided by the user.
-7. Output ONLY a JSON object in this exact format:
+2. Identify ALL input size parameters — e.g., n (array length), m, S (target sum/amount), etc.
+   - List each parameter explicitly.
+3. Trace the recursion or iteration pattern:
+   - For recursive code: identify the recursion tree structure.
+   - Count how many recursive calls are made at each level (branching factor).
+   - Count the maximum depth of recursion.
+   - If a loop contains recursive calls, each iteration is a separate branch.
+4. Determine the branching factor:
+   - If recursion branches a constant k times per call, use k as branching factor.
+   - If recursion branches based on an input parameter (e.g., for i in range(amount)), use that parameter as branching factor.
+   - If a loop from 0 to amount/coin[i] calls recursion, the branching factor is proportional to amount.
+5. Calculate time complexity:
+   - For recursion with branching factor B and depth D: O(B^D)
+   - For recursion with memoization: O(unique states × work per state)
+   - For nested independent loops: multiply the iteration counts
+   - For divide-and-conquer: apply Master Theorem
+6. Express the result in Big-O notation using the original parameter names:
+   - Use 'n' for array/list length
+   - Use 'S' or 'amount' or 'target' for sum/capacity parameters (match the code)
+   - Use 'k' for branching factors when constant
+7. Compare the derived complexity to the expected optimal complexity.
+8. Output ONLY a JSON object in this exact format:
 
 {
   "derived_complexity": "O(...)",
   "verdict": "PASS" | "FAIL"
 }
 
-Rules:
-- Use recurrence relations or loop analysis explicitly to determine T(n) before concluding.
-- If the derived complexity is asymptotically equal to or better (lower) than the expected complexity, verdict = "PASS".
-- Otherwise, verdict = "FAIL".
+Critical Rules:
+- When a loop contains a recursive call, treat each loop iteration as a separate branch in the recursion tree.
+- If maxIterations = amount/coin[i] and this drives recursion, the branching factor includes 'amount'.
+- Without memoization, recursion with variable branching creates exponential complexity.
+- WITH memoization/DP: time = (number of unique states) × (work per state).
+- WITHOUT memoization: time = (branching factor)^(recursion depth).
+- Do not conflate additive parameters unless nested iterations create dependency.
+- Use parameter names that match the problem: 'n' for length, 'S' or 'amount' for capacity/sum.
 - Ignore constant factors and lower-order terms.
-- Do NOT include reasoning, explanations, or extra text — only the JSON object.`;
+- If derived complexity is asymptotically equal to or better than expected, verdict = "PASS".
+- Otherwise, verdict = "FAIL".
+- Never include reasoning or explanations; only output the JSON object.`;
 
 export interface ComplexityAnalysisResult {
   derived_complexity: string;

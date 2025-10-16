@@ -1,10 +1,10 @@
-import { getSession } from '@/lib/actions';
+import { getSession, getMatchHistory } from '@/lib/actions';
 import { redirect } from 'next/navigation';
-import LearningPath from "@/pages/practice/LearningPath";
+import MatchHistory from "@/pages/match-history/MatchHistory";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 
-export default async function LearningPage() {
+export default async function MatchHistoryPage() {
   const session = await getSession();
 
   // If no session, redirect to landing page
@@ -18,9 +18,12 @@ export default async function LearningPage() {
     username: session.user?.username || 'User'
   };
 
+  // Fetch match history for the first page
+  const matchHistory = await getMatchHistory(session.user!.id, 1, 10);
+
   return (
     <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
-      <LearningPath />
+      <MatchHistory initialData={matchHistory} userId={session.user!.id} />
     </Layout>
   );
 }

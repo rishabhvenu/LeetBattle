@@ -10,6 +10,9 @@ Next.js 15 frontend for the LeetBattle competitive coding platform.
 - **Responsive UI**: Built with Tailwind CSS and shadcn/ui
 - **Match History**: View past matches and statistics
 - **Global Leaderboard**: ELO-based ranking system
+- **Admin Panel**: Bot management, problem management, user management
+- **Bot Opponents**: AI-powered opponents for instant matches
+- **Data Structure Support**: ListNode and TreeNode helpers for multiple languages
 
 ## Tech Stack
 
@@ -86,27 +89,38 @@ client/
 │   │   ├── queue/             # Matchmaking queue
 │   │   ├── play/              # Main lobby
 │   │   ├── leaderboard/       # Global rankings
+│   │   ├── match-history/     # Match history viewing
+│   │   ├── admin/             # Admin panel
+│   │   │   ├── BotManagement.tsx
+│   │   │   ├── ProblemManagement.tsx
+│   │   │   ├── UserManagement.tsx
+│   │   │   └── ActiveMatches.tsx
 │   │   └── settings/          # User settings
 │   ├── components/
 │   │   ├── ui/                # shadcn/ui components
 │   │   ├── Navbar.tsx
 │   │   ├── Layout.tsx
 │   │   ├── MatchupAnimation.tsx
-│   │   └── MatchResultAnimation.tsx
+│   │   ├── MatchResultAnimation.tsx
+│   │   └── MatchDetailsModal.tsx
 │   ├── pages/                 # Page-level components
 │   │   ├── match/
 │   │   │   ├── MatchClient.tsx    # Real-time match UI
 │   │   │   └── MatchQueue.tsx
+│   │   ├── match-history/
+│   │   │   └── MatchHistory.tsx   # Match history viewer
 │   │   └── ...
 │   ├── lib/                   # Core utilities
 │   │   ├── actions.ts         # Server actions (auth, data)
 │   │   ├── mongodb.ts         # MongoDB client (singleton)
 │   │   ├── redis.ts           # Redis client (singleton)
 │   │   ├── minio.ts           # S3 client
-│   │   └── queueWorker.ts     # Background matchmaking
+│   │   └── utilsObjectId.ts   # ObjectId utilities
 │   ├── socket/
 │   │   └── SocketManager.ts   # WebSocket client
 │   └── types/                 # TypeScript definitions
+│       ├── bot.d.ts           # Bot type definitions
+│       └── ...
 └── problems.json              # Problem library
 ```
 
@@ -130,7 +144,13 @@ npm run lint         # Run ESLint
 - `/play` - Main lobby (requires auth)
 - `/queue` - Matchmaking queue
 - `/match` - Live match view
+- `/match-history` - Match history viewer
 - `/leaderboard` - Global rankings
+- `/admin` - Admin panel (requires admin access)
+  - `/admin/bots` - Bot management
+  - `/admin/problems` - Problem management
+  - `/admin/users` - User management
+  - `/admin/matches` - Active matches monitoring
 - `/settings` - User settings
 
 ## Architecture Notes
@@ -165,6 +185,64 @@ All authentication and data operations use Next.js server actions:
 - **Cache**: Redis (session data, user stats)
 - **Real-time State**: Colyseus rooms
 - **Client State**: React hooks (local UI state)
+
+## New Features
+
+### Admin Panel
+
+The admin panel provides comprehensive management capabilities:
+
+#### Bot Management (`/admin/bots`)
+- **Create Bots**: Generate new AI bot identities with customizable profiles
+- **Deploy/Undeploy**: Dynamically manage bot deployment status
+- **Bot Statistics**: View real-time bot performance metrics
+- **Bot Configuration**: Adjust bot ratings and difficulty levels
+- **Bulk Operations**: Deploy/undeploy multiple bots simultaneously
+
+#### Problem Management (`/admin/problems`)
+- **AI Problem Generation**: Create problems using OpenAI GPT-4o-mini
+- **Solution Verification**: Automatic solution testing across multiple languages
+- **Problem Library**: Manage and organize the problem database
+- **Difficulty Assignment**: Set appropriate difficulty levels for problems
+- **Bulk Import/Export**: Manage large problem sets efficiently
+
+#### User Management (`/admin/users`)
+- **User Analytics**: View user statistics and performance metrics
+- **Account Management**: Handle user accounts and permissions
+- **Rating Adjustments**: Modify user ratings when necessary
+- **Match History**: Access detailed user match histories
+
+#### Active Matches (`/admin/matches`)
+- **Live Monitoring**: Real-time view of ongoing matches
+- **Match Details**: Detailed match information and progress
+- **Performance Metrics**: Track match completion times and success rates
+
+### Match History
+
+The match history feature provides comprehensive match analytics:
+
+- **Complete Match History**: View all past matches with detailed results
+- **Performance Analytics**: Track win/loss ratios, rating changes, and trends
+- **Match Details**: Detailed breakdown of individual matches
+- **Problem Analysis**: See which problems were solved and completion times
+- **Rating Progression**: Visual representation of rating changes over time
+
+### Bot Integration
+
+- **Instant Matches**: Bots provide immediate opponents when human players aren't available
+- **Realistic Behavior**: Bots use configurable timing distributions for natural completion times
+- **ELO-Based Matching**: Bots are matched based on their current ratings
+- **Statistics Tracking**: Bot performance is tracked and displayed in admin panel
+
+### Data Structure Support
+
+Enhanced support for complex data structures:
+
+- **ListNode Support**: Automatic helper code for linked list problems
+- **TreeNode Support**: Automatic helper code for binary tree problems
+- **Multi-Language**: Support for Python, JavaScript, Java, and C++
+- **Automatic Injection**: Helper code is automatically added to editor
+- **Serialization**: Built-in serialization/deserialization functions
 
 ## Production Deployment
 

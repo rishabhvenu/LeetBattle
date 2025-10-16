@@ -104,11 +104,34 @@ services:
       JUDGE0_URL: http://codeclashers-judge0:2358
       NODE_ENV: ${NODE_ENV:-production}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      BOTS_ENABLED: ${BOTS_ENABLED:-true}
+      BOT_FILL_DELAY_MS: ${BOT_FILL_DELAY_MS:-15000}
+      BOT_TIME_DIST: ${BOT_TIME_DIST:-lognormal}
+      # Example distribution params as JSON strings
+      BOT_TIME_PARAMS_EASY: ${BOT_TIME_PARAMS_EASY:-{"muMinutes":30,"sigma":0.35}}
+      BOT_TIME_PARAMS_MEDIUM: ${BOT_TIME_PARAMS_MEDIUM:-{"muMinutes":35,"sigma":0.35}}
+      BOT_TIME_PARAMS_HARD: ${BOT_TIME_PARAMS_HARD:-{"muMinutes":40,"sigma":0.35}}
     depends_on:
       - redis
       - mongodb
     ports:
       - "2567:2567"
+    restart: unless-stopped
+
+  bots:
+    build:
+      context: ./bots
+      dockerfile: Dockerfile
+    container_name: codeclashers-bots
+    environment:
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-devpassword}
+      BOT_COUNT: ${BOT_COUNT:-30}
+      BOT_SERVICE_SECRET: ${BOT_SERVICE_SECRET:-dev_bot_secret}
+      COLYSEUS_URL: ws://codeclashers-colyseus:2567
+    depends_on:
+      - redis
     restart: unless-stopped
 
   judge0-db:

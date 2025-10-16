@@ -8,6 +8,8 @@ import { generatePresignedUrl } from './minio';
 import { getRedis, RedisKeys } from './redis';
 import { ensureMatchEventsSubscriber } from './matchEventsSubscriber';
 import { ObjectId } from 'mongodb';
+import { tryToObjectId } from './utilsObjectId';
+import { REST_ENDPOINTS } from '../constants/RestEndpoints';
 import { 
   authLimiter, 
   generalLimiter, 
@@ -64,7 +66,7 @@ export interface SessionData {
   authenticated: boolean;
 }
 
-export async function registerUser(formData: FormData) {
+export async function registerUser(prevState: any, formData: FormData) {
   // Rate limiting
   const identifier = await getClientIdentifier();
   try {
@@ -73,6 +75,7 @@ export async function registerUser(formData: FormData) {
     return { error: (error as Error).message };
   }
 
+  // Extract form data
   const username = formData.get('username') as string;
   const email = formData.get('email') as string;
   const password = formData.get('password') as string;
@@ -153,7 +156,7 @@ export async function registerUser(formData: FormData) {
   }
 }
 
-export async function loginUser(formData: FormData) {
+export async function loginUser(prevState: any, formData: FormData) {
   // Rate limiting
   const identifier = await getClientIdentifier();
   try {
@@ -162,8 +165,18 @@ export async function loginUser(formData: FormData) {
     return { error: (error as Error).message };
   }
 
+  // Debug: Log what we're receiving
+  console.log('FormData received:', formData);
+  console.log('FormData type:', typeof formData);
+  console.log('Has get method:', typeof formData.get === 'function');
+  console.log('FormData entries:', Array.from(formData.entries()));
+  
+  // Extract form data - should always be FormData in Next.js 15
   const email = formData.get('email') as string;
   const password = formData.get('password') as string;
+    
+  console.log('Extracted email:', email);
+  console.log('Extracted password:', password ? '[REDACTED]' : 'undefined');
 
   if (!email || !password) {
     return { error: 'Email and password are required' };
@@ -227,15 +240,17 @@ export async function getSession(): Promise<SessionData> {
     
     // Find session in MongoDB
     const session = await sessions.findOne({ 
-      _id: sessionCookie.value,
+      _id: sessionCookie.value as any,
       expires: { $gt: new Date() }
-    });
+    } as any);
     
     
     if (session && session.userId) {
       return {
         authenticated: true,
-        userId: session.userId,
+        userId: (session.userId && typeof session.userId === 'object' && 'toString' in session.userId)
+          ? (session.userId as any).toString()
+          : String(session.userId),
         user: session.user
       };
     }
@@ -254,14 +269,12 @@ export async function logoutUser() {
 
     if (sessionId) {
       await connectDB();
-      const client = new MongoClient(MONGODB_URI);
-      await client.connect();
-      
+      const client = await getMongoClient();
       const db = client.db(DB_NAME);
       const sessions = db.collection(SESSIONS_COLLECTION);
       
       // Remove session from MongoDB
-      await sessions.deleteOne({ _id: sessionId });
+      await sessions.deleteOne({ _id: sessionId as any } as any);
     }
 
     // Clear cookie
@@ -274,6 +287,140 @@ export async function logoutUser() {
     }
     console.error('Logout error:', error);
     redirect('/');
+  }
+}
+
+// Leaderboard server action
+export async function getLeaderboardData(page: number = 1, limit: number = 10) {
+  const K_FACTOR = 32;
+  const INITIAL_RATING = 1200;
+  const ROLLING_DAYS = 180;
+  
+  const cacheKey = `leaderboard:page:${page}:limit:${limit}`;
+
+  try {
+    const redis = getRedis();
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return JSON.parse(cached);
+    }
+
+    const client = await getMongoClient();
+    const db = client.db();
+
+    const cutoff = new Date(Date.now() - ROLLING_DAYS * 24 * 60 * 60 * 1000);
+
+    const matches = await db
+      .collection('matches')
+      .find({ status: 'finished', endedAt: { $gte: cutoff } })
+      .project({ playerIds: 1, winnerUserId: 1, endedAt: 1 })
+      .sort({ endedAt: 1 })
+      .toArray();
+
+    const userStats = new Map();
+
+    function ensureUser(userId: any) {
+      if (!userStats.has(userId)) {
+        userStats.set(userId, { rating: INITIAL_RATING, gamesWon: 0, gamesPlayed: 0 });
+      }
+    }
+
+    function expectedScore(rating: number, opponentRating: number): number {
+      return 1 / (1 + Math.pow(10, (opponentRating - rating) / 400));
+    }
+
+    function updateRating(current: number, opponent: number, score: 0 | 0.5 | 1): number {
+      const exp = expectedScore(current, opponent);
+      return current + K_FACTOR * (score - exp);
+    }
+
+    for (const m of matches) {
+      if (!Array.isArray(m.playerIds) || m.playerIds.length !== 2) continue;
+      const [a, b] = m.playerIds;
+      ensureUser(a);
+      ensureUser(b);
+      const aStats = userStats.get(a);
+      const bStats = userStats.get(b);
+
+      let aScore: 0 | 0.5 | 1 = 0.5;
+      let bScore: 0 | 0.5 | 1 = 0.5;
+      if (m.winnerUserId) {
+        if (String(m.winnerUserId) === String(a)) {
+          aScore = 1;
+          bScore = 0;
+        } else if (String(m.winnerUserId) === String(b)) {
+          aScore = 0;
+          bScore = 1;
+        }
+      }
+
+      const aNew = updateRating(aStats.rating, bStats.rating, aScore);
+      const bNew = updateRating(bStats.rating, aStats.rating, bScore);
+      aStats.rating = aNew;
+      bStats.rating = bNew;
+      aStats.gamesPlayed += 1;
+      bStats.gamesPlayed += 1;
+      if (aScore === 1) aStats.gamesWon += 1;
+      if (bScore === 1) bStats.gamesWon += 1;
+    }
+
+    const userIds = Array.from(userStats.keys());
+    const users = await db
+      .collection('users')
+      .find({ _id: { $in: userIds } })
+      .project({ username: 1, avatarUrl: 1 })
+      .toArray();
+
+    const idToUser = {};
+    for (const u of users) {
+      idToUser[String(u._id)] = u;
+    }
+
+    const bucketUrl = process.env.NEXT_PUBLIC_PFP_BUCKET_URL || '';
+    function toAvatarPath(avatarUrl) {
+      if (!avatarUrl) return null;
+      if (bucketUrl && avatarUrl.startsWith(bucketUrl)) {
+        return avatarUrl.slice(bucketUrl.length);
+      }
+      return null;
+    }
+
+    const rows = await Promise.all(Array.from(userStats.entries()).map(async ([id, stats]) => {
+      const u = idToUser[String(id)];
+      
+      // Fetch avatar using centralized function
+      let avatar = null;
+      const avatarResult = await getAvatarByIdAction(id);
+      if (avatarResult.success) {
+        avatar = avatarResult.avatar;
+      }
+      
+      return {
+        _id: String(id),
+        username: u?.username || 'Unknown',
+        avatar: avatar,
+        rating: Math.round(stats.rating),
+        stats: {
+          gamesWon: stats.gamesWon,
+          gamesPlayed: stats.gamesPlayed,
+        },
+      };
+    }));
+
+    rows.sort((a, b) => b.rating - a.rating);
+
+    const totalPages = Math.max(1, Math.ceil(rows.length / limit));
+    const start = (page - 1) * limit;
+    const usersPage = rows.slice(start, start + limit);
+
+    const payload = { users: usersPage, totalPages };
+
+    await redis.set(cacheKey, JSON.stringify(payload), 'EX', 60);
+
+    return payload;
+  } catch (err) {
+    console.error('Leaderboard server action error', err);
+    return { users: [], totalPages: 1 };
   }
 }
 
@@ -297,7 +444,7 @@ async function createSession(userId: string, email: string, username: string) {
     // Create session data
     const sessionData = {
       _id: sessionId,
-      userId,
+      userId: new ObjectId(userId),
       user: {
         id: userId,
         email,
@@ -311,7 +458,7 @@ async function createSession(userId: string, email: string, username: string) {
     };
     
     // Store session in MongoDB
-    await sessions.insertOne(sessionData);
+    await sessions.insertOne(sessionData as any);
     
     // Set session cookie
     const cookieStore = await cookies();
@@ -361,15 +508,16 @@ export async function saveUserAvatar(fileName: string) {
 
     // Update session user avatar
     await sessions.updateOne(
-      { _id: sessionId },
+      { _id: sessionId } as any,
       { $set: { 'user.avatar': fileName } }
     );
 
     // Update user profile avatar
-    const sessionDoc = await sessions.findOne({ _id: sessionId });
+    const sessionDoc = await sessions.findOne({ _id: sessionId } as any);
     if (sessionDoc?.userId) {
+      const userObjectId = tryToObjectId(sessionDoc.userId) || new (await import('mongodb')).ObjectId(String(sessionDoc.userId));
       await users.updateOne(
-        { _id: new (await import('mongodb')).ObjectId(sessionDoc.userId) },
+        { _id: userObjectId },
         { $set: { 'profile.avatar': fileName } }
       );
     }
@@ -426,6 +574,70 @@ export async function getUserStatsCached(userId: string) {
   return stats;
 }
 
+// Cached user activity data for the last 7 days
+export async function getUserActivityCached(userId: string) {
+  const redis = getRedis();
+  const key = RedisKeys.userActivity(userId);
+  
+  // Try cache first
+  const cached = await redis.get(key);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch {}
+  }
+
+  // Fallback: compute from matches
+  await connectDB();
+  const client = await getMongoClient();
+  const db = client.db(DB_NAME);
+  const matches = db.collection('matches');
+
+  const userObjectId = new (await import('mongodb')).ObjectId(userId);
+  
+  // Get matches from the last 7 days
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  
+  const recentMatches = await matches.find({
+    playerIds: userObjectId,
+    $or: [
+      { startedAt: { $gte: sevenDaysAgo } },
+      { createdAt: { $gte: sevenDaysAgo } }
+    ]
+  }).toArray();
+
+  // Create array for last 7 days
+  const activityData = [];
+  const today = new Date();
+  
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date(today);
+    date.setDate(date.getDate() - i);
+    
+    // Format date as day name (Mon, Tue, etc.)
+    const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+    
+    // Count matches for this day
+    const dayMatches = recentMatches.filter(match => {
+      const matchDate = match.startedAt || match.createdAt;
+      if (!matchDate) return false;
+      
+      const matchDay = new Date(matchDate);
+      return matchDay.toDateString() === date.toDateString();
+    });
+    
+    activityData.push({
+      date: dayName,
+      matches: dayMatches.length
+    });
+  }
+
+  // Cache with TTL (5 minutes)
+  await redis.set(key, JSON.stringify(activityData), 'EX', 300);
+  return activityData;
+}
+
 // Active matches helpers
 export async function getOngoingMatchesCount(): Promise<number> {
   const redis = getRedis();
@@ -442,6 +654,130 @@ export async function getOngoingMatchesCount(): Promise<number> {
   return mongoCount;
 }
 
+export async function getActiveMatches() {
+  try {
+    const redis = getRedis();
+    await connectDB();
+    const client = await getMongoClient();
+    const mongoDb = client.db(DB_NAME);
+    const users = mongoDb.collection('users');
+    const problems = mongoDb.collection('problems');
+
+    // Get active match IDs from Redis
+    const activeMatchIds = await redis.smembers(RedisKeys.activeMatchesSet);
+    
+    if (activeMatchIds.length === 0) {
+      return { success: true, matches: [] };
+    }
+
+    const matches = [];
+    
+    for (const matchId of activeMatchIds) {
+      try {
+        // Get match data from Redis
+        const matchKey = RedisKeys.matchKey(matchId);
+        const matchRaw = await redis.get(matchKey);
+        
+        if (!matchRaw) continue;
+        
+        const matchData = JSON.parse(matchRaw);
+        
+        // Skip if match is finished
+        if (matchData.status === 'finished' || matchData.endedAt) continue;
+        
+        // Get problem details
+        let problemTitle = 'Unknown Problem';
+        let difficulty = 'Medium';
+        
+        if (matchData.problem) {
+          problemTitle = matchData.problem.title || 'Unknown Problem';
+          difficulty = matchData.problem.difficulty || 'Medium';
+        } else if (matchData.problemId) {
+          // Fallback to MongoDB
+          try {
+            const problem = await problems.findOne({ _id: new ObjectId(matchData.problemId) });
+            if (problem) {
+              problemTitle = problem.title || 'Unknown Problem';
+              difficulty = problem.difficulty || 'Medium';
+            }
+          } catch (error) {
+            console.warn(`Could not fetch problem ${matchData.problemId}:`, error);
+          }
+        }
+        
+        // Process players
+        const players = [];
+        const playerIds = Object.keys(matchData.players || {});
+        
+        for (const playerId of playerIds) {
+          const isBot = playerId.startsWith('bot:');
+          const playerInfo = {
+            userId: playerId,
+            username: matchData.players[playerId]?.username || playerId,
+            isBot,
+            rating: 1200,
+            linesWritten: matchData.linesWritten?.[playerId] || 0,
+            avatar: undefined as string | undefined
+          };
+          
+          // Get real user data if not a bot
+          if (!isBot) {
+            try {
+              const user = await users.findOne(
+                { _id: new ObjectId(playerId) },
+                { projection: { username: 1, 'profile.avatar': 1, 'stats.rating': 1 } }
+              );
+              if (user) {
+                playerInfo.username = user.username || playerInfo.username;
+                playerInfo.rating = user.stats?.rating || playerInfo.rating;
+                playerInfo.avatar = user.profile?.avatar;
+              }
+            } catch (error) {
+              console.warn(`Could not fetch user ${playerId}:`, error);
+            }
+          }
+          
+          players.push(playerInfo);
+        }
+        
+        // Calculate time elapsed and remaining
+        const startTime = matchData.startedAt ? new Date(matchData.startedAt).getTime() : Date.now();
+        const timeElapsed = Date.now() - startTime;
+        const maxDuration = 45 * 60 * 1000; // 45 minutes in milliseconds
+        const timeRemaining = Math.max(0, maxDuration - timeElapsed);
+        
+        // Process submissions
+        const submissions = (matchData.submissions || []).map((sub: { userId: string; timestamp: string; passed: boolean; language: string }) => ({
+          userId: sub.userId,
+          timestamp: sub.timestamp,
+          passed: sub.passed,
+          language: sub.language
+        }));
+        
+        matches.push({
+          matchId,
+          problemId: matchData.problemId,
+          problemTitle,
+          difficulty,
+          players,
+          status: matchData.status || 'ongoing',
+          startedAt: matchData.startedAt || new Date(startTime).toISOString(),
+          timeElapsed,
+          timeRemaining,
+          submissions
+        });
+      } catch (error) {
+        console.warn(`Error processing match ${matchId}:`, error);
+      }
+    }
+    
+    return { success: true, matches };
+  } catch (error) {
+    console.error('Error fetching active matches:', error);
+    return { success: false, error: 'Failed to fetch active matches', matches: [] };
+  }
+}
+
 // Queueing and match orchestration (server actions)
 // Note: Matchmaking is now handled entirely by backend Colyseus matchmaker
 export async function enqueueUser(userId: string, rating: number) {
@@ -453,7 +789,7 @@ export async function enqueueUser(userId: string, rating: number) {
     return { success: false, error: (error as Error).message };
   }
 
-  ensureMatchEventsSubscriber();
+  // Backend is authoritative; subscriber disabled to avoid double writes
   const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
   const res = await fetch(`${base}/queue/enqueue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId, rating }) });
   if (!res.ok) return { success: false };
@@ -469,7 +805,7 @@ export async function dequeueUser(userId: string) {
     return { success: false, error: (error as Error).message };
   }
 
-  ensureMatchEventsSubscriber();
+  // Backend is authoritative; subscriber disabled to avoid double writes
   const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
   const res = await fetch(`${base}/queue/dequeue`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
   if (!res.ok) return { success: false };
@@ -477,7 +813,7 @@ export async function dequeueUser(userId: string) {
 }
 
 export async function consumeReservation(userId: string) {
-  ensureMatchEventsSubscriber();
+  // Backend is authoritative; subscriber disabled to avoid double writes
   const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
   const tokRes = await fetch(`${base}/queue/reservation?userId=${encodeURIComponent(userId)}`);
   if (!tokRes.ok) return { success: false, error: 'no_token' };
@@ -534,30 +870,46 @@ export async function getMatchData(matchId: string, userId: string) {
     let opponentUsername = 'Opponent';
     let opponentName = 'Opponent';
     
-    // Check Redis first
+    // Check Redis first for username
     if (opponentPlayerData) {
-      opponentAvatar = opponentPlayerData.avatar || null;
       opponentUsername = opponentPlayerData.username || 'Opponent';
     }
     
-    // If not in Redis, fetch from MongoDB
+    // Always fetch avatar using centralized function (handles both users and bots)
+    const avatarResult = await getAvatarByIdAction(opponentUserId);
+    if (avatarResult.success) {
+      opponentAvatar = avatarResult.avatar;
+    }
+    
+    // If not in Redis, fetch full user info from MongoDB for name
     if (!opponentPlayerData) {
-    await connectDB();
+      await connectDB();
       const client = await getMongoClient();
-    const db = client.db(DB_NAME);
-    const users = db.collection('users');
+      const db = client.db(DB_NAME);
+      const users = db.collection('users');
       const opponentUser: any = await users.findOne(
         { _id: new ObjectId(opponentUserId) },
-        { projection: { username: 1, 'profile.firstName': 1, 'profile.lastName': 1, 'profile.avatar': 1 } }
+        { projection: { username: 1, 'profile.firstName': 1, 'profile.lastName': 1 } }
       );
       
       if (opponentUser) {
-        opponentAvatar = opponentUser?.profile?.avatar || null;
         opponentUsername = opponentUser?.username || 'Opponent';
         opponentName = `${opponentUser?.profile?.firstName || ''} ${opponentUser?.profile?.lastName || ''}`.trim() || opponentUsername;
+      } else {
+        // Check if it's a bot
+        const bots = db.collection('bots');
+        const bot: any = await bots.findOne(
+          { _id: new ObjectId(opponentUserId) },
+          { projection: { username: 1, fullName: 1 } }
+        );
+        
+        if (bot) {
+          opponentUsername = bot.username || 'Bot';
+          opponentName = bot.fullName || opponentUsername;
+        }
       }
     } else {
-      // Get full name from MongoDB
+      // Get full name from MongoDB for user
       await connectDB();
       const client = await getMongoClient();
       const db = client.db(DB_NAME);
@@ -569,6 +921,17 @@ export async function getMatchData(matchId: string, userId: string) {
       
       if (opponentUser) {
         opponentName = `${opponentUser?.profile?.firstName || ''} ${opponentUser?.profile?.lastName || ''}`.trim() || opponentUsername;
+      } else {
+        // Check if it's a bot
+        const bots = db.collection('bots');
+        const bot: any = await bots.findOne(
+          { _id: new ObjectId(opponentUserId) },
+          { projection: { fullName: 1 } }
+        );
+        
+        if (bot) {
+          opponentName = bot.fullName || opponentUsername;
+        }
       }
     }
     
@@ -708,7 +1071,7 @@ function getCppDefaultReturn(returnType: string): string {
 }
 
 export async function finalizeMatch(matchId: string) {
-  ensureMatchEventsSubscriber();
+  // Backend is authoritative; subscriber disabled to avoid double writes
   // Read Redis blob and persist into MongoDB
   const redis = getRedis();
   const raw = await redis.get(RedisKeys.matchKey(matchId));
@@ -740,10 +1103,75 @@ function calculateEloChange(winnerRating: number, loserRating: number, isDraw: b
 /**
  * Update player stats and ratings after match completion
  */
-async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: string | null, isDraw: boolean, db: any) {
+async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: string | null, isDraw: boolean, db: any, ratingChanges?: Record<string, { oldRating: number; newRating: number; change: number }>) {
   const users = db.collection('users');
   const { ObjectId } = await import('mongodb');
   const redis = getRedis();
+  
+  // Use pre-calculated rating changes if available (from MatchRoom with difficulty adjustments)
+  if (ratingChanges && playerIds.length === 2) {
+    console.log('Using pre-calculated rating changes from MatchRoom:', ratingChanges);
+    
+    // Apply the pre-calculated rating changes directly
+    for (const playerId of playerIds) {
+      const playerObjectId = new ObjectId(playerId);
+      const ratingChange = ratingChanges[playerId];
+      
+      if (!ratingChange) {
+        console.warn(`No rating change found for player ${playerId}`);
+        continue;
+      }
+      
+      // Determine if this player won, lost, or drew
+      let statUpdate: any = { 'stats.totalMatches': 1 };
+      
+      if (isDraw) {
+        statUpdate['stats.draws'] = 1;
+      } else if (winnerUserId === playerId) {
+        statUpdate['stats.wins'] = 1;
+      } else {
+        statUpdate['stats.losses'] = 1;
+      }
+      
+      // Ensure stats exists with defaults first
+      await users.updateOne(
+        { _id: playerObjectId },
+        { 
+          $setOnInsert: { 
+            'stats.wins': 0, 
+            'stats.losses': 0, 
+            'stats.draws': 0,
+            'stats.totalMatches': 0,
+            'stats.rating': 1200
+          }
+        },
+        { upsert: true }
+      );
+      
+      // Apply rating change and stats update
+      await users.updateOne(
+        { _id: playerObjectId },
+        { 
+          $inc: { 
+            ...statUpdate,
+            'stats.rating': ratingChange.change
+          }
+        }
+      );
+      
+      console.log(`Player ${playerId} rating updated: ${ratingChange.oldRating} → ${ratingChange.newRating} (${ratingChange.change > 0 ? '+' : ''}${ratingChange.change})`);
+    }
+    
+    // Invalidate user stats cache in Redis for both players
+    await redis.del(RedisKeys.userStats(playerIds[0]));
+    await redis.del(RedisKeys.userStats(playerIds[1]));
+    
+    console.log('Player stats and ratings updated successfully using pre-calculated values');
+    return;
+  }
+  
+  // Fallback to old calculation method if no pre-calculated values available
+  console.log('No pre-calculated rating changes found, using legacy calculation method');
   
   // Get current ratings for both players
   const player1Id = new ObjectId(playerIds[0]);
@@ -922,16 +1350,15 @@ export async function persistMatchFromState(state: any) {
       continue;
     }
 
-    // Generate a unique ID for this submission (combination of matchId, userId, timestamp)
-    const submissionId = `${state.matchId}_${submission.userId}_${submission.timestamp}`;
-    
+    // Use Mongo ObjectId for submission _id and store refs as ObjectId
+    const submissionMongoId = new ObjectId();
     const doc = {
-      _id: submissionId,
+      _id: submissionMongoId,
       matchId: state.matchId,
-      problemId: state.problemId,
-      userId: submission.userId,
+      problemId: tryToObjectId(state.problemId) || new ObjectId(state.problemId),
+      userId: tryToObjectId(submission.userId) || new ObjectId(submission.userId),
       language: submission.language,
-      code: submission.code || null,
+      sourceCode: submission.code || null,
       passed: submission.passed || false,
       testResults: submission.testResults || [],
       averageTime: submission.averageTime || null,
@@ -944,40 +1371,28 @@ export async function persistMatchFromState(state: any) {
     };
     
     try {
-    const result = await submissions.findOneAndUpdate(
-        { _id: submissionId },
+    await submissions.findOneAndUpdate(
+        { _id: submissionMongoId },
         { $set: doc },
       { upsert: true, returnDocument: 'after' }
     );
-      if (result.value?._id) {
-        insertedIds.push(new ObjectId(result.value._id as any));
-      }
+      insertedIds.push(submissionMongoId);
     } catch (error) {
-      console.error(`Error upserting submission ${submissionId}:`, error);
+      console.error(`Error upserting submission ${String(submissionMongoId)}:`, error);
     }
   }
 
   // Safely convert player IDs to ObjectId format
   const playerObjectIds = playerIds
-    .filter(id => id && typeof id === 'string')
-    .map((id) => {
-      try {
-        // Only convert if it's a valid ObjectId string
-        if (/^[0-9a-fA-F]{24}$/.test(id)) {
-          return new ObjectId(id);
-        }
-        return id;
-      } catch {
-        return id;
-      }
-    });
+    .filter((id) => Boolean(id))
+    .map((id: unknown) => tryToObjectId(id) || (id as any));
 
   const matchDoc = {
     _id: state.matchId,
     playerIds: playerObjectIds,
-    problemId: state.problemId,
+    problemId: tryToObjectId(state.problemId) || new ObjectId(state.problemId),
     status: 'finished',
-    winnerUserId: state.winnerUserId || null,
+    winnerUserId: state.winnerUserId ? (tryToObjectId(state.winnerUserId) || new ObjectId(state.winnerUserId)) : null,
     isDraw: state.isDraw || false,
     startedAt: state.startedAt ? new Date(state.startedAt) : new Date(),
     endedAt: state.endedAt ? new Date(state.endedAt) : new Date(),
@@ -998,7 +1413,8 @@ export async function persistMatchFromState(state: any) {
   console.log(`Match ${state.matchId} persistence - Found ${playerIds.length} players:`, playerIds);
   
   if (playerIds.length === 2) {
-    await updatePlayerStatsAndRatings(playerIds, state.winnerUserId, isDraw, db);
+    // Pass pre-calculated rating changes from MatchRoom (with difficulty adjustments)
+    await updatePlayerStatsAndRatings(playerIds, state.winnerUserId, isDraw, db, state.ratingChanges);
   } else {
     console.warn(`Expected 2 players but found ${playerIds.length}. Players:`, playerIds, 'State:', JSON.stringify(state, null, 2));
   }
@@ -1297,17 +1713,32 @@ Your task:
     - functionName: a descriptive name for the main function
     - parameters: list of parameter names and their types
     - returnType: the type of the function's output
-3. Output a JSON object with the following fields exactly:
+3. Support the following data types for parameters and returnType:
+    - Primitive types: "int", "string", "boolean", "double", "float", "long"
+    - Array types: "int[]", "string[]", "double[]", etc.
+    - Complex data structures:
+        * "ListNode" - for linked list problems (input/output as arrays like [1,2,3,4])
+        * "TreeNode" - for binary tree problems (input/output as level-order arrays like [1,2,3,null,null,4,5])
+        * "ListNode[]" - for arrays of linked lists
+        * "TreeNode[]" - for arrays of binary trees
+4. Output a JSON object with the following fields exactly:
     - title
     - topics (array of strings — optional, can be empty if unsure)
     - description
     - examples
     - constraints
     - signature (object with functionName, parameters, returnType)
-4. Do NOT include difficulty or any commentary. Only output the JSON object.
+5. Do NOT include difficulty or any commentary. Only output the JSON object.
 
-Output example (given the input above):
+Type Selection Guidelines:
+- Use "ListNode" when examples show: head = [1,2,3], l1 = [1,2,4], or similar linked list notation
+- Use "TreeNode" when examples show: root = [1,2,3], tree = [1,null,2], or similar tree notation  
+- Use "int[]" when examples show: nums = [1,2,3], arr = [4,5,6] for regular arrays
+- The context and problem description will help distinguish (e.g., "linked list" vs "array" terminology)
 
+Output examples:
+
+Example 1 - Builtin Types (arrays, primitives):
 {
   "title": "Find Indices with Target Sum",
   "topics": ["Arrays", "Hash Map"],
@@ -1331,6 +1762,56 @@ Output example (given the input above):
       { "name": "target", "type": "int" }
     ],
     "returnType": "int[]"
+  }
+}
+
+Example 2 - ListNode (linked list):
+{
+  "title": "Reverse Linked List",
+  "topics": ["Linked List"],
+  "description": "Given the head of a singly linked list, reverse the list and return the reversed list.",
+  "examples": [
+    {
+      "input": "head = [1,2,3,4,5]",
+      "output": "[5,4,3,2,1]",
+      "explanation": "The linked list is reversed."
+    }
+  ],
+  "constraints": [
+    "The number of nodes in the list is in the range [0, 5000]",
+    "-5000 <= Node.val <= 5000"
+  ],
+  "signature": {
+    "functionName": "reverseList",
+    "parameters": [
+      { "name": "head", "type": "ListNode" }
+    ],
+    "returnType": "ListNode"
+  }
+}
+
+Example 3 - TreeNode (binary tree):
+{
+  "title": "Invert Binary Tree",
+  "topics": ["Binary Tree", "Depth-First Search"],
+  "description": "Given the root of a binary tree, invert the tree and return its root.",
+  "examples": [
+    {
+      "input": "root = [4,2,7,1,3,6,9]",
+      "output": "[4,7,2,9,6,3,1]",
+      "explanation": "The tree is inverted by swapping left and right children."
+    }
+  ],
+  "constraints": [
+    "The number of nodes in the tree is in the range [0, 100]",
+    "-100 <= Node.val <= 100"
+  ],
+  "signature": {
+    "functionName": "invertTree",
+    "parameters": [
+      { "name": "root", "type": "TreeNode" }
+    ],
+    "returnType": "TreeNode"
   }
 }`;
 
@@ -1377,29 +1858,76 @@ Input:
 
 Task:
 1. Generate a solution class + method for each of the specified languages that achieves the targetTimeComplexity.
-2. The solution MUST meet the specified time complexity requirement. For example:
+2. **CRITICAL**: Each solution MUST be wrapped in a class called "Solution" with the method inside it. For example:
+   - Python: class Solution: with method inside
+   - C++: class Solution { with method inside };
+   - Java: class Solution { with method inside }
+   - JavaScript: class Solution { with method inside }
+3. The solution MUST meet the specified time complexity requirement. For example:
    - If targetTimeComplexity is "O(n)", use techniques like hash maps, single-pass algorithms
    - If targetTimeComplexity is "O(n log n)", use sorting or binary search
    - If targetTimeComplexity is "O(n^2)", nested loops are acceptable
-3. Generate the specified number of test cases with small input sizes (maximum n=maxN), covering typical and edge cases.
-4. **CRITICALLY IMPORTANT**: The test cases MUST strictly follow ALL constraints from the problem. For example:
+4. Generate the specified number of test cases with small input sizes (maximum n=maxN), covering typical and edge cases.
+5. **CRITICALLY IMPORTANT**: The test cases MUST strictly follow ALL constraints from the problem. For example:
    - If constraints say "Only one valid answer exists" or "There is exactly one valid pair", ensure each test case has EXACTLY ONE correct answer, not multiple
    - If constraints specify value ranges, stay within those ranges
    - If constraints specify array size limits, respect those limits
-5. Output JSON exactly in the following format:
+6. **COMPLEX DATA STRUCTURES**: For ListNode and TreeNode problems, use JSON format for test cases:
+   - For ListNode: test case input uses arrays like [1,2,3], NOT string format like 'head = [1,2,3]'
+   - For TreeNode: test case input uses level-order arrays with null, like [1,2,3,null,null,4,5]
+   - The examples field (for human display) uses strings, but testCases field (for execution) uses JSON objects
+
+Example outputs by data type:
+
+Example 1 - Builtin Types:
 {
   "solutions": {
-    "<language>": "...class+method code..."
+    "python": "class Solution:\\n    def findPair(self, nums, target):\\n        # Implementation here\\n        pass",
+    "cpp": "class Solution {\\npublic:\\n    vector<int> findPair(vector<int>& nums, int target) {\\n        // Implementation here\\n    }\\n};",
+    "java": "class Solution {\\n    public int[] findPair(int[] nums, int target) {\\n        // Implementation here\\n    }\\n}",
+    "js": "class Solution {\\n    findPair(nums, target) {\\n        // Implementation here\\n    }\\n}"
   },
   "testCases": [
-    {"input": {...}, "output": ...},
-    ...
+    {"input": {"nums": [2,7,11,15], "target": 9}, "output": [0,1]},
+    {"input": {"nums": [3,2,4], "target": 6}, "output": [1,2]},
+    {"input": {"nums": [3,3], "target": 6}, "output": [0,1]}
   ]
 }
-6. Do not include commentary, explanations, or extra fields.
-7. Ensure the code is ready to be wrapped with a language-specific runner template for compilation.
-8. The solutions MUST be correct and achieve the specified time complexity.
-9. Each test case must have exactly ONE correct answer when the constraints specify uniqueness.`;
+
+Example 2 - ListNode:
+{
+  "solutions": {
+    "python": "class Solution:\\n    def reverseList(self, head):\\n        # Implementation here\\n        pass",
+    "cpp": "class Solution {\\npublic:\\n    ListNode* reverseList(ListNode* head) {\\n        // Implementation here\\n    }\\n};",
+    "java": "class Solution {\\n    public ListNode reverseList(ListNode head) {\\n        // Implementation here\\n    }\\n}",
+    "js": "class Solution {\\n    reverseList(head) {\\n        // Implementation here\\n    }\\n}"
+  },
+  "testCases": [
+    {"input": {"head": [1,2,3,4,5]}, "output": [5,4,3,2,1]},
+    {"input": {"head": [1,2]}, "output": [2,1]},
+    {"input": {"head": []}, "output": []}
+  ]
+}
+
+Example 3 - TreeNode:
+{
+  "solutions": {
+    "python": "class Solution:\\n    def invertTree(self, root):\\n        # Implementation here\\n        pass",
+    "cpp": "class Solution {\\npublic:\\n    TreeNode* invertTree(TreeNode* root) {\\n        // Implementation here\\n    }\\n};",
+    "java": "class Solution {\\n    public TreeNode invertTree(TreeNode root) {\\n        // Implementation here\\n    }\\n}",
+    "js": "class Solution {\\n    invertTree(root) {\\n        // Implementation here\\n    }\\n}"
+  },
+  "testCases": [
+    {"input": {"root": [4,2,7,1,3,6,9]}, "output": [4,7,2,9,6,3,1]},
+    {"input": {"root": [2,1,3]}, "output": [2,3,1]},
+    {"input": {"root": []}, "output": []}
+  ]
+}
+8. Do not include commentary, explanations, or extra fields.
+9. Ensure the code is ready to be wrapped with a language-specific runner template for compilation.
+10. The solutions MUST be correct and achieve the specified time complexity.
+11. Each test case must have exactly ONE correct answer when the constraints specify uniqueness.
+12. **IMPORTANT**: Only output the Solution class with the method inside - no imports, no main function, no extra code.`;
 
     // Determine maxN from constraints (default to 50)
     const maxN = 50;
@@ -1537,6 +2065,7 @@ export async function verifyProblemSolutions(problemId: string) {
     }
 
     const validationResult = await validationResponse.json();
+    console.log('Validation result received:', JSON.stringify(validationResult, null, 2));
 
     // Update problem with verification status (whether success or failure)
     await connectDB();
@@ -1545,36 +2074,54 @@ export async function verifyProblemSolutions(problemId: string) {
     const updateDb = updateClient.db(DB_NAME);
     const updateProblemsCollection = updateDb.collection('problems');
 
-    if (!validationResult.success) {
-      // Extract failed test case details for each language
-      const failedTestCases: Record<string, Array<{
-        testNumber: number;
-        input: any;
-        expected: any;
-        actual: any;
-        error?: string;
-      }>> = {};
+    // Extract test case details for each language (both passed and failed)
+    const allTestCases: Record<string, Array<{
+      testNumber: number;
+      input: any;
+      expected: any;
+      actual: any;
+      error?: string;
+      passed: boolean;
+    }>> = {};
 
-      for (const [lang, result] of Object.entries(validationResult.results)) {
-        const langResult = result as any;
-        if (langResult.results) {
-          const failed = langResult.results
-            .map((r: any, index: number) => ({
-              testNumber: index + 1,
-              input: r.testCase?.input,
-              expected: r.testCase?.output,
-              actual: r.actualOutput,
-              error: r.error,
-              passed: r.passed,
-            }))
-            .filter((r: any) => !r.passed);
-          
-          if (failed.length > 0) {
-            failedTestCases[lang] = failed;
-          }
+    const failedTestCases: Record<string, Array<{
+      testNumber: number;
+      input: any;
+      expected: any;
+      actual: any;
+      error?: string;
+    }>> = {};
+
+    for (const [lang, result] of Object.entries(validationResult.results)) {
+      const langResult = result as any;
+      console.log(`Processing ${lang} results:`, JSON.stringify(langResult, null, 2));
+      if (langResult.results) {
+        const allTests = langResult.results
+          .map((r: any) => ({
+            testNumber: r.testNumber || 0,
+            input: r.testCase?.input,
+            expected: r.testCase?.output,
+            actual: r.actualOutput,
+            error: r.error,
+            passed: r.passed,
+          }));
+        
+        const failed = allTests.filter((r: any) => !r.passed);
+        
+        allTestCases[lang] = allTests;
+        console.log(`All tests for ${lang}:`, allTests);
+        console.log(`Failed tests for ${lang}:`, failed);
+        
+        if (failed.length > 0) {
+          failedTestCases[lang] = failed;
         }
       }
+    }
+    
+    console.log('Final allTestCases:', JSON.stringify(allTestCases, null, 2));
+    console.log('Final failedTestCases:', JSON.stringify(failedTestCases, null, 2));
 
+    if (!validationResult.success) {
       // Store failure details so user can see what went wrong
       await updateProblemsCollection.updateOne(
         { _id: new ObjectId(problemId) },
@@ -1584,7 +2131,8 @@ export async function verifyProblemSolutions(problemId: string) {
             verifiedAt: new Date(),
             verificationResults: validationResult.results,
             verificationError: validationResult.details || [],
-            failedTestCases, // NEW: Store specific failed test details
+            allTestCases, // Store ALL test case details
+            failedTestCases, // Store specific failed test details
           }
         }
       );
@@ -1594,11 +2142,12 @@ export async function verifyProblemSolutions(problemId: string) {
         error: 'Solution verification failed: ' + (validationResult.details || []).join('; '),
         details: validationResult.details,
         results: validationResult.results,
+        allTestCases,
         failedTestCases,
       };
     }
 
-    // Success case
+    // Success case - still store all test case details
     await updateProblemsCollection.updateOne(
       { _id: new ObjectId(problemId) },
       { 
@@ -1607,6 +2156,7 @@ export async function verifyProblemSolutions(problemId: string) {
           verifiedAt: new Date(),
           verificationResults: validationResult.results,
           verificationError: null,
+          allTestCases, // Store ALL test case details even on success
           failedTestCases: null, // Clear failed test cases on success
         }
       }
@@ -1659,6 +2209,7 @@ export async function getUnverifiedProblems() {
       verifiedAt: problem.verifiedAt?.toISOString() || null,
       verificationError: problem.verificationError || [],
       verificationResults: problem.verificationResults || null,
+      allTestCases: problem.allTestCases || null,
       failedTestCases: problem.failedTestCases || null,
     }));
   } catch (error: any) {
@@ -1853,4 +2404,867 @@ async function scanRedisKeys(redis: any, pattern: string): Promise<string[]> {
   } while (cursor !== '0');
   
   return keys;
+}
+
+/**
+ * Get paginated users with search functionality
+ */
+export async function getUsers(
+  page: number = 1, 
+  limit: number = 10, 
+  searchTerm?: string, 
+  searchType?: 'username' | 'id'
+) {
+  // Rate limiting for admin operations
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(adminLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    
+    const db = client.db(DB_NAME);
+    const users = db.collection(USERS_COLLECTION);
+
+    // Build search query
+    const query: Record<string, any> = {};
+    if (searchTerm && searchType) {
+      if (searchType === 'username') {
+        query.username = { $regex: searchTerm, $options: 'i' };
+      } else if (searchType === 'id') {
+        try {
+          query._id = new ObjectId(searchTerm);
+        } catch {
+          return { success: false, error: 'Invalid user ID format' };
+        }
+      }
+    }
+
+    // Calculate skip value for pagination
+    const skip = (page - 1) * limit;
+
+    // Get users with pagination
+    const usersList = await users
+      .find(query)
+      .sort({ createdAt: -1 }) // Most recent first
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+
+    // Serialize ObjectIds and Dates for client components
+    const serializedUsers = usersList.map(user => ({
+      ...user,
+      _id: user._id.toString(),
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
+      lastLogin: user.lastLogin.toISOString(),
+    }));
+
+    return { 
+      success: true, 
+      users: serializedUsers 
+    };
+  } catch (error: any) {
+    console.error('Error fetching users:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Failed to fetch users' 
+    };
+  }
+}
+
+/**
+ * Get total count of users for pagination
+ */
+export async function getTotalUsersCount(
+  searchTerm?: string, 
+  searchType?: 'username' | 'id'
+) {
+  // Rate limiting for admin operations
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(adminLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    
+    const db = client.db(DB_NAME);
+    const users = db.collection(USERS_COLLECTION);
+
+    // Build search query (same as getUsers)
+    const query: Record<string, any> = {};
+    if (searchTerm && searchType) {
+      if (searchType === 'username') {
+        query.username = { $regex: searchTerm, $options: 'i' };
+      } else if (searchType === 'id') {
+        try {
+          query._id = new ObjectId(searchTerm);
+        } catch {
+          return { success: false, error: 'Invalid user ID format' };
+        }
+      }
+    }
+
+    const count = await users.countDocuments(query);
+    return { 
+      success: true, 
+      count 
+    };
+  } catch (error: any) {
+    console.error('Error counting users:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Failed to count users' 
+    };
+  }
+}
+
+/**
+ * Update user fields (excluding password)
+ */
+export async function updateUser(userId: string, updates: Partial<User>) {
+  // Rate limiting for admin operations
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(adminLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    
+    const db = client.db(DB_NAME);
+    const users = db.collection(USERS_COLLECTION);
+
+    // Validate user ID format
+    let userObjectId;
+    try {
+      userObjectId = new ObjectId(userId);
+    } catch {
+      return { success: false, error: 'Invalid user ID format' };
+    }
+
+    // Check if user exists
+    const existingUser = await users.findOne({ _id: userObjectId });
+    if (!existingUser) {
+      return { success: false, error: 'User not found' };
+    }
+
+    // Prepare update data
+    const updateData: Record<string, any> = {
+      updatedAt: new Date(),
+    };
+
+    // Handle profile updates
+    if (updates.profile) {
+      updateData.profile = {
+        ...existingUser.profile,
+        ...updates.profile,
+      };
+    }
+
+    // Handle stats updates
+    if (updates.stats) {
+      updateData.stats = {
+        ...existingUser.stats,
+        ...updates.stats,
+      };
+    }
+
+    // Handle direct field updates (username, email)
+    if (updates.username !== undefined) {
+      // Check if username is unique (excluding current user)
+      const usernameExists = await users.findOne({
+        username: updates.username,
+        _id: { $ne: userObjectId }
+      });
+      if (usernameExists) {
+        return { success: false, error: 'Username already exists' };
+      }
+      updateData.username = updates.username;
+    }
+
+    if (updates.email !== undefined) {
+      // Check if email is unique (excluding current user)
+      const emailExists = await users.findOne({
+        email: updates.email,
+        _id: { $ne: userObjectId }
+      });
+      if (emailExists) {
+        return { success: false, error: 'Email already exists' };
+      }
+      updateData.email = updates.email;
+    }
+
+    // Perform the update
+    const result = await users.updateOne(
+      { _id: userObjectId },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return { success: false, error: 'User not found' };
+    }
+
+    // Invalidate user stats cache in Redis if stats were updated
+    if (updates.stats) {
+      const redis = getRedis();
+      await redis.del(RedisKeys.userStats(userId));
+    }
+
+    return { 
+      success: true, 
+      message: 'User updated successfully' 
+    };
+  } catch (error: any) {
+    console.error('Error updating user:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Failed to update user' 
+    };
+  }
+}
+
+/**
+ * Get a single user by ID for editing
+ */
+export async function getUserById(userId: string) {
+  // Rate limiting for admin operations
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(adminLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    
+    const db = client.db(DB_NAME);
+    const users = db.collection(USERS_COLLECTION);
+
+    // Validate user ID format
+    let userObjectId;
+    try {
+      userObjectId = new ObjectId(userId);
+    } catch {
+      return { success: false, error: 'Invalid user ID format' };
+    }
+
+    const user = await users.findOne({ _id: userObjectId });
+    if (!user) {
+      return { success: false, error: 'User not found' };
+    }
+
+    // Serialize ObjectIds and Dates for client components
+    const serializedUser = {
+      ...user,
+      _id: user._id.toString(),
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
+      lastLogin: user.lastLogin.toISOString(),
+    };
+
+    return { 
+      success: true, 
+      user: serializedUser 
+    };
+  } catch (error: any) {
+    console.error('Error fetching user:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Failed to fetch user' 
+    };
+  }
+}
+
+// Match History Server Actions
+export async function getMatchHistory(userId: string, page: number = 1, limit: number = 10) {
+  try {
+    const redis = getRedis();
+    const cacheKey = `user:${userId}:matchHistory:${page}`;
+    
+    // Try cache first
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
+
+    await connectDB();
+    const client = await getMongoClient();
+    const db = client.db(DB_NAME);
+    
+    const userObjectId = new ObjectId(userId);
+    const skip = (page - 1) * limit;
+    
+    // Get finished matches for the user
+    const matches = await db.collection('matches').aggregate([
+      {
+        $match: {
+          playerIds: userObjectId,
+          status: 'finished',
+          endedAt: { $exists: true }
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'playerIds',
+          foreignField: '_id',
+          as: 'players'
+        }
+      },
+      {
+        $lookup: {
+          from: 'problems',
+          localField: 'problemId',
+          foreignField: '_id',
+          as: 'problems'
+        }
+      },
+      {
+        $addFields: {
+          problem: { $arrayElemAt: ['$problems', 0] },
+          opponent: {
+            $arrayElemAt: [
+              {
+                $filter: {
+                  input: '$players',
+                  cond: { $ne: ['$$this._id', userObjectId] }
+                }
+              },
+              0
+            ]
+          },
+          currentUser: {
+            $arrayElemAt: [
+              {
+                $filter: {
+                  input: '$players',
+                  cond: { $eq: ['$$this._id', userObjectId] }
+                }
+              },
+              0
+            ]
+          }
+        }
+      },
+      {
+        $addFields: {
+          result: {
+            $cond: [
+              { $eq: ['$winnerUserId', null] },
+              'draw',
+              {
+                $cond: [
+                  { $eq: ['$winnerUserId', userObjectId] },
+                  'win',
+                  'loss'
+                ]
+              }
+            ]
+          },
+          duration: {
+            $subtract: [
+              { $toDate: '$endedAt' },
+              { $toDate: '$startedAt' }
+            ]
+          }
+        }
+      },
+      {
+        $sort: { endedAt: -1 }
+      },
+      {
+        $skip: skip
+      },
+      {
+        $limit: limit
+      }
+    ]).toArray();
+
+    // Try to get rating changes from Redis for each match
+    const formattedMatches = await Promise.all(matches.map(async (match) => {
+      
+      // Try to get rating changes from Redis match data
+      let ratingChange = 0;
+      try {
+        const matchKey = RedisKeys.matchKey(match._id.toString());
+        const matchData = await redis.get(matchKey);
+        if (matchData) {
+          const parsed = JSON.parse(matchData);
+          if (parsed.ratingChanges && parsed.ratingChanges[userId]) {
+            ratingChange = parsed.ratingChanges[userId].change || 0;
+          }
+        }
+      } catch (error) {
+        console.warn('Could not fetch rating changes from Redis for match:', match._id.toString());
+      }
+      
+      // Fetch opponent avatar using centralized function
+      let opponentAvatar = null;
+      const avatarResult = await getAvatarByIdAction(match.opponent._id.toString());
+      if (avatarResult.success) {
+        opponentAvatar = avatarResult.avatar;
+      }
+      
+      return {
+        matchId: match._id.toString(),
+        opponent: {
+          userId: match.opponent._id.toString(),
+          username: match.opponent.username,
+          avatar: opponentAvatar,
+          rating: match.opponent.stats?.rating || 1200
+        },
+        problem: {
+          title: match.problem?.title || 'Unknown Problem',
+          difficulty: match.problem?.difficulty || 'Medium',
+          topics: match.problem?.topics || []
+        },
+        result: match.result,
+        ratingChange: ratingChange,
+        duration: match.duration,
+        endedAt: match.endedAt,
+        startedAt: match.startedAt
+      };
+    }));
+
+    const result = {
+      matches: formattedMatches,
+      page,
+      limit,
+      hasMore: formattedMatches.length === limit
+    };
+
+    // Cache for 5 minutes
+    await redis.setex(cacheKey, 300, JSON.stringify(result));
+    
+    return result;
+  } catch (error) {
+    console.error('Error fetching match history:', error);
+    return {
+      matches: [],
+      page,
+      limit,
+      hasMore: false,
+      error: 'Failed to fetch match history'
+    };
+  }
+}
+
+export async function getMatchDetails(matchId: string, userId: string) {
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    const db = client.db(DB_NAME);
+    
+    const userObjectId = new ObjectId(userId);
+    const matchObjectId = new ObjectId(matchId);
+    
+    // Get match details with populated data
+    const match = await db.collection('matches').aggregate([
+      {
+        $match: { _id: matchObjectId }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'playerIds',
+          foreignField: '_id',
+          as: 'players'
+        }
+      },
+      {
+        $lookup: {
+          from: 'problems',
+          localField: 'problemId',
+          foreignField: '_id',
+          as: 'problems'
+        }
+      },
+      {
+        $lookup: {
+          from: 'submissions',
+          localField: 'submissionIds',
+          foreignField: '_id',
+          as: 'submissions'
+        }
+      },
+      {
+        $addFields: {
+          problem: { $arrayElemAt: ['$problems', 0] },
+          currentUser: {
+            $arrayElemAt: [
+              {
+                $filter: {
+                  input: '$players',
+                  cond: { $eq: ['$$this._id', userObjectId] }
+                }
+              },
+              0
+            ]
+          },
+          opponent: {
+            $arrayElemAt: [
+              {
+                $filter: {
+                  input: '$players',
+                  cond: { $ne: ['$$this._id', userObjectId] }
+                }
+              },
+              0
+            ]
+          }
+        }
+      }
+    ]).toArray();
+
+    if (!match[0]) {
+      return { success: false, error: 'Match not found' };
+    }
+
+    const matchData = match[0];
+    
+    // Get submission stats for both players
+    const userSubmissions = matchData.submissions.filter((s: any) => 
+      s.userId.toString() === userId
+    );
+    const opponentSubmissions = matchData.submissions.filter((s: any) => 
+      s.userId.toString() !== userId
+    );
+
+    const getUserStats = (submissions: any[]) => {
+      const bestSubmission = submissions.reduce((best, sub) => {
+        const passed = sub.testResults?.filter((t: any) => t.status === 3).length || 0;
+        const bestPassed = best?.testResults?.filter((t: any) => t.status === 3).length || 0;
+        return passed > bestPassed ? sub : best;
+      }, null);
+
+      const testsPassed = bestSubmission?.testResults?.filter((t: any) => t.status === 3).length || 0;
+      const totalTests = bestSubmission?.testResults?.length || 0;
+
+      return {
+        submissionsCount: submissions.length,
+        testsPassed,
+        totalTests,
+        bestSubmission: bestSubmission ? {
+          code: bestSubmission.sourceCode || '',
+          language: bestSubmission.language || 'unknown',
+          runtime: bestSubmission.time || undefined,
+          memory: bestSubmission.memory || undefined,
+          timeComplexity: 'O(n)', // Placeholder
+          spaceComplexity: 'O(1)' // Placeholder
+        } : undefined
+      };
+    };
+
+    const userStats = getUserStats(userSubmissions);
+    const opponentStats = getUserStats(opponentSubmissions);
+
+    // Fetch avatars using centralized function
+    let currentUserAvatar = null;
+    let opponentAvatar = null;
+    
+    const currentUserAvatarResult = await getAvatarByIdAction(userId);
+    if (currentUserAvatarResult.success) {
+      currentUserAvatar = currentUserAvatarResult.avatar;
+    }
+    
+    const opponentAvatarResult = await getAvatarByIdAction(matchData.opponent._id.toString());
+    if (opponentAvatarResult.success) {
+      opponentAvatar = opponentAvatarResult.avatar;
+    }
+
+    // Try to get rating changes from Redis match data
+    let ratingChanges = {};
+    try {
+      const redis = getRedis();
+      const matchKey = RedisKeys.matchKey(matchId);
+      const redisMatchData = await redis.get(matchKey);
+      if (redisMatchData) {
+        const parsed = JSON.parse(redisMatchData);
+        ratingChanges = parsed.ratingChanges || {};
+      }
+    } catch (error) {
+      console.warn('Could not fetch rating changes from Redis for match:', matchId);
+    }
+
+    const result = {
+      success: true,
+      matchId,
+      problem: {
+        title: matchData.problem?.title || 'Unknown Problem',
+        difficulty: matchData.problem?.difficulty || 'Medium',
+        topics: matchData.problem?.topics || [],
+        description: matchData.problem?.description || ''
+      },
+      result: matchData.winnerUserId === null ? 'draw' : 
+             matchData.winnerUserId.toString() === userId ? 'win' : 'loss',
+      duration: new Date(matchData.endedAt).getTime() - new Date(matchData.startedAt).getTime(),
+      startedAt: matchData.startedAt,
+      endedAt: matchData.endedAt,
+      players: {
+        currentUser: {
+          userId: matchData.currentUser._id.toString(),
+          username: matchData.currentUser.username,
+          avatar: currentUserAvatar,
+          ratingBefore: (ratingChanges[userId]?.oldRating || matchData.currentUser.stats?.rating || 1200),
+          ratingAfter: (ratingChanges[userId]?.newRating || matchData.currentUser.stats?.rating || 1200),
+          ratingChange: ratingChanges[userId]?.change || 0,
+          ...userStats
+        },
+        opponent: {
+          userId: matchData.opponent._id.toString(),
+          username: matchData.opponent.username,
+          avatar: opponentAvatar,
+          ratingBefore: (ratingChanges[matchData.opponent._id.toString()]?.oldRating || matchData.opponent.stats?.rating || 1200),
+          ratingAfter: (ratingChanges[matchData.opponent._id.toString()]?.newRating || matchData.opponent.stats?.rating || 1200),
+          ratingChange: ratingChanges[matchData.opponent._id.toString()]?.change || 0,
+          ...opponentStats
+        }
+      }
+    };
+
+    return result;
+  } catch (error) {
+    console.error('Error fetching match details:', error);
+    return { success: false, error: 'Failed to fetch match details' };
+  }
+}
+
+// AI Bot Generation Functions
+
+export async function generateBotProfile(count: number, gender?: 'male' | 'female' | 'random') {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ count, gender }),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error generating bot profile:', error);
+    return { success: false, error: 'Failed to generate bot profile' };
+  }
+}
+
+export async function generateBotAvatar(fullName: string, gender: 'male' | 'female' | 'nonbinary') {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/avatar`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fullName, gender }),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error generating bot avatar:', error);
+    return { success: false, error: 'Failed to generate bot avatar' };
+  }
+}
+
+export async function getBots() {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error fetching bots:', error);
+    return { success: false, error: 'Failed to fetch bots' };
+  }
+}
+
+export async function deployBots(botIds: string[], deploy: boolean) {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/deploy`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ botIds, deploy }),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error deploying bots:', error);
+    return { success: false, error: 'Failed to deploy bots' };
+  }
+}
+
+export async function updateBot(botId: string, updates: any) {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/${botId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(updates),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error updating bot:', error);
+    return { success: false, error: 'Failed to update bot' };
+  }
+}
+
+export async function deleteBot(botId: string) {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/${botId}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error deleting bot:', error);
+    return { success: false, error: 'Failed to delete bot' };
+  }
+}
+
+export async function resetBotData(resetType: 'stats' | 'all' = 'stats') {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ resetType }),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error resetting bot data:', error);
+    return { success: false, error: 'Failed to reset bot data' };
+  }
+}
+
+export async function deleteAllBots() {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ resetType: 'all' }),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error deleting all bots:', error);
+    return { success: false, error: 'Failed to delete all bots' };
+  }
+}
+
+export async function resetBotStats() {
+  try {
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ resetType: 'stats' }),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error resetting bot stats:', error);
+    return { success: false, error: 'Failed to reset bot stats' };
+  }
+}
+
+/**
+ * Get avatar filename for any user or bot ID
+ * @param id - User ID or Bot ID to fetch avatar for
+ * @returns Avatar filename or null if not found
+ */
+export async function getAvatarByIdAction(id: string) {
+  // Rate limiting for avatar requests
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(generalLimiter, identifier);
+  } catch (error: unknown) {
+    return { success: false, error: (error as Error).message };
+  }
+
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    const db = client.db(DB_NAME);
+
+    // Validate ID format
+    let objectId;
+    try {
+      objectId = new ObjectId(id);
+    } catch {
+      return { success: false, error: 'Invalid ID format' };
+    }
+
+    // First, try to find in users collection
+    const users = db.collection(USERS_COLLECTION);
+    const user = await users.findOne(
+      { _id: objectId },
+      { projection: { 'profile.avatar': 1, avatarUrl: 1 } }
+    );
+
+    if (user) {
+      // Check both possible avatar locations (schema migration compatibility)
+      const avatar = user.profile?.avatar || user.avatarUrl || null;
+      return { success: true, avatar };
+    }
+
+    // If not found in users, try bots collection
+    const bots = db.collection('bots');
+    const bot = await bots.findOne(
+      { _id: objectId },
+      { projection: { avatar: 1 } }
+    );
+
+    if (bot) {
+      return { success: true, avatar: bot.avatar || null };
+    }
+
+    // Not found in either collection
+    return { success: true, avatar: null };
+  } catch (error: any) {
+    console.error('Error fetching avatar by ID:', error);
+    return { 
+      success: false, 
+      error: error.message || 'Failed to fetch avatar' 
+    };
+  }
 }

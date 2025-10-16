@@ -1,0 +1,15 @@
+{
+  "name": "codeclashers-bots",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "license": "MIT",
+  "type": "commonjs",
+  "dependencies": {
+    "colyseus.js": "^0.15.18",
+    "ioredis": "^5.4.1",
+    "mongodb": "^6.0.0"
+  }
+}
+
+

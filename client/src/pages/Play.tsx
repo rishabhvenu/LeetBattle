@@ -40,6 +40,9 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
   const router = useRouter();
   const [matchesCount, setMatchesCount] = useState<number>(ongoingMatches || 0);
   const [stats, setStats] = useState<{ inQueue: number; activePlayers: number }>({ inQueue: 0, activePlayers: 0 });
+  const [roomCode, setRoomCode] = useState<string>('');
+  const [isCreatingRoom, setIsCreatingRoom] = useState<boolean>(false);
+  const [isJoiningRoom, setIsJoiningRoom] = useState<boolean>(false);
 
   useEffect(() => {
     let mounted = true;
@@ -95,6 +98,38 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
     }
     
     router.push("/queue");
+  };
+
+  const handleCreatePrivateRoom = async () => {
+    setIsCreatingRoom(true);
+    try {
+      // Generate a room code and immediately join it
+      const roomCode = generateRoomCode();
+      router.push(`/queue?private=true&roomCode=${roomCode}`);
+    } catch (error) {
+      console.error('Error creating private room:', error);
+      alert('Failed to create private room. Please try again.');
+    } finally {
+      setIsCreatingRoom(false);
+    }
+  };
+
+  const handleJoinPrivateRoom = () => {
+    if (!roomCode.trim()) {
+      alert('Please enter a room code');
+      return;
+    }
+    // Redirect to queue page with room code to join
+    router.push(`/queue?private=true&roomCode=${roomCode.toUpperCase()}`);
+  };
+
+  const generateRoomCode = (): string => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
   };
 
   return (
@@ -207,13 +242,21 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
                           <Input
                             id="room-code"
                             placeholder="Enter room code"
-                            className="bg-white border-blue-200 text-black placeholder:text-black/60 pl-10 pr-4 py-2 focus:border-blue-500"
+                            className="bg-white border-blue-200 text-black placeholder:text-black/60 pl-10 pr-4 py-2 focus:border-blue-500 uppercase"
+                            value={roomCode}
+                            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                            maxLength={6}
                           />
                           <Users className="absolute left-3 top-1/2 transform -translate-y-1/2 text-black/60 h-5 w-5" />
                         </div>
                       </div>
-                      <Button className="w-full text-white py-6 text-lg font-semibold transition-all duration-300 transform hover:scale-105 rounded-full" style={{ backgroundColor: '#2599D4' }}>
-                        Join Private Room
+                      <Button 
+                        className="w-full text-white py-6 text-lg font-semibold transition-all duration-300 transform hover:scale-105 rounded-full" 
+                        style={{ backgroundColor: '#2599D4' }}
+                        onClick={handleJoinPrivateRoom}
+                        disabled={isJoiningRoom || !roomCode.trim()}
+                      >
+                        {isJoiningRoom ? 'Joining...' : 'Join Private Room'}
                       </Button>
                       <div className="relative">
                         <div className="absolute inset-0 flex items-center">
@@ -230,8 +273,10 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
                           variant="outline"
                           className="w-full border-2 py-6 text-lg font-semibold transition-all duration-300 rounded-full"
                           style={{ borderColor: '#2599D4', color: '#2599D4' }}
+                          onClick={handleCreatePrivateRoom}
+                          disabled={isCreatingRoom}
                         >
-                          Create New Room
+                          {isCreatingRoom ? 'Creating...' : 'Create New Room'}
                         </Button>
                         <p className="text-center text-sm text-black/70">
                           Create a private room and invite your friends to join

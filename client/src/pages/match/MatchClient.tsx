@@ -77,6 +77,8 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   });
   const [code, setCode] = useState('');
   const [selectedSubmission, setSelectedSubmission] = useState<any | null>(null);
+  const [showSubmissionResultPopup, setShowSubmissionResultPopup] = useState(false);
+  const [latestSubmissionResult, setLatestSubmissionResult] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState('description');
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [problem, setProblem] = useState<{
@@ -106,6 +108,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testCaseResults, setTestCaseResults] = useState<TestCaseResult[]>([]);
+  const [testSummary, setTestSummary] = useState<{ passed: number; total: number }>({ passed: 0, total: 0 });
   const [opponentStats, setOpponentStats] = useState<{
     name: string;
     avatar: string | null;
@@ -135,16 +138,17 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   const [totalTests, setTotalTests] = useState(0);
   const [showResultAnimation, setShowResultAnimation] = useState(false);
   const [matchResult, setMatchResult] = useState<{ winner: boolean; draw: boolean } | null>(null);
+  const [ratingChanges, setRatingChanges] = useState<Record<string, { oldRating: number; newRating: number; change: number }> | null>(null);
   // roomRef defined at top of component (line 64)
   const matchupAnimationShownRef = useRef(false);
 
-  // Animation handlers
-  const handleResultAnimationComplete = () => {
-    setShowResultAnimation(false);
-    // Redirect to play page after animation completes
-    setTimeout(() => {
-      window.location.href = '/play';
-    }, 1000);
+  // Navigation handlers
+  const handleBackToHome = () => {
+    window.location.href = '/play';
+  };
+
+  const handleJoinQueue = () => {
+    window.location.href = '/queue';
   };
 
   // Separate effect to load match data (runs even with cached room)
@@ -421,14 +425,15 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           const formattedSubmission = formatSubmission(payload.submission);
           setSubmissions(prev => [formattedSubmission, ...prev]);
           setActiveTab('submissions');
+          
+          // Show submission result popup
+          setLatestSubmissionResult(formattedSubmission);
+          setShowSubmissionResultPopup(true);
         } else {
           // Opponent submission - update their solved count
           console.log('Opponent submission:', payload.submission);
           if (payload.submission?.passed) {
-            setOpponentTestsPassed(prev => {
-              const total = problem?.testCases?.length || 0;
-              return total;
-            });
+            setOpponentTestsPassed(problem?.testCasesCount || 0);
           } else if (payload.submission?.testResults) {
             const passed = payload.submission.testResults.filter((t: any) => t.status === 3).length;
             setOpponentTestsPassed(passed);
@@ -446,6 +451,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         const isWinner = payload.userId === userId;
         
         setMatchResult({ winner: isWinner, draw: false });
+        setRatingChanges(payload.ratingChanges || null);
         setShowResultAnimation(true);
       });
 
@@ -453,6 +459,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         console.log('Match draw received:', payload);
         
         setMatchResult({ winner: false, draw: true });
+        setRatingChanges(payload.ratingChanges || null);
         setShowResultAnimation(true);
       });
         
@@ -461,7 +468,13 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           setIsRunning(false);
           
           if (payload.success) {
-            setTestCaseResults(payload.testResults || []);
+            const testResults = payload.testResults || [];
+            setTestCaseResults(testResults);
+            
+            // Calculate test summary
+            const passedTests = testResults.filter((result: any) => result.status === 3).length;
+            setTestSummary({ passed: passedTests, total: testResults.length });
+            
             setRunPage(true);
           } else {
             toast.error(payload.error || 'Test run failed');
@@ -475,7 +488,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           if (payload.success) {
             // Update test cases passed count
             if (payload.allPassed) {
-              setUserTestsPassed(payload.totalTests || problem?.testCases?.length || 0);
+              setUserTestsPassed(payload.totalTests || problem?.testCasesCount || 0);
             } else {
               const passed = payload.passedTests || 0;
               setUserTestsPassed(passed);
@@ -486,7 +499,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         room.onMessage('complexity_failed', (payload) => {
           console.log('Complexity check failed:', payload);
           // User passed all tests but failed complexity
-          setUserTestsPassed(problem?.testCases?.length || 0);
+          setUserTestsPassed(problem?.testCasesCount || 0);
           setIsSubmitting(false);
         });
 
@@ -1038,45 +1051,66 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
               </SelectContent>
             </Select>
 
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                className="h-8 px-4 text-white hover:opacity-90"
-                style={{ backgroundColor: '#2599D4' }}
-                onClick={handleRunClick}
-                disabled={isRunning || isSubmitting}
-              >
-                {isRunning ? (
-                  <>
-                    <div className="h-4 w-4 mr-2 border-2 border-t-white border-white/30 rounded-full animate-spin" />
-                    Running...
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-4 w-4 mr-2" />
-                    Run Tests
-                  </>
-                )}
-              </Button>
-              <Button
-                size="sm"
-                className="h-8 px-4 bg-green-600 text-white hover:bg-green-700"
-                style={{ backgroundColor: '#10b981' }}
-                onClick={handleSubmitClick}
-                disabled={isSubmitting || isRunning}
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="h-4 w-4 mr-2 border-2 border-t-white border-white/30 rounded-full animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-4 w-4 mr-2" />
-                    Submit
-                  </>
-                )}
-              </Button>
+            <div className="flex items-center gap-4">
+              {/* Test Summary Display */}
+              {testSummary.total > 0 && (
+                <div className="flex items-center gap-2 px-3 py-1 rounded-lg bg-white/80 border border-blue-200">
+                  <div className={`flex items-center gap-1 text-sm font-medium ${
+                    testSummary.passed === testSummary.total ? 'text-green-600' : 'text-orange-600'
+                  }`}>
+                    <CheckCircle className="h-4 w-4" />
+                    <span>{testSummary.passed}/{testSummary.total} passed</span>
+                  </div>
+                  <div className="w-px h-4 bg-blue-200"></div>
+                  <button
+                    onClick={() => setRunPage(true)}
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
+                  >
+                    View Details
+                  </button>
+                </div>
+              )}
+              
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  className="h-8 px-4 text-white hover:opacity-90"
+                  style={{ backgroundColor: '#2599D4' }}
+                  onClick={handleRunClick}
+                  disabled={isRunning || isSubmitting}
+                >
+                  {isRunning ? (
+                    <>
+                      <div className="h-4 w-4 mr-2 border-2 border-t-white border-white/30 rounded-full animate-spin" />
+                      Running...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-4 w-4 mr-2" />
+                      Run Tests
+                    </>
+                  )}
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-8 px-4 bg-green-600 text-white hover:bg-green-700"
+                  style={{ backgroundColor: '#10b981' }}
+                  onClick={handleSubmitClick}
+                  disabled={isSubmitting || isRunning}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="h-4 w-4 mr-2 border-2 border-t-white border-white/30 rounded-full animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4 mr-2" />
+                      Submit
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -1350,17 +1384,15 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
                     theme="vs-dark"
                     options={{
                       readOnly: true,
-                      domReadOnly: true,
                       minimap: { enabled: false },
                       scrollBeyondLastLine: false,
                       automaticLayout: true,
-                      cursorBlinking: "solid",
-                      cursorStyle: "line",
+                      cursorBlinking: "solid" as const,
+                      cursorStyle: "line" as const,
                       cursorWidth: 0,
-                      contextmenu: "off",
                       selectOnLineNumbers: false,
-                      selectionHighlight: false,
-                      occurrencesHighlight: false,
+                      selectionHighlight: "off",
+                      occurrencesHighlight: "off",
                     }}
                   />
                 </div>
@@ -1399,6 +1431,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             avatar: userAvatar || null,
             initials: getInitials(username),
             isWinner: matchResult.winner,
+            ratingChange: ratingChanges?.[userId],
           }}
           player2={{
             name: opponentStats.name,
@@ -1406,9 +1439,246 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             avatar: opponentStats.avatar || null,
             initials: getInitials(opponentStats.name),
             isWinner: !matchResult.winner && !matchResult.draw,
+            ratingChange: ratingChanges ? ratingChanges[Object.keys(ratingChanges).find(id => id !== userId) || ''] : undefined,
           }}
-          onAnimationComplete={handleResultAnimationComplete}
+          onBackToHome={handleBackToHome}
+          onJoinQueue={handleJoinQueue}
         />
+      )}
+
+      {/* Submission Result Popup */}
+      {showSubmissionResultPopup && latestSubmissionResult && (
+        <div 
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={() => setShowSubmissionResultPopup(false)}
+        >
+          <div 
+            className="bg-white w-[900px] h-[80vh] overflow-hidden rounded-lg shadow-xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-6 border-b border-gray-200 flex items-start justify-between flex-shrink-0">
+              <div>
+                <h1 className={`text-2xl font-bold mb-2 ${
+                  latestSubmissionResult.status === 'Accepted' 
+                    ? 'text-green-600' 
+                    : latestSubmissionResult.errorType === 'wrong'
+                    ? 'text-red-600' 
+                    : latestSubmissionResult.errorType === 'compile'
+                    ? 'text-orange-600'
+                    : latestSubmissionResult.errorType === 'runtime'
+                    ? 'text-purple-600'
+                    : latestSubmissionResult.errorType === 'timeout'
+                    ? 'text-yellow-600'
+                    : latestSubmissionResult.errorType === 'memory'
+                    ? 'text-indigo-600'
+                    : latestSubmissionResult.errorType === 'system'
+                    ? 'text-gray-600'
+                    : 'text-black'
+                }`}>
+                  {latestSubmissionResult.status}
+                </h1>
+                <p className="text-gray-600">
+                  {latestSubmissionResult.passedTests}/{latestSubmissionResult.totalTests} testcases passed
+                </p>
+                <p className="text-sm text-gray-500 mt-1">
+                  Submitted {latestSubmissionResult.date}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowSubmissionResultPopup(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+
+            {/* Performance Metrics - Only for Accepted submissions */}
+            {latestSubmissionResult.status === 'Accepted' && (
+              <div className="p-6 bg-gray-50 border-b border-gray-200 flex-shrink-0">
+                <div className="grid grid-cols-4 gap-6">
+                  {/* Runtime */}
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-2">Runtime</h3>
+                    <div className="text-2xl font-bold text-black">
+                      {latestSubmissionResult.runtime === '—' ? '0 ms' : latestSubmissionResult.runtime}
+                    </div>
+                  </div>
+
+                  {/* Memory */}
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-2">Memory</h3>
+                    <div className="text-2xl font-bold text-black">
+                      {latestSubmissionResult.memory === '—' ? '19.12 MB' : latestSubmissionResult.memory}
+                    </div>
+                  </div>
+
+                  {/* Time Complexity */}
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-2">Time Complexity</h3>
+                    <div className="text-2xl font-bold text-black">
+                      {latestSubmissionResult.timeComplexity}
+                    </div>
+                  </div>
+
+                  {/* Space Complexity */}
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700 mb-2">Space Complexity</h3>
+                    <div className="text-2xl font-bold text-black">
+                      {latestSubmissionResult.spaceComplexity}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+            {/* Compile Error Section */}
+            {latestSubmissionResult.errorType === 'compile' && latestSubmissionResult.compileError && (
+              <div className="p-6 bg-orange-50 border-b border-orange-200">
+                <h3 className="text-lg font-semibold text-orange-700 mb-4">Compile Error</h3>
+                <div className="bg-orange-100 rounded-lg p-4 border border-orange-300">
+                  <pre className="text-sm text-orange-800 font-mono whitespace-pre-wrap">{latestSubmissionResult.compileError}</pre>
+                </div>
+              </div>
+            )}
+
+            {/* Runtime Error Section */}
+            {latestSubmissionResult.errorType === 'runtime' && latestSubmissionResult.runtimeError && (
+              <div className="p-6 bg-purple-50 border-b border-purple-200">
+                <h3 className="text-lg font-semibold text-purple-700 mb-4">Runtime Error</h3>
+                <div className="space-y-4">
+                  {latestSubmissionResult.failedTestCase && latestSubmissionResult.failedTestCase.input && (
+                    <div>
+                      <h4 className="text-sm font-medium text-gray-700 mb-2">Input</h4>
+                      <div className="bg-white rounded-lg p-3 border border-gray-200">
+                        <code className="text-sm text-black font-mono">{latestSubmissionResult.failedTestCase.input}</code>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <div className="bg-purple-100 rounded-lg p-4 border border-purple-300">
+                      <pre className="text-sm text-purple-800 font-mono whitespace-pre-wrap">{latestSubmissionResult.runtimeError}</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Time Limit Exceeded Section */}
+            {latestSubmissionResult.errorType === 'timeout' && latestSubmissionResult.timeoutError && (
+              <div className="p-6 bg-yellow-50 border-b border-yellow-200">
+                <h3 className="text-lg font-semibold text-yellow-700 mb-4">Time Limit Exceeded</h3>
+                <div className="bg-yellow-100 rounded-lg p-4 border border-yellow-300">
+                  <p className="text-sm text-yellow-800">Your solution took too long to execute. Try optimizing your algorithm.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Memory Limit Exceeded Section */}
+            {latestSubmissionResult.errorType === 'memory' && latestSubmissionResult.memoryError && (
+              <div className="p-6 bg-indigo-50 border-b border-indigo-200">
+                <h3 className="text-lg font-semibold text-indigo-700 mb-4">Memory Limit Exceeded</h3>
+                <div className="bg-indigo-100 rounded-lg p-4 border border-indigo-300">
+                  <p className="text-sm text-indigo-800">Your solution used too much memory. Try optimizing your space usage.</p>
+                </div>
+              </div>
+            )}
+
+            {/* System Error Section */}
+            {latestSubmissionResult.errorType === 'system' && latestSubmissionResult.systemError && (
+              <div className="p-6 bg-gray-50 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-700 mb-4">System Error</h3>
+                <div className="bg-gray-100 rounded-lg p-4 border border-gray-300">
+                  <pre className="text-sm text-gray-800 font-mono whitespace-pre-wrap">{latestSubmissionResult.systemError}</pre>
+                </div>
+              </div>
+            )}
+
+            {/* Time Complexity Failed Section */}
+            {latestSubmissionResult.errorType === 'complexity' && latestSubmissionResult.complexityError && (
+              <div className="p-6 bg-rose-50 border-b border-rose-200">
+                <h3 className="text-lg font-semibold text-rose-700 mb-4">Time Complexity Failed</h3>
+                <div className="bg-rose-100 rounded-lg p-4 border border-rose-300">
+                  <p className="text-sm text-rose-800 mb-3">{latestSubmissionResult.complexityError}</p>
+                  <div className="grid grid-cols-2 gap-4 mt-3">
+                    <div>
+                      <h4 className="text-xs font-semibold text-rose-700 mb-1">Expected Complexity:</h4>
+                      <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
+                        {latestSubmissionResult.expectedComplexity || 'N/A'}
+                      </code>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-semibold text-rose-700 mb-1">Your Complexity:</h4>
+                      <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
+                        {latestSubmissionResult.timeComplexity}
+                      </code>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Failed Test Case Section (Wrong Answer) */}
+            {latestSubmissionResult.errorType === 'wrong' && latestSubmissionResult.failedTestCase && (
+              <div className="p-6 bg-red-50 border-b border-red-200">
+                <div className="space-y-4">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">Input</h4>
+                    <div className="bg-white rounded-lg p-3 border border-gray-200">
+                      <code className="text-sm text-black font-mono">{latestSubmissionResult.failedTestCase.input}</code>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">Expected Output</h4>
+                    <div className="bg-green-50 rounded-lg p-3 border border-green-200">
+                      <code className="text-sm text-green-700 font-mono">{latestSubmissionResult.failedTestCase.expected}</code>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-700 mb-2">Your Output</h4>
+                    <div className="bg-red-50 rounded-lg p-3 border border-red-200">
+                      <code className="text-sm text-red-700 font-mono">{latestSubmissionResult.failedTestCase.actual}</code>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Code Section */}
+            <div className="p-6">
+              <h3 className="text-lg font-semibold text-black mb-4">
+                Code | {latestSubmissionResult.language}
+              </h3>
+              <div className="bg-gray-900 rounded-lg overflow-hidden">
+                <div style={{ position: 'relative', pointerEvents: 'none' }}>
+                  <Editor
+                    height="300px"
+                    language={latestSubmissionResult.language.toLowerCase()}
+                    value={latestSubmissionResult.code}
+                    theme="vs-dark"
+                    options={{
+                      readOnly: true,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      cursorBlinking: "solid" as const,
+                      cursorStyle: "line" as const,
+                      cursorWidth: 0,
+                      selectOnLineNumbers: false,
+                      selectionHighlight: "off",
+                      occurrencesHighlight: "off",
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

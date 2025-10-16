@@ -10,7 +10,7 @@ export function ToastContainer(props: ToastContainerProps) {
   return (
     <ReactToastContainer
       position="top-right"
-      autoClose={900}
+      autoClose={3000}
       hideProgressBar={false}
       newestOnTop={false}
       closeOnClick
@@ -18,12 +18,12 @@ export function ToastContainer(props: ToastContainerProps) {
       pauseOnFocusLoss
       draggable
       pauseOnHover
-      theme="dark"
+      theme="light"
       toastClassName={() =>
-        "relative flex p-1 min-h-10 rounded-md justify-between overflow-hidden cursor-pointer bg-slate-800 border border-slate-700 mb-4"
+        "relative flex p-1 min-h-10 rounded-md justify-between overflow-hidden cursor-pointer bg-white/95 border border-blue-200 mb-4 shadow-lg backdrop-blur-sm"
       }
       bodyClassName={() =>
-        "text-sm font-medium text-slate-200 flex items-center p-3"
+        "text-sm font-medium text-black flex items-center p-3"
       }
       {...props}
     />

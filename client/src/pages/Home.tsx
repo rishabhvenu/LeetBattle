@@ -45,19 +45,28 @@ interface HomeProps {
       draws: number;
       rating: number;
     };
+    activity?: Array<{
+      date: string;
+      matches: number;
+    }>;
   };
   restHandler: any;
 }
 
 export default function Home({ session, restHandler }: HomeProps) {
   const [username, setUsername] = useState<string | null>(null);
-  const [data, setData] = useState<{ date: string; problems: number }[] | null>(null);
+  const [data, setData] = useState<{ date: string; matches: number }[] | null>(null);
 
   useEffect(() => {
     setUsername(session.user?.username || 'User');
 
-    // Placeholder: in future, fetch real activity; for now keep empty chart
-    setData([]);
+    // Use activity data from props, or show empty state if no activity
+    if (session.activity && session.activity.length > 0) {
+      setData(session.activity);
+    } else {
+      // Show empty state for users with no activity
+      setData([]);
+    }
   }, [session]);
 
   return (
@@ -117,32 +126,50 @@ export default function Home({ session, restHandler }: HomeProps) {
               </CardHeader>
               <CardContent>
                 <div className="h-[300px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={data}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                      <XAxis dataKey="date" stroke="#64748b" />
-                      <YAxis stroke="#64748b" />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "#ffffff",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: "8px",
-                          boxShadow:
-                            "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
-                        }}
-                        labelStyle={{ color: "#64748b" }}
-                        itemStyle={{ color: "#2599D4" }}
-                      />
-                      <Line
-                        type="monotone"
-                        dataKey="problems"
-                        stroke='#2599D4'
-                        strokeWidth={2}
-                        dot={false}
-                        activeDot={{ r: 8 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  {data && data.length > 0 && data.some(d => d.matches > 0) ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={data}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="date" stroke="#64748b" />
+                        <YAxis stroke="#64748b" />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "#ffffff",
+                            border: "1px solid #e2e8f0",
+                            borderRadius: "8px",
+                            boxShadow:
+                              "0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)",
+                          }}
+                          labelStyle={{ color: "#64748b" }}
+                          itemStyle={{ color: "#2599D4" }}
+                          formatter={(value, name) => [value, 'Matches Played']}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="matches"
+                          stroke='#2599D4'
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 8 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <div className="text-center">
+                        <div className="text-gray-400 mb-2">
+                          <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                          </svg>
+                        </div>
+                        <h3 className="text-lg font-medium text-gray-600 mb-1">No Activity Yet</h3>
+                        <p className="text-gray-500 text-sm">
+                          No matches in the last 7 days.<br />
+                          Start playing to track your activity!
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

@@ -18,6 +18,10 @@ interface HomePageClientProps {
       draws: number;
       rating: number;
     };
+    activity: Array<{
+      date: string;
+      matches: number;
+    }>;
   };
   layoutSession: {
     _id: string;

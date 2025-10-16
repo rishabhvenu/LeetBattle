@@ -1,4 +1,4 @@
-import { getSession, getUserStatsCached } from '@/lib/actions';
+import { getSession, getUserStatsCached, getUserActivityCached } from '@/lib/actions';
 import { redirect } from 'next/navigation';
 import HomePageClient from './HomePageClient';
 
@@ -10,8 +10,11 @@ export default async function HomePage() {
     redirect('/landing');
   }
 
-  // Fetch real user stats (cached in Redis, fallback to MongoDB)
-  const stats = await getUserStatsCached(session.user!.id);
+  // Fetch real user stats and activity (cached in Redis, fallback to MongoDB)
+  const [stats, activity] = await Promise.all([
+    getUserStatsCached(session.user!.id),
+    getUserActivityCached(session.user!.id)
+  ]);
 
   const homeSession = {
     user: session.user,
@@ -21,7 +24,8 @@ export default async function HomePage() {
       losses: stats.losses,
       draws: stats.draws,
       rating: stats.rating ?? 1200,
-    }
+    },
+    activity
   };
 
   // Transform session for Layout component

@@ -9,9 +9,9 @@
 ![Docker](https://img.shields.io/badge/Dockerized-Yes-blue)
 ![Contributions Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
-**LeetBattle** is a real-time multiplayer coding arena where developers compete head-to-head in timed challenges. Built with Next.js, Colyseus, and Judge0, it combines live collaboration, instant code execution, and competitive matchmaking — all in one seamless platform.
+**LeetBattle** is a real-time multiplayer coding arena where developers compete head-to-head in timed challenges. Built with Next.js, Colyseus, and Judge0, it combines live collaboration, instant code execution, competitive matchmaking, and AI-powered bot opponents — all in one seamless platform.
 
-> 🎯 **1v1 coding battles** • ⚡ **Real-time execution** • 🏅 **ELO-based matchmaking** • 🌐 **89+ languages**
+> 🎯 **1v1 coding battles** • ⚡ **Real-time execution** • 🏅 **ELO-based matchmaking** • 🤖 **AI Bot opponents** • 🌐 **89+ languages**
 
 ---
 
@@ -23,9 +23,12 @@
 - ⚡ Real-time competitive matches with live opponent updates
 - 🎮 Monaco Editor (VS Code engine) with syntax highlighting
 - 🏆 Global leaderboard with ELO rating system
+- 🤖 AI-powered bot opponents for instant matches
 - 🔥 Instant code execution and test results
 - 💾 Complete match history and statistics
 - 🎨 Clean, modern UI with dark mode
+- 🛠️ Admin panel for bot and problem management
+- 📊 Advanced analytics with difficulty-adjusted ratings
 
 ---
 
@@ -35,7 +38,7 @@
 |-------|---------------|
 | **Frontend** | Next.js 15, TypeScript, Tailwind CSS, shadcn/ui, Monaco Editor, Framer Motion |
 | **Realtime** | Colyseus, WebSockets, Redis (Pub/Sub) |
-| **Backend** | Node.js, Judge0 (Code Execution), MongoDB, Redis |
+| **Backend** | Node.js, Judge0 (Code Execution), MongoDB, Redis, Bot Service |
 | **Storage** | MinIO (S3-compatible for avatars) |
 | **Infrastructure** | Docker, Docker Compose |
 
@@ -56,15 +59,22 @@ graph TD
     H -->|Save Results| D
     F -->|Matchmaking| I[Background Worker]
     I -->|Create Match| B
+    J[Bot Service] -->|Bot Queue| F
+    J -->|Bot Matches| B
+    F -->|Bot Commands| J
+    K[Admin Panel] -->|Bot Management| C
+    K -->|Problem Management| C
 ```
 
 **Flow:**
 1. **User queues** → Redis sorted set (by ELO)
-2. **Background worker** pairs players
-3. **Colyseus MatchRoom** manages real-time state
-4. **Judge0** executes code in isolated containers
-5. **Results stream** back via WebSocket
-6. **MongoDB** persists match history & updates ratings
+2. **Background worker** pairs players or allocates bots
+3. **Bot Service** maintains AI opponents for instant matches
+4. **Colyseus MatchRoom** manages real-time state
+5. **Judge0** executes code in isolated containers
+6. **Results stream** back via WebSocket
+7. **MongoDB** persists match history & updates ratings
+8. **Admin Panel** manages bots, problems, and users
 
 ---
 
@@ -143,6 +153,19 @@ REDIS_PASSWORD=redis_dev_password_123
 JUDGE0_POSTGRES_DB=judge0
 JUDGE0_POSTGRES_USER=judge0
 JUDGE0_POSTGRES_PASSWORD=judge0_secure_pass_456
+
+# Bot Service Configuration
+BOTS_ENABLED=true
+BOT_COUNT=30
+BOT_SERVICE_SECRET=dev_bot_secret
+BOT_FILL_DELAY_MS=15000
+BOT_TIME_DIST=lognormal
+BOT_TIME_PARAMS_EASY={"muMinutes":30,"sigma":0.35}
+BOT_TIME_PARAMS_MEDIUM={"muMinutes":35,"sigma":0.35}
+BOT_TIME_PARAMS_HARD={"muMinutes":40,"sigma":0.35}
+
+# OpenAI API (for complexity analysis and problem generation)
+OPENAI_API_KEY=sk-your-openai-key
 
 # Environment
 NODE_ENV=development
@@ -238,6 +261,9 @@ sequenceDiagram
   - Validates submitted code meets optimal Big-O requirements
   - Uses recurrence relations and loop analysis
   - Rejects inefficient solutions
+- **Data Structure Support** (ListNode, TreeNode)
+  - Multi-language serialization (Python, JavaScript, Java, C++)
+  - Automatic helper code injection
 
 **4. Persistence & Performance**
 - MongoDB connection pooling (17x faster than per-request)
@@ -245,10 +271,20 @@ sequenceDiagram
 - Background matchmaker (1-second polling)
 - Distributed rate limiting (prevents abuse)
 
-**5. Admin Tools**
+**5. Bot System**
+- AI-powered bot opponents for instant matches
+- Configurable timing distributions (lognormal, gamma)
+- Dynamic bot deployment/undeployment
+- Bot lifecycle management via admin panel
+- ELO-based bot difficulty scaling
+
+**6. Admin Tools**
 - AI-powered problem generation (OpenAI)
 - Automatic solution verification across languages
 - Bulk problem import/export
+- Bot management (create, deploy, configure)
+- User management and analytics
+- Active match monitoring
 
 ---
 
@@ -269,9 +305,16 @@ LeetBattle/
 │   │   │   ├── lib/
 │   │   │   │   ├── codeRunner.ts    # Judge0 integration
 │   │   │   │   ├── testExecutor.ts  # Test case runner
+│   │   │   │   ├── eloSystem.ts     # Advanced ELO calculations
+│   │   │   │   ├── matchCreation.ts # Match creation logic
+│   │   │   │   ├── dataStructureHelpers.ts # ListNode/TreeNode support
 │   │   │   │   └── queue.ts         # Matchmaking logic
 │   │   │   └── workers/
 │   │   │       └── matchmaker.ts    # Background pairing
+│   │   └── package.json
+│   ├── bots/                     # AI Bot Service
+│   │   ├── index.js             # Bot lifecycle manager
+│   │   ├── Dockerfile
 │   │   └── package.json
 │   ├── docker-compose.yml       # All services
 │   └── .env                     # Dev credentials
@@ -282,6 +325,11 @@ LeetBattle/
 │   │   │   ├── match/           # Live match UI
 │   │   │   ├── queue/           # Matchmaking queue
 │   │   │   ├── leaderboard/     # Global rankings
+│   │   │   ├── match-history/   # Match history viewing
+│   │   │   ├── admin/           # Admin panel
+│   │   │   │   ├── BotManagement.tsx
+│   │   │   │   ├── ProblemManagement.tsx
+│   │   │   │   └── UserManagement.tsx
 │   │   │   └── play/            # Main lobby
 │   │   ├── components/
 │   │   │   ├── ui/              # shadcn/ui components
@@ -290,6 +338,8 @@ LeetBattle/
 │   │   │   ├── actions.ts       # Server actions
 │   │   │   ├── mongodb.ts       # DB singleton
 │   │   │   └── redis.ts         # Cache client
+│   │   ├── types/
+│   │   │   └── bot.d.ts         # Bot type definitions
 │   │   └── pages/
 │   │       └── match/
 │   │           └── MatchClient.tsx  # Real-time match
@@ -331,6 +381,7 @@ npm run build                    # Compile TypeScript
 |---------|------|-------------|
 | Next.js | 3000 | Frontend app |
 | Colyseus | 2567 | Game server (WebSocket) |
+| Bot Service | 3000 | AI bot management |
 | MongoDB | 27017 | Database |
 | Redis | 6379 | Queue & cache |
 | MinIO | 9000 | S3 API |
@@ -403,12 +454,10 @@ docker-compose logs minio-init
 
 ## 🛣️ Roadmap
 
-- [ ] 🤖 **AI opponent mode** (practice without waiting for players)
 - [ ] 👥 **Team-based matches** (2v2, 3v3 competitive teams)
 - [ ] 🏆 **Tournament brackets** (scheduled events with prizes)
 - [ ] 👁️ **Spectator mode** (watch live matches)
-- [ ] 🎤 **Voice chat integration** (optional during matches)
-- [ ] 📊 **Advanced analytics** (code complexity, time metrics)
+- [x] 📊 **Advanced analytics** (code complexity, time metrics)
 - [ ] 🎯 **Custom problems** (user-submitted challenges)
 - [ ] 🌍 **Regional servers** (reduce latency worldwide)
 - [ ] 📱 **Mobile app** (React Native client)

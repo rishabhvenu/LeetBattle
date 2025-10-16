@@ -5,7 +5,7 @@
 
 import { MongoClient, ObjectId } from 'mongodb';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/codeclashers';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
 const DB_NAME = 'codeclashers';
 
 let clientCache: MongoClient | null = null;

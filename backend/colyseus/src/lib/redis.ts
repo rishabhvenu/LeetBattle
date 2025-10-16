@@ -6,6 +6,10 @@ export const RedisKeys = {
   matchKey: (matchId: string) => `match:${matchId}`,
   userConnMap: 'user:conn',
   matchEventsChannel: 'events:match',
+  queueJoinedAtKey: (userId: string) => `queue:joinedAt:${userId}`,
+  botsActiveSet: 'bots:active', // set of botIds currently in matches
+  botsDeployedSet: 'bots:deployed', // set of botIds that should be actively queueing
+  botsCommandsChannel: 'bots:commands', // pub/sub channel for admin commands
 };
 
 let redisSingleton: Redis | null = null;

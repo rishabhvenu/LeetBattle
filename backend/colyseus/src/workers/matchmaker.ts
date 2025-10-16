@@ -1,68 +1,11 @@
-import { Server, matchMaker } from 'colyseus';
+import { Server } from 'colyseus';
 import { getRedis, RedisKeys } from '../lib/redis';
-import { MongoClient, ObjectId } from 'mongodb';
+import { createMatch } from '../lib/matchCreation';
 
 type QueueEntry = { userId: string; rating: number; joinedAt: number };
 
 function now() { return Date.now(); }
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
-const DB_NAME = 'codeclashers';
-
-// MongoDB client singleton
-let mongoClient: MongoClient | null = null;
-
-async function getMongoClient(): Promise<MongoClient> {
-  if (!mongoClient) {
-    mongoClient = new MongoClient(MONGODB_URI, {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    });
-    await mongoClient.connect();
-  }
-  return mongoClient;
-}
-
-// Select random problem from MongoDB by difficulty
-async function chooseProblemId(difficulty: string = 'Medium'): Promise<string> {
-  try {
-    const client = await getMongoClient();
-    const db = client.db(DB_NAME);
-    const problemsCollection = db.collection('problems');
-    
-    // Select random problem matching difficulty
-    const problems = await problemsCollection
-      .aggregate([
-        { $match: { difficulty, verified: true } },
-        { $sample: { size: 1 } }
-      ])
-      .toArray();
-    
-    if (problems.length === 0) {
-      console.warn(`No verified ${difficulty} problems found, trying any difficulty`);
-      // Fallback: try any verified problem
-      const anyProblems = await problemsCollection
-        .aggregate([
-          { $match: { verified: true } },
-          { $sample: { size: 1 } }
-        ])
-        .toArray();
-      
-      if (anyProblems.length > 0) {
-        return anyProblems[0]._id.toString();
-      }
-      
-      throw new Error('No verified problems found in database');
-    }
-    
-    return problems[0]._id.toString();
-  } catch (error) {
-    console.error('Error selecting problem from MongoDB:', error);
-    // Return null to fail gracefully - match creation will be skipped
-    throw error;
-  }
-}
 
 export function startMatchmaker(server: Server) {
   const redis = getRedis();
@@ -71,9 +14,8 @@ export function startMatchmaker(server: Server) {
 
   const tick = async () => {
     try {
-      // Pull up to 10 earliest users (lowest score == rating first is not ideal for time ordering).
-      // We store score as rating, but we also embed joinedAt in the value to handle fallback.
-      const entries = await redis.zrange(RedisKeys.eloQueue, 0, 19, 'WITHSCORES');
+      // Pull up to N users from ELO queue
+      const entries = await redis.zrange(RedisKeys.eloQueue, 0, 49, 'WITHSCORES');
       if (!entries || entries.length === 0) {
         return;
       }
@@ -88,11 +30,78 @@ export function startMatchmaker(server: Server) {
       for (let i = 0; i < entries.length; i += 2) {
         const userId = entries[i];
         const rating = parseFloat(entries[i + 1]);
-        // joinedAt is not exposed here; assume fallback after 20s always for simplicity
-        queued.push({ userId, rating, joinedAt: 0 });
+        // Fetch joinedAt if present
+        let joinedAt = 0;
+        try {
+          const raw = await redis.get(RedisKeys.queueJoinedAtKey(userId));
+          joinedAt = raw ? parseInt(raw, 10) : 0;
+        } catch {}
+        queued.push({ userId, rating, joinedAt });
       }
 
-      if (queued.length < 2) return;
+      const botsEnabled = (process.env.BOTS_ENABLED || 'true').toLowerCase() === 'true';
+      const graceMs = parseInt(process.env.BOT_FILL_DELAY_MS || '15000', 10);
+      const nowMs = now();
+
+      if (queued.length < 2) {
+        // Consider bot fallback if exactly one user is waiting and grace exceeded
+        if (!botsEnabled || queued.length === 0) return;
+        const q = queued[0];
+        const waited = q.joinedAt ? (nowMs - q.joinedAt) : Number.POSITIVE_INFINITY; // if missing, assume long wait
+        if (waited < graceMs) return;
+
+        // Attempt to allocate a bot from availability list
+        let botPayload: string | null = null;
+        try {
+          botPayload = await redis.lpop('bots:available');
+        } catch {}
+        if (!botPayload) {
+          // Notify bot service of demand
+          try { await redis.lpush('bots:requests', JSON.stringify({ at: nowMs })); } catch {}
+          return; // Wait next tick
+        }
+        try {
+          const bot = JSON.parse(botPayload);
+          const botId: string = bot._id?.toString();
+          
+          // Fetch bot rating from MongoDB
+          let botRating = 1200; // default
+          try {
+            const { MongoClient, ObjectId } = await import('mongodb');
+            const mongoClient = new MongoClient(process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers');
+            await mongoClient.connect();
+            const db = mongoClient.db('codeclashers');
+            const bots = db.collection('bots');
+            const botDoc = await bots.findOne({ _id: new ObjectId(botId) });
+            if (botDoc && typeof botDoc.stats?.rating === 'number') {
+              botRating = botDoc.stats.rating;
+            }
+            await mongoClient.close();
+          } catch (mongoErr) {
+            console.warn(`Failed to fetch bot rating for ${botId}, using default:`, mongoErr);
+          }
+          
+          // Check if bot is already in an active match
+          const isBotActive = await redis.sismember(RedisKeys.botsActiveSet, botId);
+          if (isBotActive) {
+            console.log(`Bot ${botId} is already in an active match, skipping`);
+            // Return bot to available list
+            try { await redis.rpush('bots:available', botPayload); } catch {}
+            return;
+          }
+
+          // Remove human from queue atomically
+          await redis.zrem(RedisKeys.eloQueue, q.userId);
+          try { await redis.del(RedisKeys.queueJoinedAtKey(q.userId)); } catch {}
+
+          const result = await createMatch({ userId: q.userId, rating: q.rating }, { userId: botId, rating: botRating }, undefined, false);
+          console.log(`Matchmaker: Created human-vs-bot match ${result.matchId} (${q.userId} vs ${botId})`);
+          return;
+        } catch (e) {
+          console.warn('Failed to parse/allocate bot:', e);
+          return;
+        }
+      }
 
       // Naive pairing: pick two closest by rating
       queued.sort((a, b) => a.rating - b.rating);
@@ -114,36 +123,17 @@ export function startMatchmaker(server: Server) {
       pipe.zrem(RedisKeys.eloQueue, bestPair[0].userId, bestPair[1].userId);
       await pipe.exec();
 
-      // Store player ratings in Redis for Next.js to use when selecting problem
-      const matchId = cryptoRandomId();
-      await redis.hset(`match:${matchId}:ratings`, 'player1', bestPair[0].rating.toString());
-      await redis.hset(`match:${matchId}:ratings`, 'player2', bestPair[1].rating.toString());
-      await redis.hset(`match:${matchId}:ratings`, 'userId1', bestPair[0].userId);
-      await redis.hset(`match:${matchId}:ratings`, 'userId2', bestPair[1].userId);
-      await redis.expire(`match:${matchId}:ratings`, 300); // 5 minute TTL
-
-      // Select a problem from MongoDB based on average rating
-      const avgRating = (bestPair[0].rating + bestPair[1].rating) / 2;
-      const difficulty = avgRating < 1400 ? 'Easy' : avgRating < 1800 ? 'Medium' : 'Hard';
-      
-      const problemId = await chooseProblemId(difficulty);
-      console.log(`Matchmaker: Selected problem ${problemId} (${difficulty}) for match ${matchId}`);
-      
-      // Use standalone matchMaker module (Colyseus 0.15 API)
-      const room = await matchMaker.createRoom('match', { matchId, problemId, problemData: null });
-      console.log(`Matchmaker: Room created ${room.roomId} with problem ${problemId}`);
-      
-      await redis.sadd(RedisKeys.activeMatchesSet, matchId);
-      
-      // Store room info for both players - they'll join the room directly (no seat reservations)
-      const roomData = { roomId: room.roomId, roomName: 'match', matchId, problemId };
-      await redis.set(`queue:reservation:${bestPair[0].userId}`, JSON.stringify(roomData), 'EX', 3600); // 60 min TTL (longer than match duration)
-      await redis.set(`queue:reservation:${bestPair[1].userId}`, JSON.stringify(roomData), 'EX', 3600); // 60 min TTL (longer than match duration)
-      
-      console.log(`Matchmaker: Created match ${matchId} with reservations for ${bestPair[0].userId} and ${bestPair[1].userId}`);
-      
-      // Optionally publish event
-      await redis.publish(RedisKeys.matchEventsChannel, JSON.stringify({ type: 'match_created', matchId, players: [bestPair[0].userId, bestPair[1].userId], at: now() }));
+      // Create the match using the shared function
+      const player1 = {
+        userId: bestPair[0].userId,
+        rating: bestPair[0].rating
+      };
+      const player2 = {
+        userId: bestPair[1].userId,
+        rating: bestPair[1].rating
+      };
+      const result = await createMatch(player1, player2, undefined, false); // false = not private
+      console.log(`Matchmaker: Created match ${result.matchId} with room ${result.roomId}`);
     } catch (e) {
       console.error('Matchmaker error:', e);
     }

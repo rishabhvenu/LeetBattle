@@ -9,8 +9,9 @@ The backend consists of multiple microservices orchestrated via Docker Compose:
 ### Core Services
 
 - **Colyseus** (Port 2567) - Real-time game server for matches
-- **MongoDB** (Port 27017) - User accounts, sessions, match history
-- **Redis** (Port 6379) - Matchmaking queue, caching, pub/sub events
+- **Bot Service** (Port 3000) - AI bot management and lifecycle
+- **MongoDB** (Port 27017) - User accounts, sessions, match history, bot data
+- **Redis** (Port 6379) - Matchmaking queue, caching, pub/sub events, bot coordination
 - **Judge0** (Port 2358) - Code execution in 89+ languages
 - **MinIO** (Ports 9000-9001) - S3-compatible object storage for avatars
 
@@ -38,7 +39,7 @@ docker-compose logs -f
 ### Production Deployment (AWS)
 
 **Production Stack:**
-- **EC2 (Private Subnet)** - Colyseus + Judge0 + Redis
+- **EC2 (Private Subnet)** - Colyseus + Judge0 + Redis + Bot Service
 - **MongoDB Atlas** - Managed MongoDB (not local container)
 - **AWS S3** - Avatar storage (not MinIO)
 
@@ -67,6 +68,47 @@ All services should show status "Up" or "healthy".
 | Redis | localhost:6379 | Password: redis_dev_password_123 |
 | Judge0 API | http://localhost:2358 | - |
 
+## Bot Service
+
+The Bot Service manages AI-powered opponents for instant matches:
+
+### Architecture
+- **Standalone Service**: Independent Node.js service with its own lifecycle
+- **Redis Coordination**: Uses Redis for bot deployment commands and state tracking
+- **Colyseus Integration**: Connects to Colyseus server as bot clients
+- **MongoDB Storage**: Bot identities and statistics stored in `bots` collection
+
+### Bot Lifecycle
+1. **Deployment**: Admin panel deploys bots via Redis pub/sub
+2. **Queue Integration**: Bots automatically join matchmaking queue
+3. **Match Participation**: Bots participate in matches with configurable timing
+4. **Statistics Tracking**: Bot performance tracked in MongoDB
+
+### Configuration
+```env
+# Bot Service Configuration
+BOTS_ENABLED=true
+BOT_COUNT=30
+BOT_SERVICE_SECRET=dev_bot_secret
+BOT_FILL_DELAY_MS=15000
+BOT_TIME_DIST=lognormal
+BOT_TIME_PARAMS_EASY={"muMinutes":30,"sigma":0.35}
+BOT_TIME_PARAMS_MEDIUM={"muMinutes":35,"sigma":0.35}
+BOT_TIME_PARAMS_HARD={"muMinutes":40,"sigma":0.35}
+```
+
+### Redis Channels
+- `bots:deployed` - Set of deployed bot IDs
+- `bots:active` - Set of bots currently in matches
+- `bots:commands` - Pub/sub channel for deployment commands
+
+### Timing Distributions
+- **Lognormal** (default): Realistic completion times with configurable mean/sigma
+- **Gamma**: Alternative distribution for different timing patterns
+- **Per-Difficulty**: Separate timing parameters for Easy/Medium/Hard problems
+
+See `backend/bots/README.md` for detailed documentation.
+
 ## Colyseus Game Server
 
 The Colyseus server handles real-time match logic and matchmaking:
@@ -83,6 +125,9 @@ colyseus/
 │   │   ├── judge0.ts         # Judge0 API client
 │   │   ├── testExecutor.ts   # Test case execution
 │   │   ├── problemData.ts    # Problem management
+│   │   ├── eloSystem.ts      # Advanced ELO calculations
+│   │   ├── matchCreation.ts  # Match creation logic
+│   │   ├── dataStructureHelpers.ts # ListNode/TreeNode support
 │   │   ├── queue.ts          # Queue operations
 │   │   └── redis.ts          # Redis client
 │   └── workers/
@@ -94,10 +139,11 @@ colyseus/
 **Matchmaking Flow:**
 1. Players join queue via `/queue/enqueue` (adds to Redis sorted set)
 2. Background matchmaker polls every 1 second
-3. Pairs players by ELO rating (±200 range)
-4. Selects random problem from `client/problems.json`
-5. Creates Colyseus MatchRoom
+3. Pairs players by ELO rating (±200 range) or allocates bots
+4. Uses Gaussian distribution for difficulty-based problem selection
+5. Creates Colyseus MatchRoom with sanitized problem data
 6. Stores reservations in Redis for players to join
+7. Bot service manages AI opponents with configurable timing distributions
 
 ### Colyseus Development
 
@@ -143,6 +189,8 @@ Redis serves multiple purposes:
 - `sessions` - Active login sessions (TTL index)
 - `matches` - Match history and results
 - `submissions` - Code submissions and test results
+- `bots` - AI bot identities and statistics
+- `problems` - Problem library with test cases
 
 ## Troubleshooting
 

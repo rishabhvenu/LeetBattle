@@ -31,11 +31,11 @@ export const queueLimiter = new RateLimiterRedis({
   blockDuration: 30,
 });
 
-// Admin operations limiter (stricter - 3 per minute)
+// Admin operations limiter (reasonable for admin interface - 30 per minute)
 export const adminLimiter = new RateLimiterRedis({
   storeClient: redis,
   keyPrefix: 'rl:admin',
-  points: 3,
+  points: 30,
   duration: 60,
   blockDuration: 300,
 });
