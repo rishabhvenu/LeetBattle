@@ -159,6 +159,12 @@ BOT_TIME_PARAMS_HARD={"shapeK":3.0,"scaleMinutes":13}
 - Real-time bot status updates via Redis sets
 - Bot statistics displayed in admin dashboard
 
+### Authentication
+- Bot service uses `X-Bot-Secret` header for authenticated requests
+- Secret configured via `BOT_SERVICE_SECRET` environment variable
+- Authentication bypasses rate limiting for bot operations
+- Secure service-to-service communication with Colyseus server
+
 ## Development
 
 ### Running Locally

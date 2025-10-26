@@ -8,10 +8,10 @@ The backend consists of multiple microservices orchestrated via Docker Compose:
 
 ### Core Services
 
-- **Colyseus** (Port 2567) - Real-time game server for matches
+- **Colyseus** (Port 2567) - Real-time game server for matches, private rooms, and guest mode
 - **Bot Service** (Port 3000) - AI bot management and lifecycle
-- **MongoDB** (Port 27017) - User accounts, sessions, match history, bot data
-- **Redis** (Port 6379) - Matchmaking queue, caching, pub/sub events, bot coordination
+- **MongoDB** (Port 27017) - User accounts, sessions, match history, bot data, guest sessions
+- **Redis** (Port 6379) - Matchmaking queue, caching, pub/sub events, bot coordination, guest data storage
 - **Judge0** (Port 2358) - Code execution in 89+ languages
 - **MinIO** (Ports 9000-9001) - S3-compatible object storage for avatars
 
@@ -119,7 +119,8 @@ colyseus/
 │   ├── index.ts              # Server entry point
 │   ├── rooms/
 │   │   ├── MatchRoom.ts      # Competitive match room
-│   │   └── QueueRoom.ts      # Matchmaking queue room
+│   │   ├── QueueRoom.ts      # Matchmaking queue room
+│   │   └── PrivateRoom.ts    # Private room with room codes
 │   ├── lib/
 │   │   ├── codeRunner.ts     # Judge0 integration
 │   │   ├── judge0.ts         # Judge0 API client
@@ -128,6 +129,7 @@ colyseus/
 │   │   ├── eloSystem.ts      # Advanced ELO calculations
 │   │   ├── matchCreation.ts  # Match creation logic
 │   │   ├── dataStructureHelpers.ts # ListNode/TreeNode support
+│   │   ├── internalAuth.ts   # Internal service authentication
 │   │   ├── queue.ts          # Queue operations
 │   │   └── redis.ts          # Redis client
 │   └── workers/
@@ -139,11 +141,25 @@ colyseus/
 **Matchmaking Flow:**
 1. Players join queue via `/queue/enqueue` (adds to Redis sorted set)
 2. Background matchmaker polls every 1 second
-3. Pairs players by ELO rating (±200 range) or allocates bots
+3. **Dynamic ELO-based pairing** with progressive threshold expansion (±50 to ±250 based on wait time)
 4. Uses Gaussian distribution for difficulty-based problem selection
 5. Creates Colyseus MatchRoom with sanitized problem data
 6. Stores reservations in Redis for players to join
 7. Bot service manages AI opponents with configurable timing distributions
+
+**Private Room Flow:**
+1. Player creates private room with unique room code
+2. Room creator selects specific problem
+3. Second player joins with room code
+4. Creator starts match when ready
+5. Match transitions to competitive match with same rules
+
+**Guest Mode Flow:**
+1. Unauthenticated player starts a guest session (7-day cookie)
+2. Guest automatically matched with bot opponent
+3. Guest completes match
+4. Post-match sign-up prompt to save results
+5. Match claiming system converts guest match to permanent account
 
 ### Colyseus Development
 
@@ -182,6 +198,7 @@ Redis serves multiple purposes:
 - **Match state cache**: Active match data
 - **User reservations**: Prevent duplicate queueing
 - **Pub/sub**: Match event notifications
+- **Guest sessions**: Temporary guest user data storage (`guest:session:{guestId}`)
 
 ### MongoDB Collections
 
@@ -281,7 +298,9 @@ docker exec codeclashers-redis redis-cli -a redis_dev_password_123 INFO memory
 ### Colyseus Endpoints
 
 - `ws://localhost:2567` - WebSocket connection
-- Room types: `match`, `queue`
+- Room types: `match`, `queue`, `private`
+- **Private Room**: Join with room code, creator selects problem and starts match
+- **Guest Mode**: Automatic match creation against bots for unauthenticated users
 
 ### Judge0 API
 
@@ -290,6 +309,19 @@ docker exec codeclashers-redis redis-cli -a redis_dev_password_123 INFO memory
 - `GET /languages` - List supported languages
 
 Full documentation: https://ce.judge0.com/
+
+### Guest Mode Endpoints
+
+- `POST /guest/match/create` - Create guest match against bot
+- `POST /guest/match/claim` - Claim guest match after registration
+- `GET /guest/check?guestId={id}` - Check if guest has played
+
+### Private Room Endpoints
+
+- `POST /private/create` - Create private room (returns room code)
+- `GET /private/room/:roomCode` - Get private room info
+- `POST /private/join` - Join private room with code
+- `POST /private/leave` - Leave private room
 
 ## Contributing
 

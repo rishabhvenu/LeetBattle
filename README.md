@@ -9,9 +9,9 @@
 ![Docker](https://img.shields.io/badge/Dockerized-Yes-blue)
 ![Contributions Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 
-**LeetBattle** is a real-time multiplayer coding arena where developers compete head-to-head in timed challenges. Built with Next.js, Colyseus, and Judge0, it combines live collaboration, instant code execution, competitive matchmaking, and AI-powered bot opponents — all in one seamless platform.
+**LeetBattle** is a real-time multiplayer coding arena where developers compete head-to-head in timed challenges. Built with Next.js, Colyseus, and Judge0, it combines live collaboration, instant code execution, competitive matchmaking, AI-powered bot opponents, private rooms, and chill-out guest mode — all in one seamless platform.
 
-> 🎯 **1v1 coding battles** • ⚡ **Real-time execution** • 🏅 **ELO-based matchmaking** • 🤖 **AI Bot opponents** • 🌐 **89+ languages**
+> 🎯 **1v1 coding battles** • ⚡ **Real-time execution** • 🏅 **ELO-based matchmaking** • 🤖 **AI Bot opponents** • 🎮 **Private Rooms** • 👤 **Guest Mode** • 🌐 **89+ languages**
 
 ---
 
@@ -29,6 +29,10 @@
 - 🎨 Clean, modern UI with dark mode
 - 🛠️ Admin panel for bot and problem management
 - 📊 Advanced analytics with difficulty-adjusted ratings
+- 🎮 **Private Rooms** - Create custom 1v1 matches with room codes
+- 👤 **Guest Mode** - Play without registration (one-time match)
+- 🔐 **Internal Service Auth** - Secure service-to-service communication
+- ⏱️ **Dynamic ELO Matchmaking** - Progressive threshold expansion
 
 ---
 
@@ -164,6 +168,9 @@ BOT_TIME_PARAMS_EASY={"muMinutes":30,"sigma":0.35}
 BOT_TIME_PARAMS_MEDIUM={"muMinutes":35,"sigma":0.35}
 BOT_TIME_PARAMS_HARD={"muMinutes":40,"sigma":0.35}
 
+# Internal Service Authentication
+INTERNAL_SERVICE_SECRET=dev_internal_secret
+
 # OpenAI API (for complexity analysis and problem generation)
 OPENAI_API_KEY=sk-your-openai-key
 
@@ -195,6 +202,9 @@ AWS_REGION=us-east-1
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=redis_dev_password_123
+
+# Internal Service Authentication
+INTERNAL_SERVICE_SECRET=dev_internal_secret
 ```
 
 **⚠️ Security Note:** These are development credentials. Generate strong passwords for production!
@@ -242,7 +252,12 @@ sequenceDiagram
 ### Key Features
 
 **1. Smart Matchmaking**
-- ELO-based pairing (within ±200 rating)
+- **Dynamic ELO-based pairing** with progressive threshold expansion
+  - 0-10s wait: ±50 ELO range
+  - 10-20s wait: ±100 ELO range
+  - 20-30s wait: ±150 ELO range
+  - 30-45s wait: ±200 ELO range
+  - 45s+ wait: ±250 ELO range
 - Fair queue using Redis sorted sets
 - Difficulty-based problem selection (Easy/Medium/Hard)
 - Automatic timeout handling (45-minute matches)
@@ -286,6 +301,29 @@ sequenceDiagram
 - User management and analytics
 - Active match monitoring
 
+**7. Private Rooms**
+- Create custom 1v1 matches with unique room codes
+- Share room codes with friends for private competitions
+- Room creator selects specific problems
+- Up to 10-minute room timeout for joining
+- Seamless transition to competitive match
+- Creator-only permissions for problem selection and match start
+
+**8. Guest Mode**
+- Play without registration (one-time match)
+- 7-day guest session cookies
+- Automatic match against AI bots
+- Post-match sign-up prompt to save results
+- Match claiming system when converting to permanent account
+- Redis-based guest data storage
+
+**9. Internal Service Authentication**
+- Secure service-to-service communication with `X-Internal-Secret` header
+- Bot service authentication with `X-Bot-Secret` header
+- Rate limiting bypass for authenticated internal services
+- Combined authentication middleware for flexible service access
+- Protection against unauthorized backend access
+
 ---
 
 ## 📁 Project Structure
@@ -301,13 +339,15 @@ LeetBattle/
 │   │   │   ├── index.ts         # Server entry point
 │   │   │   ├── rooms/           # Game room logic
 │   │   │   │   ├── MatchRoom.ts # 1v1 competitive match
-│   │   │   │   └── QueueRoom.ts # Matchmaking queue
+│   │   │   │   ├── QueueRoom.ts # Matchmaking queue
+│   │   │   │   └── PrivateRoom.ts # Private room with codes
 │   │   │   ├── lib/
 │   │   │   │   ├── codeRunner.ts    # Judge0 integration
 │   │   │   │   ├── testExecutor.ts  # Test case runner
 │   │   │   │   ├── eloSystem.ts     # Advanced ELO calculations
 │   │   │   │   ├── matchCreation.ts # Match creation logic
 │   │   │   │   ├── dataStructureHelpers.ts # ListNode/TreeNode support
+│   │   │   │   ├── internalAuth.ts  # Internal service authentication
 │   │   │   │   └── queue.ts         # Matchmaking logic
 │   │   │   └── workers/
 │   │   │       └── matchmaker.ts    # Background pairing
@@ -329,13 +369,17 @@ LeetBattle/
 │   │   │   ├── admin/           # Admin panel
 │   │   │   │   ├── BotManagement.tsx
 │   │   │   │   ├── ProblemManagement.tsx
-│   │   │   │   └── UserManagement.tsx
-│   │   │   └── play/            # Main lobby
+│   │   │   │   ├── UserManagement.tsx
+│   │   │   │   └── AdminServer.tsx
+│   │   │   ├── play/            # Main lobby
+│   │   │   └── unauthorized/    # Access denied page
 │   │   ├── components/
 │   │   │   ├── ui/              # shadcn/ui components
+│   │   │   ├── GuestSignUpModal.tsx # Guest conversion modal
 │   │   │   └── ...              # Match animations, timers
 │   │   ├── lib/
-│   │   │   ├── actions.ts       # Server actions
+│   │   │   ├── actions.ts       # Server actions (auth, data)
+│   │   │   ├── guest-actions.ts # Guest mode server actions
 │   │   │   ├── mongodb.ts       # DB singleton
 │   │   │   └── redis.ts         # Cache client
 │   │   ├── types/
@@ -970,11 +1014,26 @@ pm2 start npm --name leetbattle -- start
 
 #### Colyseus Backend (Protected)
 
-| Endpoint Type | Limit | Window | Endpoints |
-|---------------|-------|--------|-----------|
-| **Queue** | 20 requests | 10s | `/queue/enqueue`, `/queue/dequeue` |
-| **Match Data** | 50 requests | 10s | `/match/snapshot`, `/match/submissions` |
-| **Admin** | 5 requests | 60s | `/admin/validate-solutions` |
+**Internal Service Authentication** 🔐 - New security layer for service-to-service communication.
+
+| Endpoint Type | Authentication | Rate Limiting | Endpoints |
+|---------------|---------------|---------------|-----------|
+| **Internal Admin** | `X-Internal-Secret` | ❌ Bypassed | `/admin/*` (all admin endpoints) |
+| **Internal Queue** | `X-Internal-Secret` or `X-Bot-Secret` | ❌ Bypassed | `/queue/enqueue`, `/queue/dequeue`, `/queue/clear` |
+| **Public Queue** | None | ✅ 20/10s | `/queue/reservation`, `/reserve/consume` |
+| **Public Match** | None | ✅ 50/10s | `/match/snapshot`, `/match/submissions` |
+| **Public Private** | None | ✅ 20/10s | `/private/*` (join, room, leave) |
+
+**Internal Authentication Headers:**
+```http
+X-Internal-Secret: your-secret-token
+X-Service-Name: nextjs-actions (optional, for logging)
+```
+
+**Bot Service Authentication:**
+```http
+X-Bot-Secret: your-bot-secret-token
+```
 
 **Rate Limit Response (429):**
 ```json
@@ -985,11 +1044,19 @@ pm2 start npm --name leetbattle -- start
 }
 ```
 
-**Benefits:**
-- ✅ DDoS protection at application level
-- ✅ Prevents API abuse and brute force
-- ✅ Redis-backed (works across multiple instances)
-- ✅ User-friendly error messages with retry timing
+**Authentication Error Response (401):**
+```json
+{
+  "error": "missing_internal_secret"
+}
+```
+
+**Security Benefits:**
+- ✅ Internal endpoints protected from public access
+- ✅ Rate limiting bypassed for authenticated services
+- ✅ Separate secrets for different service types
+- ✅ Docker network isolation provides additional layer
+- ✅ DDoS protection maintained for public endpoints
 
 ---
 

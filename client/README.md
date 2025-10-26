@@ -13,6 +13,9 @@ Next.js 15 frontend for the LeetBattle competitive coding platform.
 - **Admin Panel**: Bot management, problem management, user management
 - **Bot Opponents**: AI-powered opponents for instant matches
 - **Data Structure Support**: ListNode and TreeNode helpers for multiple languages
+- **Private Rooms**: Create custom 1v1 matches with room codes
+- **Guest Mode**: Play without registration (one-time match)
+- **Guest Sign-Up Modal**: Convert guest matches to permanent accounts
 
 ## Tech Stack
 
@@ -74,6 +77,9 @@ S3_BUCKET_NAME=codeclashers-avatars
 REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 REDIS_PASSWORD=your_redis_password
+
+# Internal Service Authentication
+INTERNAL_SERVICE_SECRET=dev_internal_secret
 ```
 
 ## Project Structure
@@ -143,7 +149,7 @@ npm run lint         # Run ESLint
 - `/register` - Registration
 - `/play` - Main lobby (requires auth)
 - `/queue` - Matchmaking queue
-- `/match` - Live match view
+- `/match` - Live match view (supports guest mode)
 - `/match-history` - Match history viewer
 - `/leaderboard` - Global rankings
 - `/admin` - Admin panel (requires admin access)
@@ -152,6 +158,7 @@ npm run lint         # Run ESLint
   - `/admin/users` - User management
   - `/admin/matches` - Active matches monitoring
 - `/settings` - User settings
+- `/unauthorized` - Access denied page (admin protection)
 
 ## Architecture Notes
 
@@ -233,6 +240,45 @@ The match history feature provides comprehensive match analytics:
 - **Realistic Behavior**: Bots use configurable timing distributions for natural completion times
 - **ELO-Based Matching**: Bots are matched based on their current ratings
 - **Statistics Tracking**: Bot performance is tracked and displayed in admin panel
+
+### Private Rooms
+
+Create custom 1v1 matches with friends:
+
+- **Room Creation**: Generate unique room codes for private matches
+- **Problem Selection**: Room creator chooses specific problems
+- **Room Joining**: Share room codes with friends to join
+- **Match Start**: Creator controls when to start the match
+- **10-Minute Timeout**: Rooms automatically expire after 10 minutes
+- **Seamless Transition**: Matches follow same rules as competitive matches
+
+### Guest Mode
+
+Play without registration:
+
+- **One-Time Matches**: Play a single match without creating an account
+- **7-Day Session**: Guest session stored as cookie for 7 days
+- **Automatic Bot Matching**: Guests are automatically matched with AI bots
+- **Post-Match Sign-Up**: Prompt to create account and save match results
+- **Match Claiming**: Convert guest matches to permanent account after registration
+- **Redis Storage**: Guest data stored in Redis with `guest:session:{guestId}` key
+
+### Guest Sign-Up Modal
+
+Seamless account creation flow:
+
+- **Match Result Display**: Shows match results (win/loss/draw, tests passed)
+- **Registration Form**: Complete user registration without losing match data
+- **Match Preservation**: Guest match automatically claimed for new account
+- **No Data Loss**: All match data transferred to permanent account
+
+### Unauthorized Access Page
+
+Enhanced admin panel protection:
+
+- **Access Control**: Dedicated page for unauthorized admin access attempts
+- **User-Friendly**: Clear explanation and navigation options
+- **Secure Redirect**: Prevents unauthorized users from accessing admin features
 
 ### Data Structure Support
 
