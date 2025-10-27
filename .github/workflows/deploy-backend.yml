@@ -37,6 +37,13 @@ jobs:
           
           cd backend
           
+          # Create .env.production if it doesn't exist
+          if [ ! -f ".env.production" ]; then
+            echo "Creating .env.production from template..."
+            cp .env.production.template .env.production
+            echo "WARNING: Please add your actual environment variables to .env.production"
+          fi
+          
           # Use production docker-compose
           docker-compose -f docker-compose.prod.yml down || true
           
