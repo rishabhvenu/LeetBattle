@@ -94,7 +94,6 @@ services:
       REDIS_HOST: codeclashers-redis
       REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      BOT_COUNT: ${BOT_COUNT:-30}
       BOT_SERVICE_SECRET: ${BOT_SERVICE_SECRET}
       COLYSEUS_URL: ws://codeclashers-colyseus:2567
     depends_on:
