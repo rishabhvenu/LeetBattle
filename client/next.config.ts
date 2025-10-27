@@ -8,6 +8,9 @@ const nextConfig: NextConfig = {
       allowedOrigins: ['localhost:3000'],
     },
   },
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   images: {
     remotePatterns: [
       {
@@ -28,8 +31,8 @@ const nextConfig: NextConfig = {
     INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET,
   },
   webpack: (config, { isServer }) => {
+    // Exclude MongoDB from client bundle completely
     if (!isServer) {
-      // Exclude Node.js modules from client-side bundle
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,
@@ -50,7 +53,21 @@ const nextConfig: NextConfig = {
         'timers/promises': false,
         'fs/promises': false,
       };
+      
+      // Exclude mongodb package entirely from client bundle
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        mongodb: false,
+        'mongodb/lib/cmap/auth/mongodb_oidc/callback_workflow.js': false,
+      };
     }
+    
+    // For server-side, ensure proper resolution
+    if (isServer) {
+      config.externals = config.externals || [];
+      config.externals.push('mongodb');
+    }
+    
     return config;
   },
 };

@@ -3,12 +3,12 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import connectDB, { getMongoClient } from './mongodb';
-import bcrypt from 'bcryptjs';
 import { generatePresignedUrl } from './minio';
 import { getRedis, RedisKeys } from './redis';
 import { ObjectId } from 'mongodb';
 import { tryToObjectId } from './utilsObjectId';
 import { REST_ENDPOINTS } from '../constants/RestEndpoints';
+import bcrypt from 'bcryptjs';
 import {
   authLimiter,
   generalLimiter,
@@ -75,7 +75,7 @@ async function ensureAdminAccess(): Promise<string | null> {
   }
 }
 
-export async function registerUser(prevState: any, formData: FormData) {
+export async function registerUser(prevState: { error?: string } | null, formData: FormData) {
   // Rate limiting
   const identifier = await getClientIdentifier();
   try {
@@ -166,7 +166,7 @@ export async function registerUser(prevState: any, formData: FormData) {
   }
 }
 
-export async function loginUser(prevState: any, formData: FormData) {
+export async function loginUser(prevState: { error?: string } | null, formData: FormData) {
   // Rate limiting
   const identifier = await getClientIdentifier();
   try {
@@ -443,12 +443,12 @@ export async function saveUserAvatar(fileName: string) {
 
     // Update session user avatar
     await sessions.updateOne(
-      { _id: sessionId } as any,
+      { _id: sessionId as unknown as ObjectId },
       { $set: { 'user.avatar': fileName } }
     );
 
     // Update user profile avatar
-    const sessionDoc = await sessions.findOne({ _id: sessionId } as any);
+    const sessionDoc = await sessions.findOne({ _id: sessionId as unknown as ObjectId });
     if (sessionDoc?.userId) {
       const userObjectId = tryToObjectId(sessionDoc.userId) || new ObjectId(String(sessionDoc.userId));
       await users.updateOne(
@@ -488,7 +488,7 @@ export async function getUserStatsCached(userId: string) {
   const totalMatches = await matches.countDocuments({ playerIds: userObjectId });
   const wins = await matches.countDocuments({ winnerUserId: userObjectId });
   // Get user's rating and timeCoded (default 1200 if missing)
-  const userDoc: any = await users.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1, 'stats.timeCoded': 1 } });
+  const userDoc = await users.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1, 'stats.timeCoded': 1 } }) as { stats?: { rating?: number; timeCoded?: number } } | null;
   const rating = userDoc?.stats?.rating ?? 1200;
   const timeCoded = userDoc?.stats?.timeCoded ?? 0;
   // Compute global rank among all users by rating: count users with higher rating + 1
@@ -629,18 +629,20 @@ export async function getActiveMatches() {
         
         // Get problem details
         let problemTitle = 'Unknown Problem';
-        let difficulty = 'Medium';
+        let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
         
         if (matchData.problem) {
           problemTitle = matchData.problem.title || 'Unknown Problem';
-          difficulty = matchData.problem.difficulty || 'Medium';
+          const diff = matchData.problem.difficulty || 'Medium';
+          difficulty = (diff === 'Easy' || diff === 'Medium' || diff === 'Hard') ? diff : 'Medium';
         } else if (matchData.problemId) {
           // Fallback to MongoDB
           try {
             const problem = await problems.findOne({ _id: new ObjectId(matchData.problemId) });
             if (problem) {
               problemTitle = problem.title || 'Unknown Problem';
-              difficulty = problem.difficulty || 'Medium';
+              const diff = problem.difficulty || 'Medium';
+              difficulty = (diff === 'Easy' || diff === 'Medium' || diff === 'Hard') ? diff : 'Medium';
             }
           } catch (error) {
             console.warn(`Could not fetch problem ${matchData.problemId}:`, error);
@@ -902,7 +904,7 @@ export async function getMatchData(matchId: string, userId: string) {
       const client = await getMongoClient();
       const db = client.db(DB_NAME);
       const users = db.collection('users');
-      const opponentUser: any = await users.findOne(
+      const opponentUser = await users.findOne(
         { _id: new ObjectId(opponentUserId) },
         { projection: { username: 1, 'profile.firstName': 1, 'profile.lastName': 1 } }
       );
@@ -913,7 +915,7 @@ export async function getMatchData(matchId: string, userId: string) {
       } else {
         // Check if it's a bot
         const bots = db.collection('bots');
-        const bot: any = await bots.findOne(
+        const bot = await bots.findOne(
           { _id: new ObjectId(opponentUserId) },
           { projection: { username: 1, fullName: 1 } }
         );
@@ -929,7 +931,7 @@ export async function getMatchData(matchId: string, userId: string) {
       const client = await getMongoClient();
       const db = client.db(DB_NAME);
       const users = db.collection('users');
-      const opponentUser: any = await users.findOne(
+      const opponentUser = await users.findOne(
         { _id: new ObjectId(opponentUserId) },
         { projection: { 'profile.firstName': 1, 'profile.lastName': 1 } }
       );
@@ -939,7 +941,7 @@ export async function getMatchData(matchId: string, userId: string) {
       } else {
         // Check if it's a bot
         const bots = db.collection('bots');
-        const bot: any = await bots.findOne(
+        const bot = await bots.findOne(
           { _id: new ObjectId(opponentUserId) },
           { projection: { fullName: 1 } }
         );
@@ -990,18 +992,18 @@ export async function getMatchData(matchId: string, userId: string) {
 /**
  * Generate starter code from function signature
  */
-function generateStarterCode(signature: any) {
+function generateStarterCode(signature: { functionName: string; parameters: Array<{ name: string; type: string }>; returnType: string } | null) {
   if (!signature) return null;
   
   const { functionName, parameters, returnType } = signature;
   
-  const starterCode: any = {};
+  const starterCode: Record<string, string> = {};
   
   // JavaScript
-  const jsParams = parameters.map((p: any) => p.name).join(', ');
+  const jsParams = parameters.map((p) => p.name).join(', ');
   starterCode.javascript = `class Solution {
     /**
- * @param {${parameters.map((p: any) => `${p.type} ${p.name}`).join(', ')}}
+ * @param {${parameters.map((p) => `${p.type} ${p.name}`).join(', ')}}
  * @return {${returnType}}
  */
     ${functionName}(${jsParams}) {
@@ -1010,12 +1012,12 @@ function generateStarterCode(signature: any) {
 }`;
   
   // Python
-  const pyParams = parameters.map((p: any) => p.name).join(', ');
+  const pyParams = parameters.map((p) => p.name).join(', ');
   starterCode.python = `class Solution:
     def ${functionName}(self, ${pyParams}):
     """
     Args:
-            ${parameters.map((p: any) => `${p.name}: ${p.type}`).join('\n            ')}
+            ${parameters.map((p) => `${p.name}: ${p.type}`).join('\n            ')}
     Returns:
         ${returnType}
     """
@@ -1023,7 +1025,7 @@ function generateStarterCode(signature: any) {
     pass`;
   
   // Java
-  const javaParams = parameters.map((p: any) => `${convertToJavaType(p.type)} ${p.name}`).join(', ');
+  const javaParams = parameters.map((p) => `${convertToJavaType(p.type)} ${p.name}`).join(', ');
   starterCode.java = `class Solution {
     public ${convertToJavaType(returnType)} ${functionName}(${javaParams}) {
         // Your code here
@@ -1032,7 +1034,7 @@ function generateStarterCode(signature: any) {
 }`;
   
   // C++
-  const cppParams = parameters.map((p: any) => `${convertToCppType(p.type)} ${p.name}`).join(', ');
+  const cppParams = parameters.map((p) => `${convertToCppType(p.type)} ${p.name}`).join(', ');
   starterCode.cpp = `class Solution {
 public:
     ${convertToCppType(returnType)} ${functionName}(${cppParams}) {
@@ -1118,7 +1120,7 @@ function calculateEloChange(winnerRating: number, loserRating: number, isDraw: b
 /**
  * Update player stats and ratings after match completion
  */
-async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: string | null, isDraw: boolean, db: any, ratingChanges?: Record<string, { oldRating: number; newRating: number; change: number }>) {
+async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: string | null, isDraw: boolean, db: ReturnType<typeof import('mongodb').MongoClient.prototype.db>, ratingChanges?: Record<string, { oldRating: number; newRating: number; change: number }> | unknown) {
   const users = db.collection('users');
   const redis = getRedis();
   
@@ -1137,7 +1139,7 @@ async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: st
       }
       
       // Determine if this player won, lost, or drew
-      let statUpdate: any = { 'stats.totalMatches': 1 };
+      const statUpdate: Record<string, number> = { 'stats.totalMatches': 1 };
       
       if (isDraw) {
         statUpdate['stats.draws'] = 1;
@@ -1337,7 +1339,7 @@ async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: st
   console.log('Player stats and ratings updated successfully');
 }
 
-export async function persistMatchFromState(state: any) {
+export async function persistMatchFromState(state: Record<string, unknown>) {
   await connectDB();
   const client = await getMongoClient();
   const db = client.db(DB_NAME);
@@ -1356,7 +1358,7 @@ export async function persistMatchFromState(state: any) {
 
   // Process submissions - handle new format from MatchRoom
   const insertedIds: ObjectId[] = [];
-  const submissionsData = state.submissions || [];
+  const submissionsData = Array.isArray(state.submissions) ? state.submissions : [];
   
   for (const submission of submissionsData) {
     if (!submission || typeof submission !== 'object') {
@@ -1369,8 +1371,8 @@ export async function persistMatchFromState(state: any) {
     const doc = {
       _id: submissionMongoId,
       matchId: state.matchId,
-      problemId: tryToObjectId(state.problemId) || new ObjectId(state.problemId),
-      userId: tryToObjectId(submission.userId) || new ObjectId(submission.userId),
+      problemId: tryToObjectId(state.problemId) || new ObjectId(String(state.problemId)),
+      userId: tryToObjectId(submission.userId) || new ObjectId(String(submission.userId)),
       language: submission.language,
       sourceCode: submission.code || null,
       passed: submission.passed || false,
@@ -1399,20 +1401,20 @@ export async function persistMatchFromState(state: any) {
   // Safely convert player IDs to ObjectId format
   const playerObjectIds = playerIds
     .filter((id) => Boolean(id))
-    .map((id: unknown) => tryToObjectId(id) || (id as any));
+    .map((id: unknown) => tryToObjectId(id) || new ObjectId(String(id)));
 
   const matchDoc = {
     _id: state.matchId,
     playerIds: playerObjectIds,
-    problemId: tryToObjectId(state.problemId) || new ObjectId(state.problemId),
-    status: 'finished',
-    winnerUserId: state.winnerUserId ? (tryToObjectId(state.winnerUserId) || new ObjectId(state.winnerUserId)) : null,
+    problemId: tryToObjectId(state.problemId) || new ObjectId(String(state.problemId)),
+    status: 'finished' as const,
+    winnerUserId: state.winnerUserId ? (tryToObjectId(state.winnerUserId) || new ObjectId(String(state.winnerUserId))) : null,
     isDraw: state.isDraw || false,
-    startedAt: state.startedAt ? new Date(state.startedAt) : new Date(),
-    endedAt: state.endedAt ? new Date(state.endedAt) : new Date(),
+    startedAt: state.startedAt ? new Date(String(state.startedAt)) : new Date(),
+    endedAt: state.endedAt ? new Date(String(state.endedAt)) : new Date(),
     endReason: state.endReason || null,
     submissionIds: insertedIds,
-  } as any;
+  };
   
   try {
   await matches.updateOne({ _id: matchDoc._id }, { $set: matchDoc }, { upsert: true });
@@ -1428,14 +1430,14 @@ export async function persistMatchFromState(state: any) {
   
   if (playerIds.length === 2) {
     // Pass pre-calculated rating changes from MatchRoom (with difficulty adjustments)
-    await updatePlayerStatsAndRatings(playerIds, state.winnerUserId, isDraw, db, state.ratingChanges);
+    await updatePlayerStatsAndRatings(playerIds as string[], state.winnerUserId as string | null, isDraw as boolean, db, state.ratingChanges as Record<string, { oldRating: number; newRating: number; change: number }> | undefined);
   } else {
     console.warn(`Expected 2 players but found ${playerIds.length}. Players:`, playerIds, 'State:', JSON.stringify(state, null, 2));
   }
   
   // Clean up Redis match data and player reservations
   const redis = getRedis();
-  await redis.del(RedisKeys.matchKey(state.matchId));
+  await redis.del(RedisKeys.matchKey(String(state.matchId)));
   console.log(`Deleted match data for ${state.matchId}`);
   
   // Critical: Delete player reservations so they can queue again
@@ -1448,7 +1450,7 @@ export async function persistMatchFromState(state: any) {
   
 }
 
-async function ensureIndexes(db: any) {
+async function ensureIndexes(db: ReturnType<typeof import('mongodb').MongoClient.prototype.db>) {
   await db.collection('matches').createIndexes([
     { key: { playerIds: 1 } },
     { key: { problemId: 1 } },
@@ -1511,13 +1513,13 @@ export async function initMatchStateInCache(params: {
   const doc = {
     matchId: params.matchId,
     problemId: params.problemId,
-    status: 'ongoing',
+    status: 'ongoing' as const,
     players: params.players,
     startedAt: params.startedAt || new Date().toISOString(),
-    submissions: [],
-    playersCode: {},
-    linesWritten: {}
-  } as any;
+    submissions: [] as unknown[],
+    playersCode: {} as Record<string, unknown>,
+    linesWritten: {} as Record<string, unknown>
+  };
   await redis.set(key, JSON.stringify(doc));
   await redis.sadd(RedisKeys.activeMatchesSet, params.matchId);
   return { success: true };
@@ -1574,7 +1576,7 @@ export async function finishMatchInCache(matchId: string, winnerUserId?: string)
   obj.endedAt = new Date().toISOString();
   if (winnerUserId) obj.winnerUserId = winnerUserId;
   await redis.set(key, JSON.stringify(obj));
-  await redis.srem(RedisKeys.activeMatchesSet, matchId);
+  await redis.srem(RedisKeys.activeMatchesSet, String(matchId));
   return { success: true };
 }
 
@@ -2020,11 +2022,11 @@ Example 3 - TreeNode:
       verified: false,
       verificationSummary: 'Problem stored - verification pending'
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error generating problem:', error);
     return { 
       success: false, 
-      error: error.message || 'Failed to generate problem' 
+      error: (error as Error).message || 'Failed to generate problem' 
     };
   }
 }
@@ -2103,36 +2105,36 @@ export async function verifyProblemSolutions(problemId: string) {
     // Extract test case details for each language (both passed and failed)
     const allTestCases: Record<string, Array<{
       testNumber: number;
-      input: any;
-      expected: any;
-      actual: any;
+    input: unknown;
+    expected: unknown;
+    actual: unknown;
       error?: string;
       passed: boolean;
     }>> = {};
 
     const failedTestCases: Record<string, Array<{
       testNumber: number;
-      input: any;
-      expected: any;
-      actual: any;
+    input: unknown;
+    expected: unknown;
+    actual: unknown;
       error?: string;
     }>> = {};
 
     for (const [lang, result] of Object.entries(validationResult.results)) {
-      const langResult = result as any;
+      const langResult = result as { results?: Array<{ testNumber?: number; testCase?: { input?: unknown }; expected?: unknown; actual?: unknown; error?: string; passed: boolean }> };
       console.log(`Processing ${lang} results:`, JSON.stringify(langResult, null, 2));
       if (langResult.results) {
         const allTests = langResult.results
-          .map((r: any) => ({
+          .map((r) => ({
             testNumber: r.testNumber || 0,
             input: r.testCase?.input,
-            expected: r.testCase?.output,
-            actual: r.actualOutput,
-            error: r.error,
-            passed: r.passed,
+            expected: (r.testCase as { output?: unknown })?.output,
+            actual: (r as { actualOutput?: unknown }).actualOutput,
+            error: (r as { error?: string }).error,
+            passed: (r as { passed?: boolean }).passed || false,
           }));
         
-        const failed = allTests.filter((r: any) => !r.passed);
+        const failed = allTests.filter((r) => !r.passed);
         
         allTestCases[lang] = allTests;
         console.log(`All tests for ${lang}:`, allTests);
@@ -2194,11 +2196,11 @@ export async function verifyProblemSolutions(problemId: string) {
       results: validationResult.results
     };
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error verifying problem:', error);
     return {
       success: false,
-      error: error.message || 'Failed to verify problem'
+      error: (error as Error).message || 'Failed to verify problem'
     };
   }
 }
@@ -2243,7 +2245,7 @@ export async function getUnverifiedProblems() {
       allTestCases: problem.allTestCases || null,
       failedTestCases: problem.failedTestCases || null,
     }));
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching unverified problems:', error);
     if (
       error instanceof Error &&
@@ -2291,7 +2293,7 @@ export async function getProblemById(problemId: string) {
       verificationResults: problem.verificationResults || null,
       failedTestCases: problem.failedTestCases || null,
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching problem:', error);
     if (
       error instanceof Error &&
@@ -2322,7 +2324,7 @@ export async function updateProblem(problemId: string, updates: {
     const db = client.db(DB_NAME);
     const problemsCollection = db.collection('problems');
 
-    const updateData: any = {
+    const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     };
 
@@ -2341,9 +2343,9 @@ export async function updateProblem(problemId: string, updates: {
 
 
     return { success: true };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error updating problem:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: (error as Error).message };
   }
 }
 
@@ -2433,7 +2435,7 @@ export async function resetAllPlayerData() {
       }
 
       console.log(`Cleared ${redisKeysDeleted} Redis keys`);
-    } catch (redisError: any) {
+    } catch (redisError: unknown) {
       console.error('Error clearing Redis data:', redisError);
       // Continue even if Redis clearing fails - at least DB is cleared
     }
@@ -2442,16 +2444,16 @@ export async function resetAllPlayerData() {
       success: true, 
       message: `Reset complete: ${matchesResult.deletedCount} matches, ${submissionsResult.deletedCount} submissions deleted. ${usersResult.modifiedCount} users reset. ${redisKeysDeleted} Redis keys cleared.`
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error resetting player data:', error);
-    return { success: false, error: error.message };
+    return { success: false, error: (error as Error).message };
   }
 }
 
 /**
  * Helper function to scan Redis for keys matching a pattern
  */
-async function scanRedisKeys(redis: any, pattern: string): Promise<string[]> {
+async function scanRedisKeys(redis: ReturnType<typeof getRedis>, pattern: string): Promise<string[]> {
   const keys: string[] = [];
   let cursor = '0';
   
@@ -2494,7 +2496,7 @@ export async function getUsers(
     const users = db.collection(USERS_COLLECTION);
 
     // Build search query
-    const query: Record<string, any> = {};
+    const query: Record<string, unknown> = {};
     if (searchTerm && searchType) {
       if (searchType === 'username') {
         query.username = { $regex: searchTerm, $options: 'i' };
@@ -2531,11 +2533,11 @@ export async function getUsers(
       success: true, 
       users: serializedUsers 
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching users:', error);
     return { 
       success: false, 
-      error: error.message || 'Failed to fetch users' 
+      error: (error as Error).message || 'Failed to fetch users' 
     };
   }
 }
@@ -2568,7 +2570,7 @@ export async function getTotalUsersCount(
     const users = db.collection(USERS_COLLECTION);
 
     // Build search query (same as getUsers)
-    const query: Record<string, any> = {};
+    const query: Record<string, unknown> = {};
     if (searchTerm && searchType) {
       if (searchType === 'username') {
         query.username = { $regex: searchTerm, $options: 'i' };
@@ -2586,11 +2588,11 @@ export async function getTotalUsersCount(
       success: true, 
       count 
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error counting users:', error);
     return { 
       success: false, 
-      error: error.message || 'Failed to count users' 
+      error: (error as Error).message || 'Failed to count users' 
     };
   }
 }
@@ -2634,7 +2636,7 @@ export async function updateUser(userId: string, updates: Partial<User>) {
     }
 
     // Prepare update data
-    const updateData: Record<string, any> = {
+    const updateData: Record<string, unknown> = {
       updatedAt: new Date(),
     };
 
@@ -2699,11 +2701,11 @@ export async function updateUser(userId: string, updates: Partial<User>) {
       success: true, 
       message: 'User updated successfully' 
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error updating user:', error);
     return { 
       success: false, 
-      error: error.message || 'Failed to update user' 
+      error: (error as Error).message || 'Failed to update user' 
     };
   }
 }
@@ -2758,11 +2760,11 @@ export async function getUserById(userId: string) {
       success: true, 
       user: serializedUser 
     };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching user:', error);
     return { 
       success: false, 
-      error: error.message || 'Failed to fetch user' 
+      error: (error as Error).message || 'Failed to fetch user' 
     };
   }
 }
@@ -3146,21 +3148,21 @@ export async function getMatchDetails(matchId: string, userId: string) {
     const matchData = match[0];
     
     // Get submission stats for both players
-    const userSubmissions = matchData.submissions.filter((s: any) => 
+    const userSubmissions = matchData.submissions.filter((s: { userId: { toString: () => string } }) => 
       s.userId.toString() === userId
     );
-    const opponentSubmissions = matchData.submissions.filter((s: any) => 
+    const opponentSubmissions = matchData.submissions.filter((s: { userId: { toString: () => string } }) => 
       s.userId.toString() !== userId
     );
 
-    const getUserStats = (submissions: any[]) => {
+    const getUserStats = (submissions: Array<{ testResults?: Array<{ status: number }> }>) => {
       const bestSubmission = submissions.reduce((best, sub) => {
-        const passed = sub.testResults?.filter((t: any) => t.status === 3).length || 0;
-        const bestPassed = best?.testResults?.filter((t: any) => t.status === 3).length || 0;
+        const passed = sub.testResults?.filter((t) => t.status === 3).length || 0;
+        const bestPassed = best?.testResults?.filter((t) => t.status === 3).length || 0;
         return passed > bestPassed ? sub : best;
       }, null);
 
-      const testsPassed = bestSubmission?.testResults?.filter((t: any) => t.status === 3).length || 0;
+      const testsPassed = bestSubmission?.testResults?.filter((t) => t.status === 3).length || 0;
       const totalTests = bestSubmission?.testResults?.length || 0;
 
       return {
@@ -3381,7 +3383,7 @@ export async function deployBots(botIds: string[], deploy: boolean) {
   }
 }
 
-export async function updateBot(botId: string, updates: any) {
+export async function updateBot(botId: string, updates: Record<string, unknown>) {
   const adminError = await ensureAdminAccess();
   if (adminError) {
     return { success: false, error: adminError };
@@ -3553,11 +3555,11 @@ export async function getAvatarByIdAction(id: string) {
 
     // Not found in either collection
     return { success: true, avatar: null };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error fetching avatar by ID:', error);
     return { 
       success: false, 
-      error: error.message || 'Failed to fetch avatar' 
+      error: (error as Error).message || 'Failed to fetch avatar' 
     };
   }
 }

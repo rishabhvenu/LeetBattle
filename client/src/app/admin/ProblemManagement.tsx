@@ -52,21 +52,21 @@ type UnverifiedProblem = {
   updatedAt: string;
   verified?: boolean;
   verifiedAt?: string | null;
-  verificationResults?: any;
+  verificationResults?: Record<string, unknown>;
   verificationError?: string[];
   allTestCases?: Record<string, Array<{
     testNumber: number;
-    input: any;
-    expected: any;
-    actual: any;
+    input: unknown;
+    expected: unknown;
+    actual: unknown;
     error?: string;
     passed: boolean;
   }>>;
   failedTestCases?: Record<string, Array<{
     testNumber: number;
-    input: any;
-    expected: any;
-    actual: any;
+    input: unknown;
+    expected: unknown;
+    actual: unknown;
     error?: string;
   }>>;
 };
@@ -107,7 +107,7 @@ export default function ProblemManagement() {
     try {
       setLoadingProblems(true);
       const problems = await getUnverifiedProblems();
-      setUnverifiedProblems(Array.isArray(problems) ? problems : []);
+      setUnverifiedProblems(Array.isArray(problems) ? (problems as UnverifiedProblem[]) : []);
     } catch (error) {
       console.error('Error loading unverified problems:', error);
       toast.error('Failed to load unverified problems');
@@ -220,8 +220,9 @@ export default function ProblemManagement() {
   const handleEditProblem = async (problemId: string) => {
     const problem = await getProblemById(problemId);
     if (problem) {
-      setEditingProblem(problem as UnverifiedProblem);
-      setEditingSolutions(problem.solutions || {});
+      const fullProblem = problem as UnverifiedProblem;
+      setEditingProblem(fullProblem);
+      setEditingSolutions(fullProblem.solutions || {});
       setEditDialogOpen(true);
     } else {
       toast.error('Failed to load problem for editing');

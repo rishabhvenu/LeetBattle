@@ -40,21 +40,21 @@ export interface ProblemDoc {
   }>;
   verified?: boolean;
   verifiedAt?: Date;
-  verificationResults?: Record<string, any>;
+  verificationResults?: Record<string, unknown>;
   verificationError?: string[];
   allTestCases?: Record<string, Array<{
     testNumber: number;
-    input: any;
-    expected: any;
-    actual: any;
+    input: unknown;
+    expected: unknown;
+    actual: unknown;
     error?: string;
     passed: boolean;
   }>>;
   failedTestCases?: Record<string, Array<{
     testNumber: number;
-    input: any;
-    expected: any;
-    actual: any;
+    input: unknown;
+    expected: unknown;
+    actual: unknown;
     error?: string;
   }>>;
   createdAt: Date;

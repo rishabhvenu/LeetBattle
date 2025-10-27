@@ -21,9 +21,11 @@ export default async function MatchHistoryPage() {
   // Fetch match history for the first page
   const matchHistory = await getMatchHistory(session.user!.id, 1, 10);
 
+  const safeMatchHistory = matchHistory || { matches: [], page: 1, limit: 10, hasMore: false };
+
   return (
     <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
-      <MatchHistory initialData={matchHistory} userId={session.user!.id} />
+      <MatchHistory initialData={safeMatchHistory} userId={session.user!.id} />
     </Layout>
   );
 }

@@ -44,13 +44,24 @@ export default function BotManagement() {
   const [isResetting, setIsResetting] = useState(false);
   
   // Rotation configuration state
-  const [rotationStatus, setRotationStatus] = useState({
+  const [rotationStatus, setRotationStatus] = useState<{
+    maxDeployed: number;
+    totalBots: number;
+    deployedCount: number;
+    activeCount: number;
+    rotationQueue: string[];
+    queueLength: number;
+    queuedPlayersCount?: number;
+    targetDeployed?: number;
+  }>({
     maxDeployed: 5,
     totalBots: 0,
     deployedCount: 0,
     activeCount: 0,
     rotationQueue: [] as string[],
-    queueLength: 0
+    queueLength: 0,
+    queuedPlayersCount: 0,
+    targetDeployed: 5
   });
   const [maxDeployedInput, setMaxDeployedInput] = useState(5);
   const [isUpdatingRotation, setIsUpdatingRotation] = useState(false);
@@ -175,8 +186,8 @@ export default function BotManagement() {
 
   // Helper function to check if a bot is deployed (from Redis data)
   const isBotDeployed = (botId: string) => {
-    // Use the actual deployed bot IDs from Redis
-    return rotationStatus.deployedBots?.includes(botId) || false;
+    // Check if bot is in rotation queue (which means it's deployed or will be deployed)
+    return rotationStatus.rotationQueue?.includes(botId) || false;
   };
 
   const calculateStats = (botList: BotDoc[]) => {
@@ -551,7 +562,7 @@ export default function BotManagement() {
               </div>
               <div>
                 <Label className="text-black">Gender Distribution</Label>
-                <Select value={generateGender} onValueChange={(value: any) => setGenerateGender(value)}>
+                <Select value={generateGender} onValueChange={(value: string) => setGenerateGender(value as 'male' | 'female' | 'random')}>
                   <SelectTrigger className="bg-white border-blue-200 text-black">
                     <SelectValue />
                   </SelectTrigger>

@@ -53,11 +53,6 @@ export function ToastContainer(props: ToastContainerProps) {
           ? "relative flex p-1 min-h-10 rounded-md justify-between overflow-hidden cursor-pointer bg-gray-900/95 border border-gray-700 mb-4 shadow-lg backdrop-blur-sm"
           : "relative flex p-1 min-h-10 rounded-md justify-between overflow-hidden cursor-pointer bg-white/95 border border-blue-200 mb-4 shadow-lg backdrop-blur-sm"
       }
-      bodyClassName={() =>
-        isDarkMode
-          ? "text-sm font-medium text-white flex items-center p-3"
-          : "text-sm font-medium text-black flex items-center p-3"
-      }
       {...props}
     />
   );

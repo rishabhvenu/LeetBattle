@@ -138,13 +138,13 @@ const GuestQueue: React.FC<GuestQueueProps> = ({ isAlreadyPlayed }) => {
           <Card className="bg-white/90 border-blue-200 shadow-xl">
             <CardHeader>
               <CardTitle className="text-2xl font-bold text-center text-black">
-                You've Already Played!
+                You&apos;ve Already Played!
               </CardTitle>
             </CardHeader>
             <CardContent className="p-8 text-center">
               <div className="mb-6">
                 <p className="text-lg text-black/70 mb-4">
-                  You've already completed your guest match. To play more matches and save your progress, please create an account.
+                  You&apos;ve already completed your guest match. To play more matches and save your progress, please create an account.
                 </p>
                 <div className="flex justify-center gap-4">
                   <Button

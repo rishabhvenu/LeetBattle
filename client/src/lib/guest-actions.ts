@@ -24,7 +24,7 @@ export interface GuestMatchData {
     language: string;
     code: string;
     passed: boolean;
-    testResults: any[];
+    testResults: unknown[];
     timestamp: number;
   }>;
   testsPassed: number;
@@ -123,7 +123,7 @@ export async function hasGuestPlayed(): Promise<boolean> {
 /**
  * Create a guest match by calling the backend API
  */
-export async function createGuestMatch(): Promise<{ success: boolean; guestId?: string; matchId?: string; roomId?: string; bot?: any; error?: string }> {
+export async function createGuestMatch(): Promise<{ success: boolean; guestId?: string; matchId?: string; roomId?: string; bot?: unknown; error?: string }> {
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout

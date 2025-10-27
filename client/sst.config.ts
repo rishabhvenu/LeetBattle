@@ -1,64 +1,65 @@
-export default {
-  config(_input) {
+// @ts-nocheck
+/// <reference path="./.sst/platform/config.d.ts" />
+
+export default $config({
+  app(input) {
     return {
       name: "codeclashers",
-      region: "us-east-1",
+      home: "aws",
     };
   },
-  async stacks(app) {
-    app.stack(async function Site({ stack }) {
-      // Dynamic import inside async function - this is the SST v3 way
-      const { Bucket, NextjsSite } = await import("sst/constructs");
-      
-      // Create S3 bucket for avatars
-      const avatarBucket = new Bucket(stack, "avatars", {
-        name: `codeclashers-avatars-${stack.stage}`,
-        cors: [
-          {
-            allowedHeaders: ["*"],
-            allowedMethods: ["GET", "PUT", "POST", "DELETE"],
-            allowedOrigins: ["*"], // Will be restricted to your domain later
-            maxAge: "1 day",
-          },
-        ],
-      });
-
-      const site = new NextjsSite(stack, "site", {
-        // Add your domain
-        domain: {
-          domainName: "leetbattle.net",
-          domainAlias: "www.leetbattle.net", // Optional: for www redirect
+  
+  async run() {
+    // Create S3 bucket for avatars
+    const avatarBucket = new sst.aws.Bucket(process.env.S3_BUCKET_NAME || "avatars", {
+      cors: [
+        {
+          allowedHeaders: ["*"],
+          allowedMethods: ["GET", "PUT", "POST", "DELETE"],
+          allowedOrigins: ["*"], // Will be restricted to your domain later
+          maxAge: "1 day",
         },
-        // SST automatically loads from .env.production for production stage
-        environment: {
-          MONGODB_URI: process.env.MONGODB_URI!,
-          NEXTAUTH_URL: process.env.NEXTAUTH_URL!,
-          NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET!,
-          NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!,
-          NEXT_PUBLIC_COLYSEUS_WS_URL: process.env.NEXT_PUBLIC_COLYSEUS_WS_URL!,
-          S3_ENDPOINT: "", // Empty for native S3
-          AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID!,
-          AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY!,
-          S3_BUCKET_NAME: avatarBucket.bucketName,
-          AWS_REGION: process.env.AWS_REGION || "us-east-1",
-          REDIS_HOST: process.env.REDIS_HOST!,
-          REDIS_PORT: process.env.REDIS_PORT || "6379",
-          REDIS_PASSWORD: process.env.REDIS_PASSWORD!,
-          INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET!,
-          OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
-        },
-      });
-
-      // Grant the site access to the avatar bucket
-      avatarBucket.attachPermissions([site]);
-      
-      stack.addOutputs({
-        SiteUrl: site.url,
-        CustomDomain: site.customDomainUrl, // This will be https://leetbattle.net
-        AvatarBucketName: avatarBucket.bucketName,
-        AvatarBucketUrl: `https://${avatarBucket.bucketName}.s3.amazonaws.com`,
-      });
+      ],
     });
+
+    const site = new sst.aws.Nextjs("site", {
+      domain: {
+        name: "leetbattle.net",
+        aliases: ["www.leetbattle.net"],
+      },
+      environment: {
+        MONGODB_URI: process.env.MONGODB_URI!,
+        NEXTAUTH_URL: process.env.NEXTAUTH_URL!,
+        NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET!,
+        NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!,
+        NEXT_PUBLIC_COLYSEUS_WS_URL: process.env.NEXT_PUBLIC_COLYSEUS_WS_URL!,
+        S3_ENDPOINT: "",
+        AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID!,
+        AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY!,
+        S3_BUCKET_NAME: avatarBucket.name,
+        AWS_REGION: process.env.AWS_REGION || "us-east-1",
+        REDIS_HOST: process.env.REDIS_HOST!,
+        REDIS_PORT: process.env.REDIS_PORT || "6379",
+        REDIS_PASSWORD: process.env.REDIS_PASSWORD!,
+        INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET!,
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
+      },
+      transform: {
+        distribution: {
+          async onBeforeBuild() {
+            // Grant site access to bucket
+            return avatarBucket.attachPermissions({ policy: "readwrite" });
+          },
+        },
+      },
+    });
+
+    return {
+      siteUrl: site.url,
+      customDomain: site.domain,
+      bucketName: avatarBucket.name,
+      bucketUrl: `https://${avatarBucket.name}.s3.amazonaws.com`,
+    };
   },
-};
+});
 

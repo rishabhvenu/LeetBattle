@@ -26,9 +26,9 @@ export default async function PlayPage() {
   const playSession = {
     _id: session.user?.id || '',
     username: session.user?.username || 'User',
-    timeCoded: stats.timeCoded ?? 0,
+    timeCoded: stats?.timeCoded ?? 0,
     problemsSolved: 0,
-    globalRank: stats.globalRank ?? 1,
+    globalRank: stats?.globalRank ?? 1,
     currentStreak: 0,
   };
 

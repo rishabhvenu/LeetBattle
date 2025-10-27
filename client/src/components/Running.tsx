@@ -120,7 +120,7 @@ export default function Running({
                 </div>
                 <div className="flex items-center gap-2 text-sm text-black/70">
                   <Timer className="h-4 w-4" />
-                  Runtime: {testCaseResults[selectedCase - 1]?.time || 0} ms
+                  Runtime: {(testCaseResults[selectedCase - 1] as unknown as { time?: number })?.time || 0} ms
                 </div>
               </div>
 

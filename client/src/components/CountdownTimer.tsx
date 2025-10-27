@@ -52,7 +52,7 @@ const CountdownTimer: React.FC<CountdownTimerProps> = ({ matchStartTime }) => {
           {formatTime(timeLeft.seconds)}
         </span>
       ) : (
-        <span>Time's up!</span>
+        <span>Time&apos;s up!</span>
       )}
     </div>
   );

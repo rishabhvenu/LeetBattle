@@ -40,8 +40,8 @@ export type GlobalStats = {
 };
 
 export type RunInfo = {
-  userOutput: any;
-  expectedOutput: any;
+  userOutput: unknown;
+  expectedOutput: unknown;
   runSuccess: boolean;
 };
 

@@ -50,7 +50,7 @@ interface HomeProps {
       matches: number;
     }>;
   };
-  restHandler: any;
+  restHandler: unknown;
 }
 
 export default function Home({ session, restHandler }: HomeProps) {
@@ -58,10 +58,10 @@ export default function Home({ session, restHandler }: HomeProps) {
   const [data, setData] = useState<{ date: string; matches: number }[] | null>(null);
 
   useEffect(() => {
-    setUsername(session.user?.username || 'User');
+    setUsername(session?.user?.username || 'User');
 
     // Use activity data from props, or show empty state if no activity
-    if (session.activity && session.activity.length > 0) {
+    if (session?.activity && session.activity.length > 0) {
       setData(session.activity);
     } else {
       // Show empty state for users with no activity
@@ -103,17 +103,17 @@ export default function Home({ session, restHandler }: HomeProps) {
             <StatCard
               icon={Code}
               title="Games Played"
-              value={session.stats?.totalMatches?.toString() || "0"}
+              value={session?.stats?.totalMatches?.toString() || "0"}
             />
             <StatCard
               icon={Trophy}
               title="Current Rating"
-              value={session.stats?.rating?.toString() || "1200"}
+              value={session?.stats?.rating?.toString() || "1200"}
             />
             <StatCard
               icon={ActivityIcon}
               title="Wins"
-              value={session.stats?.wins?.toString() || "0"}
+              value={session?.stats?.wins?.toString() || "0"}
             />
           </motion.div>
 

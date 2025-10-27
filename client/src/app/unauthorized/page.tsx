@@ -34,7 +34,7 @@ export default async function UnauthorizedPage() {
             </h1>
             
             <p className="text-lg text-gray-600 mb-8">
-              You don't have permission to access the admin panel. 
+              You don&apos;t have permission to access the admin panel. 
               Only authorized administrators can access this area.
             </p>
             

@@ -21,14 +21,14 @@ export function MonacoEditor({
   readOnly = false
 }: MonacoEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
-  const monacoEditorRef = useRef<any>(null);
+  const monacoEditorRef = useRef<ReturnType<typeof import('monaco-editor').editor.create> | null>(null);
   const [monacoLoaded, setMonacoLoaded] = useState(false);
 
   useEffect(() => {
     // Dynamically import Monaco Editor only on client side
     if (typeof window === 'undefined') return;
 
-    let editorInstance: any = null;
+    let editorInstance: ReturnType<typeof import('monaco-editor').editor.create> | null = null;
 
     import('monaco-editor').then((monaco) => {
       if (!editorRef.current) return;

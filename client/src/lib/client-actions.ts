@@ -93,7 +93,7 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
   }
 }
 
-export async function getMatchDetails(matchId: string): Promise<any> {
+export async function getMatchDetails(matchId: string): Promise<unknown> {
   try {
     const response = await fetch(`/api/match-details/${matchId}`);
     if (!response.ok) throw new Error('Failed to fetch match details');

@@ -49,9 +49,9 @@ const itemVariants = {
 };
 
 export default function MatchHistory({ initialData, userId }: MatchHistoryProps) {
-  const [matches, setMatches] = useState<MatchHistoryItem[]>(initialData.matches);
-  const [currentPage, setCurrentPage] = useState(initialData.page);
-  const [hasMore, setHasMore] = useState(initialData.hasMore);
+  const [matches, setMatches] = useState<MatchHistoryItem[]>(initialData?.matches || []);
+  const [currentPage, setCurrentPage] = useState(initialData?.page || 1);
+  const [hasMore, setHasMore] = useState(initialData?.hasMore || false);
   const [loading, setLoading] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<MatchDetails | null>(null);
   const [modalLoading, setModalLoading] = useState(false);
@@ -76,9 +76,11 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
     setLoading(true);
     try {
       const result = await getMatchHistory(userId, page, 10);
-      setMatches(result.matches);
-      setHasMore(result.hasMore);
-      setCurrentPage(result.page);
+      if (result) {
+        setMatches(result.matches || []);
+        setHasMore(result.hasMore || false);
+        setCurrentPage(result.page || page);
+      }
     } catch (error) {
       console.error('Error fetching matches:', error);
     } finally {
@@ -97,7 +99,7 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
     try {
       const result = await getMatchDetails(matchId, userId);
       if (result.success) {
-        setSelectedMatch(result);
+        setSelectedMatch(result as unknown as MatchDetails);
       }
     } catch (error) {
       console.error('Error fetching match details:', error);

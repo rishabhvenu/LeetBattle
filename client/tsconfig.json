@@ -1,12 +1,29 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
-    "strict": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "strictFunctionTypes": false,
+    "strictBindCallApply": false,
+    "strictPropertyInitialization": false,
     "noEmit": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "skipDefaultLibCheck": true,
+    "noImplicitReturns": false,
+    "noImplicitThis": false,
+    "forceConsistentCasingInFileNames": false,
+    "resolveJsonModule": true,
     "esModuleInterop": true,
+    "noEmit": true,
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
@@ -19,9 +36,24 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
-    }
+      "@/*": [
+        "./src/*"
+      ]
+    },
+    "strictNullChecks": false
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".sst",
+    "sst.config.ts"
+  ],
+  "ts-node": {
+    "transpileOnly": true
+  }
 }

@@ -52,7 +52,7 @@ export async function getSession() {
     const db = client.db(process.env.DB_NAME || 'codeclashers');
     const sessions = db.collection('sessions');
     
-    const session = await sessions.findOne({ _id: sessionId });
+    const session = await sessions.findOne({ _id: sessionId as unknown });
     if (!session) {
       return null;
     }

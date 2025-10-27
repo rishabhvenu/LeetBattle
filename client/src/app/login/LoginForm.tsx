@@ -110,7 +110,7 @@ export default function LoginForm() {
           animate={{ opacity: 1 }}
           transition={{ delay: 0.3 }}
         >
-          Don't have an account?{" "}
+          Don&apos;t have an account?{" "}
           <a href="/register" className="hover:underline" style={{ color: '#2599D4' }}>
             Sign up
           </a>

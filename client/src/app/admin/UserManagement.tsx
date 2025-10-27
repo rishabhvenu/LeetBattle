@@ -55,7 +55,7 @@ export default function UserManagement() {
       ]);
 
       if (usersResult.success && countResult.success) {
-        setUsers(usersResult.users || []);
+        setUsers((usersResult.users || []) as User[]);
         setTotalCount(countResult.count || 0);
         setTotalPages(Math.ceil((countResult.count || 0) / entriesPerPage));
       } else {
@@ -84,7 +84,7 @@ export default function UserManagement() {
     try {
       const result = await getUserById(userId);
       if (result.success && result.user) {
-        setEditingUser(result.user);
+        setEditingUser(result.user as User);
         setEditDialogOpen(true);
       } else {
         toast.error(result.error || 'Failed to load user data');
@@ -123,7 +123,7 @@ export default function UserManagement() {
     }
   };
 
-  const updateEditingUser = (field: string, value: any) => {
+  const updateEditingUser = (field: string, value: string | number) => {
     if (!editingUser) return;
 
     if (field.startsWith('profile.')) {

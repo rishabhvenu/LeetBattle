@@ -16,7 +16,7 @@ import {
   CheckCircle,
   Loader2,
 } from "lucide-react";
-import { MatchDetails } from "@/types/match";
+import { MatchDetails, PlayerMatchStats } from "@/types/match";
 import { getAvatarUrl } from '@/lib/utils';
 // Image import removed - using regular img tags instead
 
@@ -87,7 +87,7 @@ export default function MatchDetailsModal({
     }
   };
 
-  const PlayerCard = ({ player, isCurrentUser }: { player: any; isCurrentUser: boolean }) => (
+  const PlayerCard = ({ player, isCurrentUser }: { player: PlayerMatchStats; isCurrentUser: boolean }) => (
     <div className={`p-6 rounded-lg border-2 ${
       isCurrentUser 
         ? 'border-blue-200 bg-blue-50/50' 
