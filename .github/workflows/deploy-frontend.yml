@@ -7,6 +7,11 @@ on:
       - 'client/**'
   workflow_dispatch:
 
+# Ensure only one deployment runs at a time
+concurrency:
+  group: frontend-deployment
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
