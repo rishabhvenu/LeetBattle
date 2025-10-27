@@ -55,9 +55,7 @@ export default $config({
 
     return {
       siteUrl: site.url,
-      customDomain: site.domain,
       bucketName: avatarBucket.name,
-      bucketUrl: `https://${avatarBucket.name}.s3.amazonaws.com`,
     };
   },
 });
