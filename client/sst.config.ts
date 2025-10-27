@@ -23,10 +23,11 @@ export default $config({
     });
 
     const site = new sst.aws.Nextjs("site", {
-      domain: {
-        name: "leetbattle.net",
-        aliases: ["www.leetbattle.net"],
-      },
+      // Temporarily removed domain - add after first deploy to get AWS nameservers
+      // domain: {
+      //   name: "leetbattle.net",
+      //   aliases: ["www.leetbattle.net"],
+      // },
       environment: {
         MONGODB_URI: process.env.MONGODB_URI!,
         NEXTAUTH_URL: process.env.NEXTAUTH_URL!,
