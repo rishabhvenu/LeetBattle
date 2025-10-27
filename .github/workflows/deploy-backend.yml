@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
 
 # Ensure only one deployment runs at a time
@@ -20,11 +21,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup directory structure
+        run: |
+          sudo mkdir -p /opt/CodeClashers
+          sudo chown $USER:$USER /opt/CodeClashers
+          if [ ! -d "/opt/CodeClashers/.git" ]; then
+            git clone https://github.com/rishabhvenu/LeetBattle.git /opt/CodeClashers
+          fi
+
       - name: Deploy Backend
         run: |
           set -e
-          cd /opt/CodeClashers/backend
+          cd /opt/CodeClashers
           git pull origin main
+          
+          cd backend
           
           # Use production docker-compose
           docker-compose -f docker-compose.prod.yml down || true
