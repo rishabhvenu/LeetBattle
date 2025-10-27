@@ -1,0 +1,26 @@
+name: Deploy Backend to Oracle Cloud
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted  # Runs on your Oracle VM runner
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy Backend
+        run: |
+          set -e
+          cd /opt/CodeClashers/backend
+          git pull origin main
+          docker-compose down || true
+          docker-compose up -d
+          docker-compose ps
+          echo "Deployment complete!"
