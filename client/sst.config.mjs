@@ -6,9 +6,9 @@ export default {
     };
   },
   stacks(app) {
-    app.stack(async function Site({ stack }) {
-      // Dynamic import to avoid top-level imports
-      const { Bucket, NextjsSite } = await import("sst/constructs");
+    app.stack(function Site({ stack }) {
+      // Use require to avoid top-level imports
+      const { Bucket, NextjsSite } = require("sst/constructs");
       
       // Create S3 bucket for avatars
       const avatarBucket = new Bucket(stack, "avatars", {
