@@ -35,10 +35,8 @@ export default $config({
         NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!,
         NEXT_PUBLIC_COLYSEUS_WS_URL: process.env.NEXT_PUBLIC_COLYSEUS_WS_URL!,
         S3_ENDPOINT: "",
-        AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID!,
-        AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY!,
+        // AWS credentials and region are automatically provided by Lambda runtime - don't set them
         S3_BUCKET_NAME: avatarBucket.name,
-        AWS_REGION: process.env.AWS_REGION || "us-east-1",
         REDIS_HOST: process.env.REDIS_HOST!,
         REDIS_PORT: process.env.REDIS_PORT || "6379",
         REDIS_PASSWORD: process.env.REDIS_PASSWORD!,
