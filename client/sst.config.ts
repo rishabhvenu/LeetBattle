@@ -1,5 +1,5 @@
-import { SSTConfig } from "sst";
-import { NextjsSite, Bucket } from "sst/constructs";
+/** @jsxImportSource sst */
+import { Bucket, NextjsSite } from "sst/constructs";
 
 export default {
   config(_input) {
@@ -60,5 +60,5 @@ export default {
       });
     });
   },
-} satisfies SSTConfig;
+};
 
