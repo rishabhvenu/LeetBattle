@@ -17,7 +17,7 @@ services:
       - redis
     environment:
       REDIS_HOST: codeclashers-redis
-      REDIS_PORT: 6379
+      REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       POSTGRES_HOST: codeclashers-judge0-db
       POSTGRES_USER: ${JUDGE0_POSTGRES_USER}
@@ -36,7 +36,7 @@ services:
       - redis
     environment:
       REDIS_HOST: codeclashers-redis
-      REDIS_PORT: 6379
+      REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       POSTGRES_HOST: codeclashers-judge0-db
       POSTGRES_USER: ${JUDGE0_POSTGRES_USER}
@@ -55,7 +55,7 @@ services:
     environment:
       PORT: 2567
       REDIS_HOST: codeclashers-redis
-      REDIS_PORT: 6379
+      REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       # MongoDB Atlas connection string (external)
       MONGODB_URI: ${MONGODB_URI}
@@ -82,7 +82,7 @@ services:
       - redis
       - judge0-server
     ports:
-      - "2567:2567"
+      - "${COLYSEUS_PORT:-2567}:2567"
     restart: unless-stopped
 
   bots:
@@ -92,7 +92,7 @@ services:
     container_name: codeclashers-bots
     environment:
       REDIS_HOST: codeclashers-redis
-      REDIS_PORT: 6379
+      REDIS_PORT: ${REDIS_PORT:-6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
       BOT_COUNT: ${BOT_COUNT:-30}
       BOT_SERVICE_SECRET: ${BOT_SERVICE_SECRET}
