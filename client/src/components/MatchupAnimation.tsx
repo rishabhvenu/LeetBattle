@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from "react";
 import { useSpring, animated, config } from "react-spring";
 import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { getAvatarUrl } from "@/lib/utils";
+// Image import removed - using regular img tags instead
 
 interface PlayerInfo {
   name: string;
@@ -60,18 +61,17 @@ const MatchupAnimation: React.FC<MatchupAnimationProps> = ({
 
   // Helper function to render profile picture
   const renderProfilePicture = (avatar: string | null, initials: string, size: string = "w-24 h-24") => {
+    const avatarUrl = getAvatarUrl(avatar);
     return (
       <Avatar className={size}>
-        <AvatarImage
-          src={getAvatarUrl(avatar)}
-          alt="Profile"
-        />
-        <AvatarFallback className="bg-gray-200">
-          <img 
-            src="/placeholder_avatar.png"
-            alt="Profile placeholder"
-            className="w-full h-full object-cover"
+        {avatarUrl ? (
+          <AvatarImage
+            src={avatarUrl}
+            alt="Profile"
           />
+        ) : null}
+        <AvatarFallback className="bg-gray-200 text-gray-600 font-bold text-xl">
+          {initials}
         </AvatarFallback>
       </Avatar>
     );
@@ -99,6 +99,8 @@ const MatchupAnimation: React.FC<MatchupAnimationProps> = ({
             <img
               src="/sword-left.svg"
               alt="Left sword"
+              width={96}
+              height={192}
               className="w-full h-full"
             />
           </animated.div>
@@ -109,6 +111,8 @@ const MatchupAnimation: React.FC<MatchupAnimationProps> = ({
             <img
               src="/sword-right.svg"
               alt="Right sword"
+              width={96}
+              height={192}
               className="w-full h-full"
             />
           </animated.div>

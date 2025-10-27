@@ -121,9 +121,9 @@ export default function ProblemManagement() {
     return (
       <div className="space-y-6">
         <div className="animate-pulse">
-          <div className="h-8 bg-gray-700 rounded w-1/4 mb-6"></div>
-          <div className="h-4 bg-gray-700 rounded w-1/2 mb-4"></div>
-          <div className="h-4 bg-gray-700 rounded w-3/4"></div>
+          <div className="h-8 bg-white/60 rounded w-1/4 mb-6"></div>
+          <div className="h-4 bg-white/60 rounded w-1/2 mb-4"></div>
+          <div className="h-4 bg-white/60 rounded w-3/4"></div>
         </div>
       </div>
     );
@@ -256,41 +256,41 @@ export default function ProblemManagement() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
-          <FileText className="h-6 w-6" />
+        <h2 className="text-2xl font-bold text-black mb-2 flex items-center gap-2">
+          <FileText className="h-6 w-6" style={{ color: '#2599D4' }} />
           Problem Management
         </h2>
-        <p className="text-gray-400">Create, verify, and manage coding problems</p>
+        <p className="text-black/70">Create, verify, and manage coding problems</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Problem Generation Form */}
-        <Card className="bg-gray-800 border-gray-700">
+        <Card className="bg-white/90 border-blue-200 shadow-lg hover:shadow-xl transition-shadow duration-300">
           <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <Plus className="h-5 w-5" />
+            <CardTitle className="text-black flex items-center gap-2">
+              <Plus className="h-5 w-5" style={{ color: '#2599D4' }} />
               Generate New Problem
             </CardTitle>
-            <CardDescription className="text-gray-400">
+            <CardDescription className="text-black/70">
               Create a new coding problem with test cases and solutions
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div>
-              <Label htmlFor="title" className="text-white">Problem Title</Label>
+              <Label htmlFor="title" className="text-black">Problem Title</Label>
               <Input
                 id="title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Enter problem title"
-                className="bg-gray-700 border-gray-600 text-white"
+                className="bg-white border-blue-200 text-black"
               />
             </div>
 
             <div>
-              <Label htmlFor="difficulty" className="text-white">Difficulty</Label>
+              <Label htmlFor="difficulty" className="text-black">Difficulty</Label>
               <Select value={difficulty} onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => setDifficulty(value)}>
-                <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
+                <SelectTrigger className="bg-white border-blue-200 text-black">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -302,30 +302,30 @@ export default function ProblemManagement() {
             </div>
 
             <div>
-              <Label htmlFor="description" className="text-white">Problem Description</Label>
+              <Label htmlFor="description" className="text-black">Problem Description</Label>
               <Textarea
                 id="description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 placeholder="Describe the problem..."
-                className="bg-gray-700 border-gray-600 text-white min-h-[120px]"
+                className="bg-white border-blue-200 text-black min-h-[120px]"
               />
             </div>
 
             <div>
-              <Label className="text-white">Examples</Label>
+              <Label className="text-black">Examples</Label>
               <div className="space-y-4">
                 {examples.map((example, index) => (
-                  <div key={index} className="border border-gray-600 rounded-lg p-4 space-y-3">
+                  <div key={index} className="border border-blue-200 rounded-lg p-4 space-y-3 bg-blue-50">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium text-gray-300">Example {index + 1}</span>
+                      <span className="text-sm font-medium text-black/70">Example {index + 1}</span>
                       {examples.length > 1 && (
                         <Button
                           type="button"
                           variant="outline"
                           size="sm"
                           onClick={() => removeExample(index)}
-                          className="text-red-400 border-red-400 hover:bg-red-900/20"
+                          className="text-red-600 border-red-500 hover:bg-red-50"
                         >
                           Remove
                         </Button>
@@ -333,31 +333,31 @@ export default function ProblemManagement() {
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
-                        <Label className="text-gray-400 text-sm">Input</Label>
+                        <Label className="text-black/70 text-sm">Input</Label>
                         <Textarea
                           value={example.input}
                           onChange={(e) => updateExample(index, 'input', e.target.value)}
                           placeholder="Input example"
-                          className="bg-gray-700 border-gray-600 text-white text-sm"
+                          className="bg-white border-blue-200 text-black text-sm"
                         />
                       </div>
                       <div>
-                        <Label className="text-gray-400 text-sm">Output</Label>
+                        <Label className="text-black/70 text-sm">Output</Label>
                         <Textarea
                           value={example.output}
                           onChange={(e) => updateExample(index, 'output', e.target.value)}
                           placeholder="Expected output"
-                          className="bg-gray-700 border-gray-600 text-white text-sm"
+                          className="bg-white border-blue-200 text-black text-sm"
                         />
                       </div>
                     </div>
                     <div>
-                      <Label className="text-gray-400 text-sm">Explanation (Optional)</Label>
+                      <Label className="text-black/70 text-sm">Explanation (Optional)</Label>
                       <Textarea
                         value={example.explanation}
                         onChange={(e) => updateExample(index, 'explanation', e.target.value)}
                         placeholder="Explain the example..."
-                        className="bg-gray-700 border-gray-600 text-white text-sm"
+                        className="bg-white border-blue-200 text-black text-sm"
                       />
                     </div>
                   </div>
@@ -366,7 +366,7 @@ export default function ProblemManagement() {
                   type="button"
                   variant="outline"
                   onClick={addExample}
-                  className="w-full border-gray-600 text-gray-300 hover:bg-gray-700"
+                  className="w-full border-blue-200 text-black hover:bg-blue-50"
                 >
                   Add Example
                 </Button>
@@ -374,7 +374,7 @@ export default function ProblemManagement() {
             </div>
 
             <div>
-              <Label className="text-white">Constraints</Label>
+              <Label className="text-black">Constraints</Label>
               <div className="space-y-2">
                 {constraints.map((constraint, index) => (
                   <div key={index} className="flex gap-2">
@@ -382,14 +382,14 @@ export default function ProblemManagement() {
                       value={constraint}
                       onChange={(e) => updateConstraint(index, e.target.value)}
                       placeholder="Enter constraint"
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                     />
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
                       onClick={() => removeConstraint(index)}
-                      className="text-red-400 border-red-400 hover:bg-red-900/20"
+                      className="text-red-600 border-red-500 hover:bg-red-50"
                     >
                       Remove
                     </Button>
@@ -399,7 +399,7 @@ export default function ProblemManagement() {
                   type="button"
                   variant="outline"
                   onClick={addConstraint}
-                  className="w-full border-gray-600 text-gray-300 hover:bg-gray-700"
+                  className="w-full border-blue-200 text-black hover:bg-blue-50"
                 >
                   Add Constraint
                 </Button>
@@ -407,20 +407,21 @@ export default function ProblemManagement() {
             </div>
 
             <div>
-              <Label htmlFor="timeComplexity" className="text-white">Target Time Complexity</Label>
+              <Label htmlFor="timeComplexity" className="text-black">Target Time Complexity</Label>
               <Input
                 id="timeComplexity"
                 value={timeComplexity}
                 onChange={(e) => setTimeComplexity(e.target.value)}
                 placeholder="e.g., O(n), O(n log n), O(n²), O(2ⁿ)"
-                className="bg-gray-700 border-gray-600 text-white"
+                className="bg-white border-blue-200 text-black"
               />
             </div>
 
             <Button
               onClick={handleGenerate}
               disabled={isGenerating}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full text-white"
+              style={{ backgroundColor: '#2599D4' }}
             >
               {isGenerating ? generationStep : 'Generate Problem'}
             </Button>
@@ -428,37 +429,37 @@ export default function ProblemManagement() {
         </Card>
 
         {/* Unverified Problems List */}
-        <Card className="bg-gray-800 border-gray-700">
+        <Card className="bg-white/90 border-blue-200 shadow-lg hover:shadow-xl transition-shadow duration-300">
           <CardHeader>
-            <CardTitle className="text-white flex items-center gap-2">
-              <CheckCircle className="h-5 w-5" />
+            <CardTitle className="text-black flex items-center gap-2">
+              <CheckCircle className="h-5 w-5" style={{ color: '#2599D4' }} />
               Unverified Problems
             </CardTitle>
-            <CardDescription className="text-gray-400">
+            <CardDescription className="text-black/70">
               Problems that need verification before being used in matches
             </CardDescription>
           </CardHeader>
           <CardContent>
             {loadingProblems ? (
               <div className="text-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
-                <p className="text-gray-400 mt-2">Loading problems...</p>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto" style={{ borderColor: '#2599D4' }}></div>
+                <p className="text-black/70 mt-2">Loading problems...</p>
               </div>
             ) : unverifiedProblems.length === 0 ? (
               <div className="text-center py-8">
-                <p className="text-gray-400">No unverified problems found</p>
+                <p className="text-black/70">No unverified problems found</p>
               </div>
             ) : (
               <div className="space-y-4 max-h-96 overflow-y-auto">
                 {unverifiedProblems.map((problem) => (
-                  <div key={problem._id} className="border border-gray-600 rounded-lg p-4 bg-gray-700/50">
+                  <div key={problem._id} className="border border-blue-200 rounded-lg p-4 bg-blue-50">
                     <div className="flex justify-between items-start mb-2">
-                      <h3 className="font-semibold text-white">{problem.title}</h3>
+                      <h3 className="font-semibold text-black">{problem.title}</h3>
                       <Badge variant="outline" className="text-xs">
                         {problem.difficulty}
                       </Badge>
                     </div>
-                    <p className="text-gray-400 text-sm mb-3 line-clamp-2">{problem.description}</p>
+                    <p className="text-black/70 text-sm mb-3 line-clamp-2">{problem.description}</p>
                     
                     <div className="flex flex-wrap gap-2 mb-3">
                       {problem.topics.map((topic, index) => (
@@ -468,57 +469,57 @@ export default function ProblemManagement() {
                       ))}
                     </div>
 
-                    <div className="text-xs text-gray-500 mb-3">
+                    <div className="text-xs text-black/70 mb-3">
                       Created: {new Date(problem.createdAt).toLocaleDateString()}
                     </div>
 
                     {/* Show failed test cases with detailed visual display */}
                     {problem.failedTestCases && Object.keys(problem.failedTestCases).length > 0 && (
                       <div className="mt-3">
-                        <h4 className="text-sm font-medium text-red-400 mb-3 flex items-center gap-2">
+                        <h4 className="text-sm font-medium text-red-600 mb-3 flex items-center gap-2">
                           <XCircle className="h-4 w-4" />
                           Failed Test Cases by Language
                         </h4>
                         <div className="space-y-3">
                           {Object.entries(problem.failedTestCases).map(([lang, tests]) => (
-                            <div key={lang} className="bg-red-900/20 border border-red-700 rounded-lg p-3">
+                            <div key={lang} className="bg-red-50 border border-red-300 rounded-lg p-3">
                               <div className="flex items-center gap-2 mb-2">
-                                <span className="font-medium capitalize text-red-400 text-sm">{lang}</span>
-                                <span className="text-xs bg-red-800/50 text-red-200 px-2 py-1 rounded">
+                                <span className="font-medium capitalize text-red-600 text-sm">{lang}</span>
+                                <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">
                                   {tests.length} failed
                                 </span>
                               </div>
                               <div className="space-y-2">
                                 {tests.slice(0, 2).map((test, idx) => (
-                                  <div key={idx} className="bg-white/10 border border-blue-200 rounded p-2 text-xs">
+                                  <div key={idx} className="bg-white border border-blue-200 rounded p-2 text-xs">
                                     <div className="flex items-center gap-2 mb-1">
-                                      <span className="font-medium text-gray-300">Test #{test.testNumber}</span>
-                                      <span className="text-red-400">✗</span>
+                                      <span className="font-medium text-black/70">Test #{test.testNumber}</span>
+                                      <span className="text-red-600">✗</span>
                                     </div>
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
                                       <div>
-                                        <span className="text-gray-500">Input:</span>
-                                        <div className="font-mono bg-black/20 p-1 rounded mt-1 text-gray-300">
+                                        <span className="text-black/70">Input:</span>
+                                        <div className="font-mono bg-gray-100 p-1 rounded mt-1 text-black">
                                           {JSON.stringify(test.input)}
                                         </div>
                                       </div>
                                       <div>
-                                        <span className="text-gray-500">Expected:</span>
-                                        <div className="font-mono bg-green-900/30 p-1 rounded mt-1 text-green-300">
+                                        <span className="text-black/70">Expected:</span>
+                                        <div className="font-mono bg-green-100 p-1 rounded mt-1 text-green-800">
                                           {JSON.stringify(test.expected)}
                                         </div>
                                       </div>
                                       <div>
-                                        <span className="text-gray-500">Actual:</span>
-                                        <div className="font-mono bg-red-900/30 p-1 rounded mt-1 text-red-300">
+                                        <span className="text-black/70">Actual:</span>
+                                        <div className="font-mono bg-red-100 p-1 rounded mt-1 text-red-800">
                                           {test.actual !== undefined ? JSON.stringify(test.actual) : 'undefined'}
                                         </div>
                                       </div>
                                     </div>
                                     {test.error && (
                                       <div className="mt-2">
-                                        <span className="text-gray-500">Error:</span>
-                                        <div className="font-mono bg-red-900/30 p-1 rounded mt-1 text-red-300 text-xs">
+                                        <span className="text-black/70">Error:</span>
+                                        <div className="font-mono bg-red-100 p-1 rounded mt-1 text-red-800 text-xs">
                                           {test.error}
                                         </div>
                                       </div>
@@ -526,7 +527,7 @@ export default function ProblemManagement() {
                                   </div>
                                 ))}
                                 {tests.length > 2 && (
-                                  <div className="text-xs text-gray-400 text-center">
+                                  <div className="text-xs text-black/70 text-center">
                                     ... and {tests.length - 2} more failed tests
                                   </div>
                                 )}
@@ -550,7 +551,7 @@ export default function ProblemManagement() {
                         onClick={() => handleEditProblem(problem._id)}
                         size="sm"
                         variant="outline"
-                        className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                        className="border-blue-200 text-black hover:bg-blue-50"
                       >
                         Edit
                       </Button>
@@ -565,10 +566,10 @@ export default function ProblemManagement() {
 
       {/* Edit Problem Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto bg-gray-800 border-gray-700">
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto bg-white border-blue-200">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit Problem</DialogTitle>
-            <DialogDescription className="text-gray-400">
+            <DialogTitle className="text-black">Edit Problem</DialogTitle>
+            <DialogDescription className="text-black/70">
               Modify test cases and solutions for this problem
             </DialogDescription>
           </DialogHeader>
@@ -576,18 +577,18 @@ export default function ProblemManagement() {
           {editingProblem && (
             <div className="space-y-6">
               <div>
-                <h3 className="text-lg font-semibold text-white mb-2">Problem: {editingProblem.title}</h3>
-                <p className="text-gray-400">{editingProblem.description}</p>
+                <h3 className="text-lg font-semibold text-black mb-2">Problem: {editingProblem.title}</h3>
+                <p className="text-black/70">{editingProblem.description}</p>
               </div>
 
               {/* Edit Test Cases */}
               <div className="space-y-4">
-                <h3 className="text-lg font-semibold text-white">Edit Test Cases</h3>
+                <h3 className="text-lg font-semibold text-black">Edit Test Cases</h3>
                 <div className="space-y-4">
                   {(editingProblem.testCases || []).map((testCase, index) => (
-                    <div key={index} className="border border-gray-600 rounded-lg p-4 bg-gray-700/50">
+                    <div key={index} className="border border-blue-200 rounded-lg p-4 bg-blue-50">
                       <div className="flex justify-between items-center mb-3">
-                        <span className="font-medium text-white">Test Case {index + 1}</span>
+                        <span className="font-medium text-black">Test Case {index + 1}</span>
                         <Button
                           type="button"
                           variant="outline"
@@ -597,14 +598,14 @@ export default function ProblemManagement() {
                             updated.splice(index, 1);
                             setEditingProblem({ ...editingProblem, testCases: updated });
                           }}
-                          className="text-red-400 border-red-400 hover:bg-red-900/20"
+                          className="text-red-600 border-red-500 hover:bg-red-50"
                         >
                           Remove
                         </Button>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <Label className="text-gray-400 text-sm">Input</Label>
+                          <Label className="text-black/70 text-sm">Input</Label>
                           <Textarea
                             value={JSON.stringify(testCase.input, null, 2)}
                             onChange={(e) => {
@@ -616,12 +617,12 @@ export default function ProblemManagement() {
                                 // Invalid JSON, don't update
                               }
                             }}
-                            className="bg-gray-800 border-gray-600 text-white text-sm font-mono"
+                            className="bg-white border-blue-200 text-black text-sm font-mono"
                             rows={4}
                           />
                         </div>
                         <div>
-                          <Label className="text-gray-400 text-sm">Expected Output</Label>
+                          <Label className="text-black/70 text-sm">Expected Output</Label>
                           <Textarea
                             value={JSON.stringify(testCase.output, null, 2)}
                             onChange={(e) => {
@@ -633,12 +634,12 @@ export default function ProblemManagement() {
                                 // Invalid JSON, don't update
                               }
                             }}
-                            className="bg-gray-800 border-gray-600 text-white text-sm font-mono"
+                            className="bg-white border-blue-200 text-black text-sm font-mono"
                             rows={4}
                           />
                         </div>
                       </div>
-                      <div className="mt-2 text-xs text-gray-500">
+                      <div className="mt-2 text-xs text-black/70">
                         <strong>Preview:</strong> Input: {JSON.stringify(testCase.input)} → Output: {JSON.stringify(testCase.output)}
                       </div>
                     </div>
@@ -653,7 +654,7 @@ export default function ProblemManagement() {
                         testCases: [...(editingProblem.testCases || []), newTestCase]
                       });
                     }}
-                    className="w-full border-gray-600 text-gray-300 hover:bg-gray-700"
+                    className="w-full border-blue-200 text-black hover:bg-blue-50"
                   >
                     Add Test Case
                   </Button>
@@ -663,13 +664,13 @@ export default function ProblemManagement() {
               {/* Edit Solutions */}
               {editingProblem.solutions && (
                 <div className="space-y-4">
-                  <h3 className="text-lg font-semibold text-white">Edit Solutions</h3>
+                  <h3 className="text-lg font-semibold text-black">Edit Solutions</h3>
                   <div className="space-y-4">
                     {Object.entries(editingProblem.solutions).map(([lang, code]) => (
                       <div key={lang} className="space-y-2">
                         <div className="flex items-center gap-2">
-                          <Label className="text-white capitalize font-medium">{lang}</Label>
-                          <span className="text-xs bg-blue-600 text-blue-200 px-2 py-1 rounded">
+                          <Label className="text-black capitalize font-medium">{lang}</Label>
+                          <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
                             Editable
                           </span>
                         </div>
@@ -677,7 +678,7 @@ export default function ProblemManagement() {
                           value={editingSolutions[lang] || code || ''}
                           language={lang === 'cpp' ? 'cpp' : lang === 'js' ? 'javascript' : lang}
                           height="300px"
-                          className="bg-gray-800"
+                          className="bg-white"
                           onChange={(newValue) => {
                             setEditingSolutions(prev => ({
                               ...prev,
@@ -688,13 +689,13 @@ export default function ProblemManagement() {
                       </div>
                     ))}
                   </div>
-                  <div className="text-xs text-gray-400 bg-gray-800 p-3 rounded">
+                  <div className="text-xs text-black/70 bg-blue-50 p-3 rounded">
                     <strong>Note:</strong> You can edit the solutions directly. Changes will be saved to the database when you click &quot;Save Changes&quot;.
                   </div>
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-4 border-t border-gray-600">
+              <div className="flex justify-end gap-2 pt-4 border-t border-blue-200">
                 <Button
                   onClick={() => {
                     setEditDialogOpen(false);
@@ -702,14 +703,15 @@ export default function ProblemManagement() {
                     setEditingSolutions({});
                   }}
                   variant="outline"
-                  className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+                  className="bg-white border-blue-200 text-black hover:bg-blue-50"
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleSaveEdits}
                   disabled={isSaving}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                  className="text-white"
+                  style={{ backgroundColor: '#2599D4' }}
                 >
                   {isSaving ? 'Saving...' : 'Save Changes'}
                 </Button>

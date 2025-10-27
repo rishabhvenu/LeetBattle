@@ -4,6 +4,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
 import { Crown, Scale, Home, Swords } from "lucide-react";
 import { getAvatarUrl } from "@/lib/utils";
 import { Button } from "./ui/button";
+// Image import removed - using regular img tags instead
 
 interface PlayerInfo {
   name: string;
@@ -101,6 +102,7 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
 
   // Helper function to render profile picture
   const renderProfilePicture = (avatar: string | null, initials: string, isWinner: boolean, isDraw: boolean) => {
+    const avatarUrl = getAvatarUrl(avatar);
     const avatarClasses = `w-24 h-24 ${
       isWinner
         ? "ring-4 ring-yellow-400 shadow-lg shadow-yellow-400/50"
@@ -111,16 +113,14 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
 
     return (
       <Avatar className={avatarClasses}>
-        <AvatarImage
-          src={getAvatarUrl(avatar)}
-          alt="Profile"
-        />
-        <AvatarFallback className="bg-gray-200">
-          <img 
-            src="/placeholder_avatar.png"
-            alt="Profile placeholder"
-            className="w-full h-full object-cover"
+        {avatarUrl ? (
+          <AvatarImage
+            src={avatarUrl}
+            alt="Profile"
           />
+        ) : null}
+        <AvatarFallback className="bg-gray-200 text-gray-600 font-bold text-xl">
+          {initials}
         </AvatarFallback>
       </Avatar>
     );
@@ -209,6 +209,8 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
               <img
                 src="/sword-left.svg"
                 alt="Left sword"
+                width={96}
+                height={192}
                 className={`w-full h-full ${
                   player1.isWinner || isDraw
                     ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"
@@ -223,6 +225,8 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
               <img
                 src="/sword-right.svg"
                 alt="Right sword"
+                width={96}
+                height={192}
                 className={`w-full h-full ${
                   player2.isWinner || isDraw
                     ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"

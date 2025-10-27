@@ -13,6 +13,7 @@ import { toast } from 'react-toastify';
 import { getUsers, getTotalUsersCount, getUserById, updateUser, User } from '@/lib/actions';
 import { ChevronLeft, ChevronRight, Search, Edit, Loader2, Users } from 'lucide-react';
 import { getAvatarUrl } from '@/lib/utils';
+// Image import removed - using regular img tags instead
 
 type SearchType = 'username' | 'id';
 
@@ -154,13 +155,11 @@ export default function UserManagement() {
   // Prevent hydration issues by not rendering until mounted
   if (!mounted) {
     return (
-      <div className="min-h-screen bg-gray-900 p-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="animate-pulse">
-            <div className="h-8 bg-gray-700 rounded w-1/4 mb-6"></div>
-            <div className="h-4 bg-gray-700 rounded w-1/2 mb-4"></div>
-            <div className="h-4 bg-gray-700 rounded w-3/4"></div>
-          </div>
+      <div className="space-y-6">
+        <div className="animate-pulse">
+          <div className="h-8 bg-white/60 rounded w-1/4 mb-6"></div>
+          <div className="h-4 bg-white/60 rounded w-1/2 mb-4"></div>
+          <div className="h-4 bg-white/60 rounded w-3/4"></div>
         </div>
       </div>
     );
@@ -169,17 +168,20 @@ export default function UserManagement() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">User Management</h2>
-        <p className="text-gray-400">Search, view, and edit user accounts</p>
+        <h2 className="text-2xl font-bold text-black mb-2 flex items-center gap-2">
+          <Users className="h-6 w-6" style={{ color: '#2599D4' }} />
+          User Management
+        </h2>
+        <p className="text-black/70">Search, view, and edit user accounts</p>
       </div>
 
-      <Card className="bg-gray-800 border-gray-700">
+      <Card className="bg-white/90 border-blue-200 shadow-lg hover:shadow-xl transition-shadow duration-300">
         <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <Users className="h-5 w-5" />
+          <CardTitle className="text-black flex items-center gap-2">
+            <Users className="h-5 w-5" style={{ color: '#2599D4' }} />
             Users ({totalCount})
           </CardTitle>
-          <CardDescription className="text-gray-400">
+          <CardDescription className="text-black/70">
             Manage user accounts and statistics
           </CardDescription>
         </CardHeader>
@@ -187,20 +189,20 @@ export default function UserManagement() {
           {/* Search Section */}
           <div className="flex gap-4 items-end">
             <div className="flex-1">
-              <Label htmlFor="search" className="text-white">Search</Label>
+              <Label htmlFor="search" className="text-black">Search</Label>
               <Input
                 id="search"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Enter username or user ID..."
-                className="bg-gray-700 border-gray-600 text-white"
+                className="bg-white border-blue-200 text-black placeholder:text-black/60"
                 onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
               />
             </div>
             <div className="w-40">
-              <Label htmlFor="searchType" className="text-white">Search By</Label>
+              <Label htmlFor="searchType" className="text-black">Search By</Label>
               <Select value={searchType} onValueChange={(value: SearchType) => setSearchType(value)}>
-                <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
+                <SelectTrigger className="bg-white border-blue-200 text-black">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -211,7 +213,8 @@ export default function UserManagement() {
             </div>
             <Button
               onClick={handleSearch}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="text-white"
+              style={{ backgroundColor: '#2599D4' }}
             >
               <Search className="h-4 w-4 mr-2" />
               Search
@@ -221,18 +224,18 @@ export default function UserManagement() {
           {/* Users Table */}
           {isLoading ? (
             <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
-              <p className="text-gray-400 mt-2">Loading users...</p>
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 mx-auto" style={{ borderColor: '#2599D4' }}></div>
+              <p className="text-black/70 mt-2">Loading users...</p>
             </div>
           ) : users.length === 0 ? (
             <div className="text-center py-8">
-              <p className="text-gray-400">No users found</p>
+              <p className="text-black/70">No users found</p>
             </div>
           ) : (
             <>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left text-white">
-                  <thead className="text-xs uppercase bg-gray-700 text-gray-300">
+                <table className="w-full text-sm text-left text-black">
+                  <thead className="text-xs uppercase bg-white/90 text-black/70">
                     <tr>
                       <th scope="col" className="px-6 py-3">User</th>
                       <th scope="col" className="px-6 py-3">Email</th>
@@ -245,7 +248,7 @@ export default function UserManagement() {
                   </thead>
                   <tbody>
                     {users.map((user) => (
-                      <tr key={user._id} className="bg-gray-700/50 border-b border-gray-600 hover:bg-gray-700/70">
+                      <tr key={user._id} className="bg-white/90 border-b border-blue-200 hover:bg-blue-50">
                         <td className="px-6 py-4 flex items-center">
                           <Avatar className="h-8 w-8 mr-3">
                             <AvatarImage
@@ -256,24 +259,26 @@ export default function UserManagement() {
                               <img 
                                 src="/placeholder_avatar.png"
                                 alt="Profile placeholder"
+                                width={40}
+                                height={40}
                                 className="w-full h-full object-cover"
                               />
                             </AvatarFallback>
                           </Avatar>
                           <div>
-                            <div className="font-medium text-white">{user.username}</div>
-                            <div className="text-xs text-gray-400">
+                            <div className="font-medium text-black">{user.username}</div>
+                            <div className="text-xs text-black/70">
                               {user.profile?.firstName} {user.profile?.lastName}
                             </div>
                           </div>
                         </td>
-                        <td className="px-6 py-4 text-gray-300">{user.email}</td>
-                        <td className="px-6 py-4 text-gray-300">{user.stats?.rating?.toLocaleString() || 0}</td>
-                        <td className="px-6 py-4 text-gray-300">{user.stats?.totalMatches || 0}</td>
-                        <td className="px-6 py-4 text-gray-300">
+                        <td className="px-6 py-4 text-black/70">{user.email}</td>
+                        <td className="px-6 py-4 text-black/70">{user.stats?.rating?.toLocaleString() || 0}</td>
+                        <td className="px-6 py-4 text-black/70">{user.stats?.totalMatches || 0}</td>
+                        <td className="px-6 py-4 text-black/70">
                           {user.stats?.wins || 0}/{user.stats?.losses || 0}
                         </td>
-                        <td className="px-6 py-4 text-gray-400">
+                        <td className="px-6 py-4 text-black/70">
                           {new Date(user.createdAt).toLocaleDateString()}
                         </td>
                         <td className="px-6 py-4">
@@ -281,7 +286,7 @@ export default function UserManagement() {
                             onClick={() => handleEditUser(user._id!)}
                             size="sm"
                             variant="outline"
-                            className="border-gray-600 text-gray-300 hover:bg-gray-600"
+                            className="border-blue-200 text-black hover:bg-blue-50"
                           >
                             <Edit className="h-3 w-3 mr-1" />
                             Edit
@@ -300,19 +305,19 @@ export default function UserManagement() {
                     onClick={() => handlePageChange(currentPage - 1)}
                     disabled={currentPage === 1}
                     variant="outline"
-                    className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                    className="border-blue-200 text-black hover:bg-blue-50"
                   >
                     <ChevronLeft className="h-4 w-4 mr-2" />
                     Previous
                   </Button>
-                  <span className="text-gray-400">
+                  <span className="text-black/70">
                     Page {currentPage} of {totalPages} ({totalCount} total users)
                   </span>
                   <Button
                     onClick={() => handlePageChange(currentPage + 1)}
                     disabled={currentPage === totalPages}
                     variant="outline"
-                    className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                    className="border-blue-200 text-black hover:bg-blue-50"
                   >
                     Next
                     <ChevronRight className="h-4 w-4 ml-2" />
@@ -326,10 +331,10 @@ export default function UserManagement() {
 
       {/* Edit User Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto bg-gray-800 border-gray-700">
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto bg-white border-blue-200">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit User</DialogTitle>
-            <DialogDescription className="text-gray-400">
+            <DialogTitle className="text-black">Edit User</DialogTitle>
+            <DialogDescription className="text-black/70">
               Modify user profile and statistics
             </DialogDescription>
           </DialogHeader>
@@ -338,63 +343,63 @@ export default function UserManagement() {
             <div className="space-y-6">
               {/* Profile Section */}
               <div>
-                <h3 className="text-lg font-semibold text-white mb-4">Profile Information</h3>
+                <h3 className="text-lg font-semibold text-black mb-4">Profile Information</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="username" className="text-white">Username</Label>
+                    <Label htmlFor="username" className="text-black">Username</Label>
                     <Input
                       id="username"
                       value={editingUser.username}
                       onChange={(e) => updateEditingUser('username', e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="email" className="text-white">Email</Label>
+                    <Label htmlFor="email" className="text-black">Email</Label>
                     <Input
                       id="email"
                       type="email"
                       value={editingUser.email}
                       onChange={(e) => updateEditingUser('email', e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="firstName" className="text-white">First Name</Label>
+                    <Label htmlFor="firstName" className="text-black">First Name</Label>
                     <Input
                       id="firstName"
                       value={editingUser.profile?.firstName || ''}
                       onChange={(e) => updateEditingUser('profile.firstName', e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="lastName" className="text-white">Last Name</Label>
+                    <Label htmlFor="lastName" className="text-black">Last Name</Label>
                     <Input
                       id="lastName"
                       value={editingUser.profile?.lastName || ''}
                       onChange={(e) => updateEditingUser('profile.lastName', e.target.value)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <Label htmlFor="avatar" className="text-white">Avatar URL</Label>
+                    <Label htmlFor="avatar" className="text-black">Avatar URL</Label>
                     <Input
                       id="avatar"
                       value={editingUser.profile?.avatar || ''}
                       onChange={(e) => updateEditingUser('profile.avatar', e.target.value)}
                       placeholder="https://example.com/avatar.jpg"
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                     />
                   </div>
                   <div className="md:col-span-2">
-                    <Label htmlFor="bio" className="text-white">Bio</Label>
+                    <Label htmlFor="bio" className="text-black">Bio</Label>
                     <Textarea
                       id="bio"
                       value={editingUser.profile?.bio || ''}
                       onChange={(e) => updateEditingUser('profile.bio', e.target.value)}
                       placeholder="User bio..."
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                       rows={3}
                     />
                   </div>
@@ -403,82 +408,83 @@ export default function UserManagement() {
 
               {/* Stats Section */}
               <div>
-                <h3 className="text-lg font-semibold text-white mb-4">Statistics</h3>
+                <h3 className="text-lg font-semibold text-black mb-4">Statistics</h3>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div>
-                    <Label htmlFor="rating" className="text-white">Rating</Label>
+                    <Label htmlFor="rating" className="text-black">Rating</Label>
                     <Input
                       id="rating"
                       type="number"
                       value={editingUser.stats?.rating || 0}
                       onChange={(e) => updateEditingUser('stats.rating', parseInt(e.target.value) || 0)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                       min="0"
                       max="3000"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="totalMatches" className="text-white">Total Matches</Label>
+                    <Label htmlFor="totalMatches" className="text-black">Total Matches</Label>
                     <Input
                       id="totalMatches"
                       type="number"
                       value={editingUser.stats?.totalMatches || 0}
                       onChange={(e) => updateEditingUser('stats.totalMatches', parseInt(e.target.value) || 0)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                       min="0"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="wins" className="text-white">Wins</Label>
+                    <Label htmlFor="wins" className="text-black">Wins</Label>
                     <Input
                       id="wins"
                       type="number"
                       value={editingUser.stats?.wins || 0}
                       onChange={(e) => updateEditingUser('stats.wins', parseInt(e.target.value) || 0)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                       min="0"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="losses" className="text-white">Losses</Label>
+                    <Label htmlFor="losses" className="text-black">Losses</Label>
                     <Input
                       id="losses"
                       type="number"
                       value={editingUser.stats?.losses || 0}
                       onChange={(e) => updateEditingUser('stats.losses', parseInt(e.target.value) || 0)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                       min="0"
                     />
                   </div>
                   <div>
-                    <Label htmlFor="draws" className="text-white">Draws</Label>
+                    <Label htmlFor="draws" className="text-black">Draws</Label>
                     <Input
                       id="draws"
                       type="number"
                       value={editingUser.stats?.draws || 0}
                       onChange={(e) => updateEditingUser('stats.draws', parseInt(e.target.value) || 0)}
-                      className="bg-gray-700 border-gray-600 text-white"
+                      className="bg-white border-blue-200 text-black"
                       min="0"
                     />
                   </div>
                 </div>
               </div>
 
-              <div className="flex justify-end gap-2 pt-4 border-t border-gray-600">
+              <div className="flex justify-end gap-2 pt-4 border-t border-blue-200">
                 <Button
                   onClick={() => {
                     setEditDialogOpen(false);
                     setEditingUser(null);
                   }}
                   variant="outline"
-                  className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+                  className="bg-white border-blue-200 text-black hover:bg-blue-50"
                 >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleSaveUser}
                   disabled={isSaving}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                  className="text-white"
+                  style={{ backgroundColor: '#2599D4' }}
                 >
                   {isSaving ? (
                     <>

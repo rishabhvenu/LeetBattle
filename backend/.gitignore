@@ -22,3 +22,5 @@ Thumbs.db
 # Node modules (if any)
 node_modules/
 
+# Production environment file
+.env.production

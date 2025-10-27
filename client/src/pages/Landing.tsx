@@ -1,50 +1,44 @@
 'use client';
 
 import React, { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import CountUp from "react-countup";
+import { getGeneralStats } from "@/lib/server-actions";
+// Image import removed - using regular img tags instead
+// Logo will be referenced directly from public directory
 
 interface GlobalStats {
   activePlayers: number;
   matchesCompleted: number;
 }
 
-const Landing: React.FC<{ restHandler: any }> = ({ restHandler }) => {
+const Landing: React.FC = () => {
   const router = useRouter();
   const [stats, setStats] = useState<GlobalStats | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isNavigating, setIsNavigating] = useState(false);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        if (restHandler && restHandler.getGeneralStats) {
-          const stats = await restHandler.getGeneralStats();
-          setStats(stats);
-        } else {
-          // Mock stats if no restHandler
-          setStats({
-            activePlayers: 1250,
-            matchesCompleted: 15600,
-          });
-        }
+        const stats = await getGeneralStats();
+        setStats(stats);
       } catch (error) {
         console.error('Error fetching stats:', error);
-        // Fallback to mock stats
+        // Show loading state instead of mock data
         setStats({
-          activePlayers: 1250,
-          matchesCompleted: 15600,
+          activePlayers: 0,
+          matchesCompleted: 0,
         });
+      } finally {
+        setIsLoading(false);
       }
     };
     fetchStats();
-  }, [restHandler]);
+  }, []);
 
-  const fadeInUp = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0 },
-  };
 
   return (
     <ScrollArea className="flex-1 h-screen">
@@ -58,7 +52,7 @@ const Landing: React.FC<{ restHandler: any }> = ({ restHandler }) => {
         {/* Navbar */}
         <nav className="flex justify-between items-center pl-20 pr-20 py-6 relative z-10">
           <div className="flex items-center gap-1">
-            <img src="/logo.png" alt="LeetBattle Logo" className="w-14 h-14" />
+            <img src="/logo.png" alt="LeetBattle Logo" width={56} height={56} className="w-14 h-14" />
             <div className="text-2xl font-semibold font-mono" style={{ color: '#2599D4' }}>LeetBattle</div>
           </div>
           <button
@@ -98,23 +92,35 @@ const Landing: React.FC<{ restHandler: any }> = ({ restHandler }) => {
             >
               <div className="text-center">
                 <div className="text-4xl font-medium text-black mb-2">
-                  <CountUp
-                    end={stats ? stats.activePlayers : 0}
-                    duration={2.5}
-                    separator=","
-                  />
-                  +
+                  {isLoading ? (
+                    <div className="animate-pulse">---</div>
+                  ) : (
+                    <>
+                      <CountUp
+                        end={stats ? stats.activePlayers : 0}
+                        duration={2.5}
+                        separator=","
+                      />
+                      +
+                    </>
+                  )}
                 </div>
                 <div className="text-black/70 font-light">Active Players</div>
               </div>
               <div className="text-center">
                 <div className="text-4xl font-medium text-black mb-2">
-                  <CountUp
-                    end={stats ? stats.matchesCompleted : 0}
-                    duration={2.5}
-                    separator=","
-                  />
-                  +
+                  {isLoading ? (
+                    <div className="animate-pulse">---</div>
+                  ) : (
+                    <>
+                      <CountUp
+                        end={stats ? stats.matchesCompleted : 0}
+                        duration={2.5}
+                        separator=","
+                      />
+                      +
+                    </>
+                  )}
                 </div>
                 <div className="text-black/70 font-light">Challenges Completed</div>
               </div>
@@ -129,13 +135,32 @@ const Landing: React.FC<{ restHandler: any }> = ({ restHandler }) => {
           transition={{ duration: 0.6, delay: 0.4 }}
           className="pb-16 relative z-10"
         >
-          <div className="max-w-4xl mx-auto px-6 text-center">
-            <button
-              onClick={() => router.push("/register")}
-              className="text-black hover:text-gray-700 transition-colors duration-300 text-xl font-medium underline decoration-black/30 hover:decoration-black/70 underline-offset-4"
-            >
-              Get Started
-            </button>
+          <div className="max-w-4xl mx-auto px-6 text-center space-y-4">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
+              <button
+                onClick={() => router.push("/register")}
+                className="text-black hover:text-gray-700 transition-colors duration-300 text-xl font-medium underline decoration-black/30 hover:decoration-black/70 underline-offset-4"
+              >
+                Get Started
+              </button>
+              <span className="text-gray-400 hidden sm:block">or</span>
+              <button
+                onClick={() => {
+                  if (!isNavigating) {
+                    setIsNavigating(true);
+                    router.push("/queue");
+                  }
+                }}
+                disabled={isNavigating}
+                className="text-white px-6 py-2 rounded-full transition-colors duration-300 text-lg font-medium shadow-sm hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{ backgroundColor: '#2599D4' }}
+              >
+                {isNavigating ? 'Loading...' : 'Play a Match'}
+              </button>
+            </div>
+            <p className="text-sm text-gray-500">
+              Play one match to see how it works!
+            </p>
           </div>
         </motion.div>
       </div>

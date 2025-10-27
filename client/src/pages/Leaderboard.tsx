@@ -14,11 +14,11 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { User } from "@/types/rest";
-import Link from "next/link";
 import { getAvatarUrl } from "@/lib/utils";
 import { getLeaderboardData } from "@/lib/actions";
+// Image import removed - using regular img tags instead
 
-interface LeaderboardProps {}
+type LeaderboardProps = Record<string, never>;
 
 function LeaderboardTable({
   data,
@@ -89,23 +89,19 @@ function LeaderboardTable({
                         <img 
                           src="/placeholder_avatar.png"
                           alt="Profile placeholder"
+                          width={40}
+                          height={40}
                           className="w-full h-full object-cover"
                         />
                       </AvatarFallback>
                     </Avatar>
-                    <Link
-                      href={`/profile/${user._id}`}
-                      className="hover:underline transition-colors duration-200"
-                      style={{ color: '#2599D4' }}
-                    >
+                    <span>
                       {user.username}
-                    </Link>
+                    </span>
                   </td>
-                  <td className="px-6 py-4">{user.rating.toLocaleString()}</td>
-                  <td className="px-6 py-4">{user.stats.gamesWon}</td>
-                  <td className="px-6 py-4">
-                    {user.stats.gamesPlayed - user.stats.gamesWon}
-                  </td>
+                  <td className="px-6 py-4">{user.rating?.toLocaleString() || '0'}</td>
+                  <td className="px-6 py-4">{user.stats?.gamesWon || 0}</td>
+                  <td className="px-6 py-4">{user.stats?.gamesLost || 0}</td>
                 </motion.tr>
               );
             })}

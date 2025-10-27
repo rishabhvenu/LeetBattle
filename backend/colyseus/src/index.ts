@@ -7,21 +7,33 @@ import cors from '@koa/cors';
 import { MongoClient, ObjectId } from 'mongodb';
 import { QueueRoom } from './rooms/QueueRoom';
 import { MatchRoom } from './rooms/MatchRoom';
-import { startMatchmaker } from './workers/matchmaker';
+import { PrivateRoom } from './rooms/PrivateRoom';
+// Matchmaking is now integrated into QueueRoom
 import { enqueueUser, dequeueUser, queueSize } from './lib/queue';
 import { getRedis, RedisKeys } from './lib/redis';
+import Redis from 'ioredis';
 import jwt from 'jsonwebtoken';
 import OpenAI from 'openai';
-import AWS from 'aws-sdk';
+// import AWS from 'aws-sdk'; // Commented out for now to fix build
 import { 
   rateLimitMiddleware, 
   queueLimiter, 
   matchLimiter, 
   adminLimiter 
 } from './lib/rateLimiter';
+import { internalAuthMiddleware, botAuthMiddleware, combinedAuthMiddleware, adminAuthMiddleware } from './lib/internalAuth';
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
 const DB_NAME = 'codeclashers';
+const isProduction = process.env.NODE_ENV === 'production';
+
+function resolveReservationSecret(): string {
+  const secret = process.env.COLYSEUS_RESERVATION_SECRET;
+  if (!secret || (secret === 'dev_secret' && isProduction)) {
+    throw new Error('COLYSEUS_RESERVATION_SECRET must be configured in production.');
+  }
+  return secret || 'dev_secret';
+}
 
 // MongoDB client singleton
 let mongoClient: MongoClient | null = null;
@@ -43,41 +55,455 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// AWS S3 (MinIO) client
-const s3 = new AWS.S3({
-  endpoint: process.env.S3_ENDPOINT || 'http://codeclashers-minio:9000',
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin',
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin123',
-  s3ForcePathStyle: true,
-  signatureVersion: 'v4',
-  region: process.env.AWS_REGION || 'us-east-1',
-});
+// AWS S3 (MinIO) client - commented out for now
+// const s3 = new AWS.S3({
+//   endpoint: process.env.S3_ENDPOINT || 'http://codeclashers-minio:9000',
+//   accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin',
+//   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin123',
+//   s3ForcePathStyle: true,
+//   signatureVersion: 'v4',
+//   region: process.env.AWS_REGION || 'us-east-1',
+// });
 
 const app = new Koa();
 const router = new Router();
+
+// Guest user endpoints
+router.post('/guest/match/create', async (ctx) => {
+  try {
+    const { findAvailableBotForGuest, createMatch } = await import('./lib/matchCreation');
+    const redis = getRedis();
+    
+    // Find an available bot
+    const bot = await findAvailableBotForGuest();
+    if (!bot) {
+      ctx.status = 404;
+      ctx.body = { success: false, error: 'No bots available for guest match' };
+      return;
+    }
+    
+    // Generate guest user ID
+    const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Create match between guest and bot
+    const matchResult = await createMatch(
+      { userId: guestId, rating: 1200, username: 'Guest' },
+      bot,
+      undefined, // Let createMatch calculate difficulty based on ratings
+      false // Not private
+    );
+    
+    // Store guest session in Redis with 7-day TTL
+    await redis.setex(RedisKeys.guestSessionKey(guestId), 7 * 24 * 3600, JSON.stringify({
+      guestId,
+      matchId: matchResult.matchId,
+      roomId: matchResult.roomId,
+      createdAt: Date.now()
+    }));
+    
+    ctx.body = {
+      success: true,
+      guestId,
+      matchId: matchResult.matchId,
+      roomId: matchResult.roomId,
+      bot: {
+        username: bot.username,
+        rating: bot.rating
+      }
+    };
+  } catch (error: any) {
+    console.error('Error creating guest match:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to create guest match' };
+  }
+});
+
+router.get('/guest/check', async (ctx) => {
+  try {
+    const guestId = ctx.request.query.guestId as string;
+    if (!guestId) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'guestId required' };
+      return;
+    }
+    
+    const redis = getRedis();
+    
+    // Check if guest has completed a match (has match data stored)
+    const matchData = await redis.get(RedisKeys.guestMatchKey(guestId));
+    
+    ctx.body = {
+      success: true,
+      hasPlayed: !!matchData
+    };
+  } catch (error: any) {
+    console.error('Error checking guest session:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to check guest session' };
+  }
+});
+
+router.post('/guest/match/claim', async (ctx) => {
+  try {
+    const { guestId, userId } = ctx.request.body as { guestId: string; userId: string };
+    if (!guestId || !userId) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'guestId and userId required' };
+      return;
+    }
+    
+    const redis = getRedis();
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    
+    // Get guest session data
+    const sessionData = await redis.get(RedisKeys.guestSessionKey(guestId));
+    if (!sessionData) {
+      ctx.status = 404;
+      ctx.body = { success: false, error: 'Guest session not found' };
+      return;
+    }
+    
+    const session = JSON.parse(sessionData);
+    const matchId = session.matchId;
+    
+    // Get guest match data from Redis
+    const matchData = await redis.get(RedisKeys.guestMatchKey(guestId));
+    if (!matchData) {
+      ctx.status = 404;
+      ctx.body = { success: false, error: 'Guest match data not found' };
+      return;
+    }
+    
+    const match = JSON.parse(matchData);
+    
+    // Create match document in MongoDB
+    const matchesCollection = db.collection('matches');
+    const matchDoc = {
+      _id: new ObjectId(matchId),
+      playerIds: [new ObjectId(userId), new ObjectId(match.opponentId)],
+      problemId: new ObjectId(match.problemId),
+      submissionIds: match.submissions || [],
+      winnerUserId: match.result === 'win' ? new ObjectId(userId) : 
+                   match.result === 'loss' ? new ObjectId(match.opponentId) : null,
+      endedAt: new Date(match.completedAt),
+      startedAt: new Date(match.completedAt - 45 * 60 * 1000), // Assume 45 min match
+      createdAt: new Date(match.completedAt - 45 * 60 * 1000),
+      mode: 'public',
+      status: 'finished' as const
+    };
+    
+    await matchesCollection.insertOne(matchDoc);
+    
+    // Update user document with matchId and stats
+    const usersCollection = db.collection('users');
+    
+    // First, ensure the user has a matchIds field
+    await usersCollection.updateOne(
+      { _id: new ObjectId(userId), matchIds: { $exists: false } },
+      { $set: { matchIds: [] } }
+    );
+    
+    // Now update with match data
+    const updateFields: any = {
+      $inc: { 
+        'stats.totalMatches': 1
+      },
+      $addToSet: { matchIds: new ObjectId(matchId) }
+    };
+    
+    // Add win/loss specific updates
+    if (match.result === 'win') {
+      updateFields.$inc['stats.wins'] = 1;
+      updateFields.$inc['stats.rating'] = 25; // Simple rating gain for guest match
+    } else if (match.result === 'loss') {
+      updateFields.$inc['stats.losses'] = 1;
+      updateFields.$inc['stats.rating'] = -15; // Simple rating loss for guest match
+    }
+    
+    await usersCollection.updateOne(
+      { _id: new ObjectId(userId) },
+      updateFields
+    );
+    
+    // Clean up guest data
+    await redis.del(RedisKeys.guestSessionKey(guestId));
+    await redis.del(RedisKeys.guestMatchKey(guestId));
+    
+    ctx.body = {
+      success: true,
+      message: 'Guest match claimed successfully'
+    };
+  } catch (error: any) {
+    console.error('Error claiming guest match:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to claim guest match' };
+  }
+});
+
+// Bot rotation endpoints
+router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) => {
+  try {
+    const { maxDeployed } = ctx.request.body as { maxDeployed: number };
+    
+    if (typeof maxDeployed !== 'number' || maxDeployed < 0) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'maxDeployed must be a non-negative number' };
+      return;
+    }
+    
+    // Create a separate Redis connection for admin operations
+    const redis = new Redis({
+      host: process.env.REDIS_HOST || '127.0.0.1',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD,
+      maxRetriesPerRequest: 3,
+    });
+    
+    // Get total bots count
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    const bots = db.collection('bots');
+    const totalBots = await bots.countDocuments({});
+    
+    // Update rotation config
+    await redis.hset(RedisKeys.botsRotationConfig, {
+      maxDeployed: maxDeployed.toString(),
+      totalBots: totalBots.toString()
+    });
+    
+    // Notify bot service to update rotation
+    await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ 
+      type: 'rotateConfig', 
+      maxDeployed 
+    }));
+    
+    ctx.body = {
+      success: true,
+      message: `Rotation config updated: maxDeployed = ${maxDeployed}`
+    };
+  } catch (error: any) {
+    console.error('Error updating rotation config:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to update rotation config' };
+  }
+});
+
+router.get('/admin/bots/rotation/status', adminAuthMiddleware(), async (ctx) => {
+  try {
+    // Create a separate Redis connection for admin operations
+    const redis = new Redis({
+      host: process.env.REDIS_HOST || '127.0.0.1',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD,
+      maxRetriesPerRequest: 3,
+    });
+    
+    // Test Redis connection first
+    await redis.ping();
+    console.log('Redis connection successful');
+    
+    // Get rotation config, initialize if it doesn't exist
+    const configExists = await redis.exists(RedisKeys.botsRotationConfig);
+    let config = {};
+    
+    if (!configExists) {
+      // Initialize rotation config with default values
+      const mongoClient = await getMongoClient();
+      const db = mongoClient.db(DB_NAME);
+      const bots = db.collection('bots');
+      const totalBots = await bots.countDocuments({});
+      
+      await redis.hset(RedisKeys.botsRotationConfig, {
+        maxDeployed: '5',
+        totalBots: totalBots.toString()
+      });
+      
+      config = { maxDeployed: '5', totalBots: totalBots.toString() };
+    } else {
+      config = await redis.hgetall(RedisKeys.botsRotationConfig);
+    }
+    
+    const maxDeployed = parseInt((config as any).maxDeployed || '5');
+    const totalBots = parseInt((config as any).totalBots || '0');
+    
+    // Get current deployed count
+    const deployedCount = await redis.scard(RedisKeys.botsDeployedSet);
+    
+    // Get deployed bot IDs
+    const deployedBots = await redis.smembers(RedisKeys.botsDeployedSet);
+    
+    // Get rotation queue
+    const rotationQueue = await redis.lrange(RedisKeys.botsRotationQueue, 0, -1);
+    
+    // Get active bots count
+    const activeCount = await redis.scard(RedisKeys.botsActiveSet);
+    
+    // Get queued players count
+    const queuedPlayersCount = await redis.scard(RedisKeys.queuedPlayersSet);
+    
+    ctx.body = {
+      success: true,
+      status: {
+        maxDeployed,
+        totalBots,
+        deployedCount,
+        deployedBots, // Add deployed bot IDs
+        activeCount,
+        rotationQueue,
+        queueLength: rotationQueue.length,
+        queuedPlayersCount,
+        targetDeployed: maxDeployed + queuedPlayersCount
+      }
+    };
+  } catch (error: any) {
+    console.error('Error getting rotation status:', error);
+    console.error('Error details:', error.message, error.stack);
+    ctx.status = 500;
+    ctx.body = { success: false, error: `Failed to get rotation status: ${error.message}` };
+  }
+});
+
+// Initialize rotation system endpoint
+router.post('/admin/bots/rotation/init', adminAuthMiddleware(), async (ctx) => {
+  try {
+    // Create a separate Redis connection for admin operations
+    const redis = new Redis({
+      host: process.env.REDIS_HOST || '127.0.0.1',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD,
+      maxRetriesPerRequest: 3,
+    });
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    const bots = db.collection('bots');
+    
+    // Get all bots
+    const allBots = await bots.find({}).toArray();
+    const totalBots = allBots.length;
+    
+    // Clear and rebuild rotation queue
+    await redis.del(RedisKeys.botsRotationQueue);
+    
+    // Add undeployed bots to rotation queue
+    const undeployedBots = allBots.filter(bot => !bot.deployed);
+    for (const bot of undeployedBots) {
+      await redis.rpush(RedisKeys.botsRotationQueue, bot._id.toString());
+    }
+    
+    // Initialize or update rotation config
+    await redis.hset(RedisKeys.botsRotationConfig, {
+      maxDeployed: '5',
+      totalBots: totalBots.toString()
+    });
+    
+    // Notify bot service to refresh
+    await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ type: 'deploy' }));
+    
+    ctx.body = {
+      success: true,
+      message: `Rotation system initialized with ${totalBots} total bots, ${undeployedBots.length} in queue`
+    };
+  } catch (error: any) {
+    console.error('Error initializing rotation system:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to initialize rotation system' };
+  }
+});
+
 app.use(bodyParser());
-app.use(cors({ origin: '*', allowMethods: ['GET','POST','OPTIONS'], allowHeaders: ['Content-Type','Authorization'] }));
+app.use(cors({ 
+  origin: process.env.CORS_ORIGIN || 'http://localhost:3000', 
+  allowMethods: ['GET','POST','PUT','DELETE','OPTIONS'], 
+  allowHeaders: ['Content-Type','Authorization','X-Internal-Secret','X-Bot-Secret','X-Service-Name','Cookie'],
+  credentials: true 
+}));
 app.use(router.routes());
 app.use(router.allowedMethods());
 
 // Queue endpoints with rate limiting
-router.post('/queue/enqueue', rateLimitMiddleware(queueLimiter), async (ctx) => {
+router.post('/queue/enqueue', combinedAuthMiddleware(), async (ctx) => {
   const { userId, rating } = ctx.request.body as { userId: string; rating: number };
   if (!userId || typeof rating !== 'number') { ctx.status = 400; ctx.body = { error: 'userId and rating required' }; return; }
   await enqueueUser(userId, rating);
+  
+  // Publish player queued event for bot rotation
+  const redis = getRedis();
+  await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ 
+    type: 'playerQueued', 
+    playerId: userId 
+  }));
+  
   ctx.body = { success: true };
 });
 
-router.post('/queue/dequeue', rateLimitMiddleware(queueLimiter), async (ctx) => {
+router.post('/queue/dequeue', combinedAuthMiddleware(), async (ctx) => {
   const { userId } = ctx.request.body as { userId: string };
   if (!userId) { ctx.status = 400; ctx.body = { error: 'userId required' }; return; }
   await dequeueUser(userId);
+  
+  // Publish player dequeued event for bot rotation
+  const redis = getRedis();
+  await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ 
+    type: 'playerDequeued', 
+    playerId: userId 
+  }));
+  
   ctx.body = { success: true };
 });
 
 router.get('/queue/size', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const size = await queueSize();
   ctx.body = { size };
+});
+
+// General statistics endpoint
+router.get('/global/general-stats', rateLimitMiddleware(queueLimiter), async (ctx) => {
+  try {
+    const redis = getRedis();
+    const cacheKey = 'global:general-stats';
+    
+    // Try to get cached stats first (cache for 30 seconds)
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      ctx.body = JSON.parse(cached);
+      return;
+    }
+    
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    
+    // Get current queue size (includes players, bots, and guests)
+    const queueSize = await redis.zcard(RedisKeys.eloQueue);
+    
+    // Get active matches count
+    const activeMatches = await redis.scard(RedisKeys.activeMatchesSet);
+    
+    // Each active match has 2 players, so total players in matches = activeMatches * 2
+    // Total active players = players in queue + players in matches
+    const activePlayers = queueSize + (activeMatches * 2);
+    
+    // Get total matches completed
+    const matchesCompleted = await db.collection('matches').countDocuments({
+      status: 'finished'
+    });
+    
+    const stats = {
+      activePlayers,
+      matchesCompleted,
+      inProgressMatches: activeMatches,
+      inQueue: queueSize
+    };
+    
+    // Cache the results for 30 seconds to keep stats more real-time
+    await redis.setex(cacheKey, 30, JSON.stringify(stats));
+    
+    ctx.body = stats;
+  } catch (error: any) {
+    console.error('Error fetching general stats:', error);
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to fetch general statistics' };
+  }
 });
 
 router.get('/queue/reservation', rateLimitMiddleware(queueLimiter), async (ctx) => {
@@ -87,7 +513,15 @@ router.get('/queue/reservation', rateLimitMiddleware(queueLimiter), async (ctx) 
   const reservationRaw = await redis.get(`queue:reservation:${userId}`);
   if (!reservationRaw) { ctx.status = 404; ctx.body = { error: 'not_found' }; return; }
   const reservation = JSON.parse(reservationRaw);
-  const secret = process.env.COLYSEUS_RESERVATION_SECRET || 'dev_secret';
+  let secret: string;
+  try {
+    secret = resolveReservationSecret();
+  } catch (error) {
+    console.error('Reservation secret misconfigured:', error);
+    ctx.status = 500;
+    ctx.body = { error: 'reservation_secret_not_configured' };
+    return;
+  }
   const nowSec = Math.floor(Date.now() / 1000);
   const token = jwt.sign(
     {
@@ -109,7 +543,7 @@ router.post('/reserve/consume', rateLimitMiddleware(queueLimiter), async (ctx) =
   const { token } = ctx.request.body as { token: string };
   if (!token) { ctx.status = 400; ctx.body = { error: 'token required' }; return; }
   try {
-    const secret = process.env.COLYSEUS_RESERVATION_SECRET || 'dev_secret';
+    const secret = resolveReservationSecret();
     const payload = jwt.verify(token, secret) as any;
     const redis = getRedis();
     const reservationRaw = await redis.get(`queue:reservation:${payload.userId}`);
@@ -119,6 +553,11 @@ router.post('/reserve/consume', rateLimitMiddleware(queueLimiter), async (ctx) =
     if (reservation.roomId !== payload.roomId || reservation.matchId !== payload.matchId) {
       ctx.status = 403; ctx.body = { error: 'mismatch' }; return;
     }
+    
+    // Don't delete the reservation after consumption to allow page reloads
+    // Reservations will be cleaned up when the match ends or when explicitly cleared
+    // This allows both players to consume the same reservation and handle page reloads
+    
     // Return room data for direct join (no seat reservation needed)
     ctx.body = {
       reservation: {
@@ -130,6 +569,12 @@ router.post('/reserve/consume', rateLimitMiddleware(queueLimiter), async (ctx) =
       }
     };
   } catch (e) {
+    if (e instanceof Error && e.message.includes('COLYSEUS_RESERVATION_SECRET')) {
+      console.error('Reservation secret misconfigured:', e);
+      ctx.status = 500;
+      ctx.body = { error: 'reservation_secret_not_configured' };
+      return;
+    }
     ctx.status = 401;
     ctx.body = { error: 'invalid_token' };
   }
@@ -172,7 +617,7 @@ router.get('/match/submissions', rateLimitMiddleware(matchLimiter), async (ctx) 
   }
 });
 
-router.post('/queue/clear', rateLimitMiddleware(queueLimiter), async (ctx) => {
+router.post('/queue/clear', combinedAuthMiddleware(), async (ctx) => {
   const { userId } = ctx.request.body as { userId: string };
   if (!userId) { ctx.status = 400; ctx.body = { error: 'userId required' }; return; }
   const redis = getRedis();
@@ -180,7 +625,7 @@ router.post('/queue/clear', rateLimitMiddleware(queueLimiter), async (ctx) => {
   ctx.body = { success: true };
 });
 
-// Private room endpoints - simple Redis-based approach
+// DieseDie endpoint for creating rooms
 function generateRoomCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -190,7 +635,66 @@ function generateRoomCode(): string {
   return code;
 }
 
-router.post('/private/join', rateLimitMiddleware(queueLimiter), async (ctx) => {
+router.post('/private/create', async (ctx) => {
+  const { userId, username } = ctx.request.body as { userId: string; username: string };
+  if (!userId || !username) { 
+    ctx.status = 400; 
+    ctx.body = { error: 'userId and username required' }; 
+    return; 
+  }
+  
+  try {
+    const { matchMaker } = await import('colyseus');
+    const redis = getRedis();
+    
+    // Generate a unique room code
+    let normalizedCode: string;
+    let attempts = 0;
+    do {
+      normalizedCode = generateRoomCode();
+      attempts++;
+      
+      if (attempts > 10) {
+        ctx.status = 500;
+        ctx.body = { error: 'Could not generate unique room code' };
+        return;
+      }
+    } while (await redis.exists(`private:room:${normalizedCode}`));
+    
+    console.log(`Creating new room with code: ${normalizedCode}`);
+    const room = await matchMaker.create('private', { 
+      roomCode: normalizedCode, 
+      creatorId: userId, 
+      creatorUsername: username 
+    });
+    
+    console.log(`Successfully created room: ${room.room.roomId}`);
+    
+    // Store room info in Redis now that we have the roomId
+    await redis.setex(
+      `private:room:${normalizedCode}`,
+      600, // 10 minute timeout
+      JSON.stringify({
+        roomId: room.room.roomId,
+        creatorId: userId,
+        createdAt: Date.now()
+      })
+    );
+    
+    ctx.body = { 
+      success: true,
+      roomId: room.room.roomId,
+      roomCode: normalizedCode,
+      isCreator: true
+    };
+  } catch (error) {
+    console.error('Error creating private room:', error);
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to create private room' };
+  }
+});
+
+router.post('/private/join', async (ctx) => {
   const { roomCode, userId, username } = ctx.request.body as { roomCode: string; userId: string; username: string };
   if (!roomCode || !userId || !username) { 
     ctx.status = 400; 
@@ -198,58 +702,90 @@ router.post('/private/join', rateLimitMiddleware(queueLimiter), async (ctx) => {
     return; 
   }
   
-  const redis = getRedis();
-  const roomKey = `private:room:${roomCode.toUpperCase()}`;
-  const roomDataRaw = await redis.get(roomKey);
-  
-  let roomData;
-  if (!roomDataRaw) {
-    // Create new room
-    roomData = {
-      roomCode: roomCode.toUpperCase(),
-      players: [{ userId, username }],
-      creatorId: userId,
-      createdAt: Date.now(),
-      expiresAt: Date.now() + 3600000 // 1 hour
-    };
-    await redis.setex(roomKey, 3600, JSON.stringify(roomData));
-    await redis.setex(`private:user:${userId}`, 3600, roomCode.toUpperCase());
-  } else {
-    // Join existing room
-    roomData = JSON.parse(roomDataRaw);
+  try {
+    const { matchMaker } = await import('colyseus');
+    const redis = getRedis();
+    const normalizedCode = roomCode.toUpperCase();
     
-    // Check if user is already in the room
-    if (roomData.players.some((p: any) => p.userId === userId)) {
-      ctx.body = { ...roomData, isCreator: roomData.creatorId === userId };
-      return;
+    console.log(`Attempting to join private room with code: ${normalizedCode}`);
+    
+    // Check if room exists in Redis
+    const roomInfoRaw = await redis.get(`private:room:${normalizedCode}`);
+    
+    if (roomInfoRaw) {
+      // Room exists - return info for WebSocket connection
+      const roomInfo = JSON.parse(roomInfoRaw);
+      console.log(`Found existing room: ${roomInfo.roomId}`);
+      
+      // Don't use matchMaker.join() - let the client connect via WebSocket with joinById
+      ctx.body = { 
+        success: true,
+        roomId: roomInfo.roomId,
+        roomCode: normalizedCode,
+        isCreator: roomInfo.creatorId === userId
+      };
+    } else {
+      // Room doesn't exist - return error instead of creating
+      console.log(`Room ${normalizedCode} not found`);
+      ctx.status = 404;
+      ctx.body = { error: 'Room not found. Please check the room code.' };
     }
-    
-    // Check if room is full
-    if (roomData.players.length >= 2) {
-      ctx.status = 400;
-      ctx.body = { error: 'Room is full' };
-      return;
-    }
-    
-    // Add player to room
-    roomData.players.push({ userId, username });
-    await redis.setex(roomKey, 3600, JSON.stringify(roomData));
-    await redis.setex(`private:user:${userId}`, 3600, roomCode.toUpperCase());
+  } catch (error) {
+    console.error('Error joining private room:', error);
+    console.error('Error details:', error instanceof Error ? error.message : String(error));
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to join private room' };
   }
-  
-  ctx.body = { ...roomData, isCreator: roomData.creatorId === userId };
 });
 
-router.get('/private/room', rateLimitMiddleware(queueLimiter), async (ctx) => {
-  const roomCode = (ctx.request.query as any).roomCode as string;
-  if (!roomCode) { 
+// Get available problems for selection
+router.get('/problems/list', async (ctx) => {
+  try {
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    
+    const problems = await db.collection('problems')
+      .find({ verified: true })
+      .project({ 
+        _id: 1, 
+        title: 1, 
+        difficulty: 1, 
+        topics: 1 
+      })
+      .sort({ difficulty: 1, title: 1 })
+      .toArray();
+    
+    ctx.body = {
+      success: true,
+      problems: problems.map(p => ({
+        _id: p._id.toString(),
+        title: p.title,
+        difficulty: p.difficulty,
+        topics: p.topics || []
+      }))
+    };
+  } catch (error: any) {
+    console.error('Error fetching problems:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to fetch problems' };
+  }
+});
+
+// DEPRECATED: Use WebSocket connection to PrivateRoom instead
+// router.get('/private/room', ...) - Removed in favor of WebSocket
+
+// Select problem for private room (host only)
+router.post('/private/select-problem', async (ctx) => {
+  const { roomCode, problemId, userId } = ctx.request.body as { roomCode: string; problemId: string; userId: string };
+  if (!roomCode || !problemId || !userId) { 
     ctx.status = 400; 
-    ctx.body = { error: 'roomCode required' }; 
+    ctx.body = { error: 'roomCode, problemId, and userId required' }; 
     return; 
   }
   
   const redis = getRedis();
-  const roomDataRaw = await redis.get(`private:room:${roomCode.toUpperCase()}`);
+  const roomKey = `private:room:${roomCode.toUpperCase()}`;
+  const roomDataRaw = await redis.get(roomKey);
   
   if (!roomDataRaw) {
     ctx.status = 404;
@@ -259,91 +795,50 @@ router.get('/private/room', rateLimitMiddleware(queueLimiter), async (ctx) => {
   
   const roomData = JSON.parse(roomDataRaw);
   
-  // If we have 2 players, auto-start the match
-  if (roomData.players.length === 2) {
-    try {
-      const { matchMaker } = await import('colyseus');
-      const { MongoClient } = await import('mongodb');
-      
-      // Select a random problem
-      const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
-      const mongoClient = new MongoClient(MONGODB_URI);
-      await mongoClient.connect();
-      const db = mongoClient.db('codeclashers');
-      
-      const problems = await db.collection('problems')
-        .aggregate([
-          { $match: { difficulty: 'Medium', verified: true } },
-          { $sample: { size: 1 } }
-        ])
-        .toArray();
-      
-      if (problems.length === 0) {
-        throw new Error('No problems available');
-      }
-      
-      const problemId = problems[0]._id.toString();
-      const matchId = `private_${roomCode}_${Date.now()}`;
-      
-      // Create match room
-      const matchRoom = await matchMaker.create('match', { 
-        matchId, 
-        problemId,
-        problemData: problems[0]
-      });
-      
-      // Create reservations for both players
-      for (const player of roomData.players) {
-        const reservation = {
-          roomId: matchRoom.room.roomId,
-          roomName: 'match',
-          matchId,
-          problemId,
-          timestamp: Date.now()
-        };
-        await redis.setex(`queue:reservation:${player.userId}`, 3600, JSON.stringify(reservation));
-      }
-      
-      // Initialize match in Redis
-      const matchKey = RedisKeys.matchKey(matchId);
-      const matchObj = {
-        matchId,
-        problemId,
-        problem: problems[0],
-        players: roomData.players.reduce((acc: any, p: any) => {
-          acc[p.userId] = { username: p.username };
-          return acc;
-        }, {}),
-        playersCode: {},
-        linesWritten: {},
-        submissions: [],
-        status: 'ongoing',
-        startedAt: Date.now(),
-        private: true,
-        roomCode: roomCode.toUpperCase()
-      };
-      await redis.setex(matchKey, 3600, JSON.stringify(matchObj));
-      // Ensure private matches are tracked as active as well
-      await redis.sadd(RedisKeys.activeMatchesSet, matchId);
-      
-      // Clean up private room
-      await redis.del(`private:room:${roomCode.toUpperCase()}`);
-      for (const player of roomData.players) {
-        await redis.del(`private:user:${player.userId}`);
-      }
-      
-      await mongoClient.close();
-      
-      // Return match info
-      ctx.body = { matchId, roomId: matchRoom.room.roomId, matchStarted: true };
-      return;
-    } catch (error: any) {
-      console.error('Error auto-starting match:', error);
-    }
+  // Verify user is the room creator
+  if (roomData.creatorId !== userId) {
+    ctx.status = 403;
+    ctx.body = { error: 'Only the room creator can select problems' };
+    return;
   }
   
-  ctx.body = roomData;
+  // Verify problem exists
+  try {
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    const problem = await db.collection('problems').findOne({ 
+      _id: new ObjectId(problemId), 
+      verified: true 
+    });
+    
+    if (!problem) {
+      ctx.status = 404;
+      ctx.body = { error: 'Problem not found or not verified' };
+      return;
+    }
+    
+    // Update room with selected problem
+    roomData.selectedProblemId = problemId;
+    await redis.setex(roomKey, 3600, JSON.stringify(roomData));
+    
+    ctx.body = { 
+      success: true, 
+      selectedProblem: {
+        _id: problem._id.toString(),
+        title: problem.title,
+        difficulty: problem.difficulty,
+        topics: problem.topics || []
+      }
+    };
+  } catch (error: any) {
+    console.error('Error selecting problem:', error);
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to select problem' };
+  }
 });
+
+// DEPRECATED: Match starting is now handled via WebSocket in PrivateRoom
+// router.post('/private/start', ...) - Removed in favor of WebSocket
 
 router.post('/private/leave', rateLimitMiddleware(queueLimiter), async (ctx) => {
   const { userId } = ctx.request.body as { userId: string };
@@ -386,7 +881,7 @@ router.post('/private/leave', rateLimitMiddleware(queueLimiter), async (ctx) => 
 // which runs automatically in the background
 
 // Admin endpoint with stricter rate limiting
-router.post('/admin/validate-solutions', rateLimitMiddleware(adminLimiter), async (ctx) => {
+router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
   console.log('Validation endpoint called with body:', JSON.stringify(ctx.request.body, null, 2));
   
   const { signature, solutions, testCases } = ctx.request.body as {
@@ -504,7 +999,7 @@ router.post('/admin/validate-solutions', rateLimitMiddleware(adminLimiter), asyn
 
 // Bot Management Endpoints
 
-router.post('/admin/bots/init', async (ctx) => {
+router.post('/admin/bots/init', adminAuthMiddleware(), async (ctx) => {
   try {
     const mongoClient = await getMongoClient();
     const db = mongoClient.db(DB_NAME);
@@ -612,7 +1107,7 @@ router.post('/admin/bots/init', async (ctx) => {
   }
 });
 
-router.get('/admin/bots', async (ctx) => {
+router.get('/admin/bots', adminAuthMiddleware(), async (ctx) => {
   try {
     const mongoClient = await getMongoClient();
     const db = mongoClient.db(DB_NAME);
@@ -631,7 +1126,7 @@ router.get('/admin/bots', async (ctx) => {
   }
 });
 
-router.post('/admin/bots/generate', async (ctx) => {
+router.post('/admin/bots/generate', adminAuthMiddleware(), async (ctx) => {
   try {
     const { count, gender, rating = 1200 } = ctx.request.body as { count: number; gender?: 'male' | 'female' | 'random'; rating?: number };
     
@@ -645,88 +1140,16 @@ router.post('/admin/bots/generate', async (ctx) => {
     const db = mongoClient.db(DB_NAME);
     const bots = db.collection('bots');
     
-    // Drop existing collection if it exists to avoid schema conflicts
+    // Ensure the bots collection exists (it should be created via /admin/bots/init)
     const collections = await db.listCollections({ name: 'bots' }).toArray();
-    if (collections.length > 0) {
-      console.log('Dropping existing bots collection to recreate with new schema...');
-      await db.dropCollection('bots');
-    }
-    
-    console.log('Creating bots collection with new schema...');
-    await db.createCollection('bots', {
-        validator: {
-          $jsonSchema: {
-            bsonType: 'object',
-            required: ['fullName', 'username', 'avatar', 'gender', 'stats', 'matchIds', 'deployed', 'createdAt', 'updatedAt'],
-            properties: {
-              fullName: {
-                bsonType: 'string',
-                minLength: 1,
-                maxLength: 100,
-                description: 'Full name is required and must be a string'
-              },
-              username: {
-                bsonType: 'string',
-                minLength: 1,
-                maxLength: 50,
-                description: 'Username is required and must be a string'
-              },
-              avatar: {
-                bsonType: 'string',
-                description: 'Avatar URL is required'
-              },
-              gender: {
-                enum: ['male', 'female', 'nonbinary'],
-                description: 'Gender must be male, female, or nonbinary'
-              },
-              stats: {
-                bsonType: 'object',
-                required: ['rating', 'wins', 'losses', 'draws', 'totalMatches'],
-                properties: {
-                  rating: {
-                    bsonType: 'number',
-                    minimum: 0,
-                    description: 'Rating must be a non-negative number'
-                  },
-                  wins: {
-                    bsonType: 'number',
-                    minimum: 0,
-                    description: 'Wins must be a non-negative number'
-                  },
-                  losses: {
-                    bsonType: 'number',
-                    minimum: 0,
-                    description: 'Losses must be a non-negative number'
-                  },
-                  draws: {
-                    bsonType: 'number',
-                    minimum: 0,
-                    description: 'Draws must be a non-negative number'
-                  },
-                  totalMatches: {
-                    bsonType: 'number',
-                    minimum: 0,
-                    description: 'Total matches must be a non-negative number'
-                  }
-                }
-              },
-              deployed: {
-                bsonType: 'bool',
-                description: 'Deployed status is required'
-              },
-              createdAt: {
-                bsonType: 'date',
-                description: 'Created date is required'
-              },
-              updatedAt: {
-                bsonType: 'date',
-                description: 'Updated date is required'
-              }
-            }
-          }
-        }
-      });
-      console.log('Bots collection created successfully');
+    if (collections.length === 0) {
+      console.log('Bots collection does not exist. Please run /admin/bots/init first.');
+      ctx.status = 400;
+      ctx.body = { 
+        success: false, 
+        error: 'Bots collection not initialized. Please run /admin/bots/init first.' 
+      };
+      return;
     }
     
     // Generate OpenAI profiles
@@ -740,7 +1163,7 @@ router.post('/admin/bots/generate', async (ctx) => {
       const botDoc = {
         fullName: profile.fullName,
         username: profile.username,
-        avatar: '/placeholder_avatar.png', // Will be updated with generated avatar
+        avatar: 'placeholder_avatar.png', // Will be updated with generated avatar
         gender: profile.gender === 'male' || profile.gender === 'female' || profile.gender === 'nonbinary' ? profile.gender : 'male', // Ensure valid gender
         stats: {
           rating,
@@ -824,7 +1247,7 @@ router.post('/admin/bots/generate', async (ctx) => {
   }
 });
 
-router.post('/admin/bots/deploy', async (ctx) => {
+router.post('/admin/bots/deploy', adminAuthMiddleware(), async (ctx) => {
   try {
     const { botIds, deploy } = ctx.request.body as { botIds: string[]; deploy: boolean };
     
@@ -881,7 +1304,7 @@ router.post('/admin/bots/deploy', async (ctx) => {
   }
 });
 
-router.put('/admin/bots/:id', async (ctx) => {
+router.put('/admin/bots/:id', adminAuthMiddleware(), async (ctx) => {
   try {
     const botId = ctx.params.id;
     const updates = ctx.request.body;
@@ -917,7 +1340,7 @@ router.put('/admin/bots/:id', async (ctx) => {
   }
 });
 
-router.delete('/admin/bots/:id', async (ctx) => {
+router.delete('/admin/bots/:id', adminAuthMiddleware(), async (ctx) => {
   try {
     const botId = ctx.params.id;
     
@@ -959,7 +1382,7 @@ router.delete('/admin/bots/:id', async (ctx) => {
   }
 });
 
-router.post('/admin/bots/reset', async (ctx) => {
+router.post('/admin/bots/reset', adminAuthMiddleware(), async (ctx) => {
   try {
     const { resetType = 'stats' } = ctx.request.body as { resetType?: 'stats' | 'all' };
     
@@ -1041,7 +1464,7 @@ async function deleteBotAvatar(avatarUrl: string): Promise<void> {
       Key: fileName
     };
 
-    await s3.deleteObject(deleteParams).promise();
+    // await s3.deleteObject(deleteParams).promise(); // Commented out for now
     console.log(`Deleted avatar file: ${fileName}`);
   } catch (error) {
     console.warn(`Failed to delete avatar ${avatarUrl}:`, error);
@@ -1066,6 +1489,8 @@ A username handle that looks like something real users pick (mixes of lowercase,
 30% should resemble real names or slightly modified ones: sarah_mendez, kevinliu21, t_akari  
 20% should be weird or meme-y: fishgod, 0rangejuice, crunchybeans
 10% should be minimalist or mysterious: lxr, m1nt, _void
+
+DONT MAKE THEM EXACTLY THE THINGS THAT HAVE BEEN MENTIONED ABOVE. PLEASE ADD VARIETY AND GO OUT OF THE BOX AND HAVE NAMES FROM DIFFERENT CULTURES AROUND THE WORLD.
 
 Gender distribution: ${genderText}
 
@@ -1210,7 +1635,7 @@ async function generateBotAvatars(botDocs: any[]) {
         const imageBuffer = await fetch(imageUrl).then(res => res.arrayBuffer());
         
                 // Upload to MinIO
-                const fileName = `bot-avatar-${bot._id}-${Date.now()}.png`;
+                const fileName = `${bot._id}.png`;
         const uploadParams = {
           Bucket: process.env.S3_BUCKET_NAME || 'codeclashers-avatars',
           Key: fileName,
@@ -1219,7 +1644,7 @@ async function generateBotAvatars(botDocs: any[]) {
           ACL: 'public-read'
         };
         
-        await s3.upload(uploadParams).promise();
+        // await s3.upload(uploadParams).promise(); // Commented out for now
         
         // Store just the filename, not the full URL
         avatarUrl = fileName;
@@ -1227,43 +1652,8 @@ async function generateBotAvatars(botDocs: any[]) {
       } catch (dalleError) {
         console.error(`DALL-E avatar generation failed for ${bot._id}, using fallback:`, dalleError);
         
-        // Fallback to emoji avatars
-        if (bot.gender === 'female') {
-          const femaleAvatars = [
-            '/api/placeholder/200/200?text=🌸', // Flower
-            '/api/placeholder/200/200?text=🌙', // Moon
-            '/api/placeholder/200/200?text=✨', // Stars
-            '/api/placeholder/200/200?text=🦋', // Butterfly
-            '/api/placeholder/200/200?text=🌺', // Hibiscus
-            '/api/placeholder/200/200?text=🍃', // Leaf
-            '/api/placeholder/200/200?text=🌊', // Wave
-            '/api/placeholder/200/200?text=🌿', // Herb
-            '/api/placeholder/200/200?text=💎', // Diamond
-            '/api/placeholder/200/200?text=🎭', // Theater masks
-          ];
-          avatarUrl = femaleAvatars[Math.floor(Math.random() * femaleAvatars.length)];
-        } else {
-          const maleAvatars = [
-            '/api/placeholder/200/200?text=👨', // Man
-            '/api/placeholder/200/200?text=🧑', // Person
-            '/api/placeholder/200/200?text=👨‍💼', // Business person
-            '/api/placeholder/200/200?text=👨‍🎓', // Student
-            '/api/placeholder/200/200?text=👨‍💻', // Technologist
-            '/api/placeholder/200/200?text=🎮', // Gaming controller
-            '/api/placeholder/200/200?text=💻', // Laptop
-            '/api/placeholder/200/200?text=⚡', // Lightning
-            '/api/placeholder/200/200?text=🔥', // Fire
-            '/api/placeholder/200/200?text=🌟', // Star
-            '/api/placeholder/200/200?text=🎯', // Target
-            '/api/placeholder/200/200?text=⚔️', // Swords
-            '/api/placeholder/200/200?text=🏆', // Trophy
-            '/api/placeholder/200/200?text=🚀', // Rocket
-            '/api/placeholder/200/200?text=💡', // Light bulb
-            '/api/placeholder/200/200?text=🎲', // Dice
-            '/api/placeholder/200/200?text=🧩', // Puzzle piece
-          ];
-          avatarUrl = maleAvatars[Math.floor(Math.random() * maleAvatars.length)];
-        }
+        // Fallback to placeholder avatar
+        avatarUrl = 'placeholder_avatar.png';
       }
       
       await bots.updateOne(
@@ -1281,12 +1671,10 @@ const gameServer = new Server({ server: createServer(app.callback()) });
 
 gameServer.define('queue', QueueRoom);
 gameServer.define('match', MatchRoom);
+gameServer.define('private', PrivateRoom)
+  .filterBy(['roomCode']);
 
 gameServer.listen(port).then(async () => {
   console.log(`Colyseus listening on :${port}`);
-  
-  // Start the background matchmaker
-  startMatchmaker(gameServer);
-  console.log('Background matchmaker started');
+  console.log('Integrated matchmaking enabled in QueueRoom');
 });
-

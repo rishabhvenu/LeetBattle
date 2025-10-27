@@ -12,16 +12,13 @@ import {
   Scale,
   Clock,
   Trophy,
-  Code2,
   Target,
   CheckCircle,
-  Timer,
-  MemoryStick,
   Loader2,
 } from "lucide-react";
 import { MatchDetails } from "@/types/match";
 import { getAvatarUrl } from '@/lib/utils';
-import Editor from "@monaco-editor/react";
+// Image import removed - using regular img tags instead
 
 interface MatchDetailsModalProps {
   matchDetails: MatchDetails;
@@ -106,6 +103,8 @@ export default function MatchDetailsModal({
             <img 
               src="/placeholder_avatar.png"
               alt="Profile placeholder"
+              width={40}
+              height={40}
               className="w-full h-full object-cover"
             />
           </AvatarFallback>
@@ -139,60 +138,18 @@ export default function MatchDetailsModal({
         </div>
       </div>
 
-      {player.bestSubmission && (
-        <div className="bg-white rounded-lg p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <Code2 className="w-4 h-4 text-blue-600" />
-            <span className="font-medium text-black">Best Submission</span>
-            <Badge variant="outline" className="ml-auto">
-              {player.bestSubmission.language}
-            </Badge>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            {player.bestSubmission.runtime && (
-              <div className="flex items-center gap-2 text-sm">
-                <Timer className="w-4 h-4 text-green-600" />
-                <span className="text-black/70">Runtime: {player.bestSubmission.runtime}</span>
-              </div>
-            )}
-            {player.bestSubmission.memory && (
-              <div className="flex items-center gap-2 text-sm">
-                <MemoryStick className="w-4 h-4 text-blue-600" />
-                <span className="text-black/70">Memory: {player.bestSubmission.memory}</span>
-              </div>
-            )}
-          </div>
-
-          <div className="bg-gray-900 rounded-lg overflow-hidden" style={{ height: '200px' }}>
-            <Editor
-              height="200px"
-              language={player.bestSubmission.language.toLowerCase()}
-              value={player.bestSubmission.code}
-              theme="vs-dark"
-              options={{
-                readOnly: true,
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                cursorBlinking: "solid" as const,
-                cursorStyle: "line" as const,
-                cursorWidth: 0,
-                selectOnLineNumbers: false,
-                selectionHighlight: false,
-                occurrencesHighlight: false,
-                fontSize: 12,
-              }}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white w-full max-w-6xl h-[90vh] overflow-hidden rounded-lg shadow-xl flex flex-col">
+    <div 
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div 
+        className="bg-white w-full max-w-6xl h-[90vh] overflow-hidden rounded-lg shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -277,9 +234,15 @@ export default function MatchDetailsModal({
                   <div>
                     <h2 className="text-lg font-semibold text-black mb-4 flex items-center gap-2">
                       <span className="w-3 h-3 bg-gray-600 rounded-full"></span>
-                      {matchDetails.players.opponent.username}
+                      {matchDetails.players.opponent?.username || 'Unknown Player'}
                     </h2>
-                    <PlayerCard player={matchDetails.players.opponent} isCurrentUser={false} />
+                    {matchDetails.players.opponent ? (
+                      <PlayerCard player={matchDetails.players.opponent} isCurrentUser={false} />
+                    ) : (
+                      <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                        <p className="text-gray-500 text-center">Opponent data not available</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 

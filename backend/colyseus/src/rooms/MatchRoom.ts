@@ -5,6 +5,7 @@ import { getProblemWithTestCases } from '../lib/problemData';
 import { analyzeTimeComplexity } from '../lib/complexityAnalyzer';
 import { MongoClient, ObjectId } from 'mongodb';
 import { calculateDifficultyMultiplier, applyDifficultyAdjustment } from '../lib/eloSystem';
+import { createHash } from 'crypto';
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
 const DB_NAME = 'codeclashers';
@@ -48,17 +49,81 @@ export class MatchRoom extends Room {
   private problemData: any = null; // Cache problem data to avoid re-fetching
   private startTime!: number;
   private maxDuration = 45 * 60 * 1000;
+  private matchDuration!: number; // Time the match lasted in milliseconds
   private lastSubmitAt: Record<string, number> = {};
   private testCounter: Record<string, { windowStart: number; count: number }> = {};
   private userIdToSession: Record<string, string> = {};
   private connectingUserIds: Set<string> = new Set(); // Track users currently connecting
-  private botCompletionTimer: any = null;
+  private botCompletionTimers: Record<string, any> = {};
+  
+  // Bot simulation tracking
+  private botSimulationTimers: Record<string, { codeTimer: any; testTimer: any }> = {};
+  private botSimulationState: Record<string, { currentLines: number; currentTests: number; maxTests: number }> = {};
+  private botStats: Record<string, { submissions: number; testCasesSolved: number }> = {};
 
-  async onCreate(options: { matchId: string; problemId: string; problemData?: any }) {
+  /**
+   * Generate a deterministic hash for submission caching
+   */
+  private generateSubmissionCacheKey(userId: string, language: string, sourceCode: string): string {
+    // Normalize source code by trimming whitespace
+    const normalizedCode = sourceCode.trim();
+    
+    // Create hash from normalized code + language + problemId
+    const hashInput = `${normalizedCode}:${language}:${this.problemId}`;
+    const hash = createHash('sha256').update(hashInput).digest('hex');
+    
+    return hash;
+  }
+
+  /**
+   * Get cached submission result from Redis
+   */
+  private async getCachedSubmissionResult(userId: string, language: string, sourceCode: string): Promise<any | null> {
+    try {
+      const codeHash = this.generateSubmissionCacheKey(userId, language, sourceCode);
+      const cacheKey = RedisKeys.submissionCacheKey(this.matchId, userId, codeHash);
+      const cachedResult = await this.redis.get(cacheKey);
+      
+      if (cachedResult) {
+        console.log(`Cache hit for user ${userId} submission`);
+        return JSON.parse(cachedResult);
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error getting cached submission result:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Cache submission result in Redis with TTL
+   */
+  private async cacheSubmissionResult(userId: string, language: string, sourceCode: string, result: any): Promise<void> {
+    try {
+      const codeHash = this.generateSubmissionCacheKey(userId, language, sourceCode);
+      const cacheKey = RedisKeys.submissionCacheKey(this.matchId, userId, codeHash);
+      
+      // Cache for 50 minutes (45 min match + 5 min buffer)
+      const ttlSeconds = 50 * 60;
+      await this.redis.setex(cacheKey, ttlSeconds, JSON.stringify(result));
+      
+      console.log(`Cached submission result for user ${userId}`);
+    } catch (error) {
+      console.error('Error caching submission result:', error);
+      // Don't throw - caching failure shouldn't break submission
+    }
+  }
+
+  async onCreate(options: { matchId: string; problemId: string; problemData?: any; player1Id?: string; player2Id?: string }) {
     this.matchId = options.matchId;
     this.problemId = options.problemId;
     this.problemData = options.problemData; // Cache if provided
     this.startTime = Date.now();
+    
+    // Store player IDs for bot completion time calculation
+    (this as any).player1Id = options.player1Id;
+    (this as any).player2Id = options.player2Id;
     
     // Don't auto-dispose when all clients leave - only dispose on match end
     this.autoDispose = false;
@@ -109,56 +174,71 @@ export class MatchRoom extends Room {
       obj.status = 'ongoing';
       obj.startedAt = new Date().toISOString();
       obj.players = obj.players || {}; // Use object map for players
+      obj.playersCode = obj.playersCode || {};
+      obj.linesWritten = obj.linesWritten || {};
+      obj.submissions = obj.submissions || [];
+      obj.isPrivate = false; // Default to false, can be updated later
+      obj.ratings = obj.ratings || {};
+      
       // Always set problem data if we have it
       if (problemData) {
-        obj.problem = problemData;
+        // Sanitize problem data for client (remove test cases and solutions)
+        const sanitizedProblem = {
+          _id: problemData._id,
+          title: problemData.title,
+          description: problemData.description,
+          difficulty: problemData.difficulty,
+          topics: problemData.topics,
+          signature: problemData.signature,
+          starterCode: problemData.starterCode,
+          examples: problemData.examples,
+          constraints: problemData.constraints,
+          testCasesCount: problemData.testCasesCount
+        };
+        obj.problem = sanitizedProblem;
       }
     });
+    
+    // Create initial match document in MongoDB
+    await this.createInitialMatchDocument();
+
+    // Calculate and store bot completion times immediately
+    console.log(`MatchRoom: Starting bot completion time calculation for match ${this.matchId}`);
+    console.log(`MatchRoom: Player IDs - player1Id: ${(this as any).player1Id}, player2Id: ${(this as any).player2Id}`);
+    await this.calculateAndStoreBotCompletionTimes();
+    
+    // Add player information to match data
+    await this.updateMatchBlob((obj) => {
+      if ((this as any).player1Id && (this as any).player2Id) {
+        obj.players = {
+          [(this as any).player1Id]: { 
+            username: (this as any).player1Id,
+            rating: 1200 // Default rating, will be updated when players join
+          },
+          [(this as any).player2Id]: { 
+            username: (this as any).player2Id,
+            rating: 1200 // Default rating, will be updated when players join
+          }
+        };
+        
+        // Add ratings from Redis if available
+        const ratingsKey = `match:${this.matchId}:ratings`;
+        this.redis.hgetall(ratingsKey).then(ratings => {
+          if (ratings && ratings.player1 && ratings.player2) {
+            this.updateMatchBlob((obj) => {
+              obj.ratings = {
+                player1: parseInt(ratings.player1),
+                player2: parseInt(ratings.player2)
+              };
+            });
+          }
+        }).catch(err => console.warn('Failed to fetch ratings:', err));
+      }
+    });
+    
     await this.redis.expire(RedisKeys.matchKey(this.matchId), 3600);
 
-    // If one of the players is a bot, schedule deterministic completion
-    try {
-      const ratingsKey = `match:${this.matchId}:ratings`;
-      const userId1 = await this.redis.hget(ratingsKey, 'userId1');
-      const userId2 = await this.redis.hget(ratingsKey, 'userId2');
-      const players = [userId1, userId2].filter(Boolean) as string[];
-      let botUserId = null;
-      for (const uid of players) {
-        if (uid && await this.isBotUser(uid)) {
-          botUserId = uid;
-          break;
-        }
-      }
-      if (botUserId) {
-        const problemDifficulty = (this.problemData?.difficulty || 'Medium') as 'Easy' | 'Medium' | 'Hard';
-        const completionMs = this.sampleBotCompletionMs(problemDifficulty, this.matchId);
-        if (completionMs < this.maxDuration) {
-          console.log(`Scheduling bot completion in ${completionMs}ms for match ${this.matchId}`);
-          this.botCompletionTimer = this.clock.setTimeout(async () => {
-            try {
-              // Mark bot as completed by simulating a perfect submission outcome
-              const winnerId = players.find((uid) => uid !== botUserId) ? botUserId : botUserId;
-              await this.updateMatchBlob((obj) => {
-                obj.winnerUserId = winnerId;
-                obj.endedAt = new Date().toISOString();
-                obj.status = 'finished';
-              });
-              const ratingChanges = await this.calculateRatingChanges(winnerId, false);
-              await this.updateMatchBlob((obj) => { obj.ratingChanges = ratingChanges; });
-              await this.persistRatings(ratingChanges, winnerId, false);
-              this.broadcast('match_winner', { userId: winnerId, reason: 'bot_completion', ratingChanges });
-              await this.endMatch('bot_completion');
-            } catch (err) {
-              console.error('Bot completion error:', err);
-            }
-          }, completionMs);
-        } else {
-          console.log(`Bot will not complete before timeout for match ${this.matchId}`);
-        }
-      }
-    } catch (err) {
-      console.warn('Failed scheduling bot completion:', err);
-    }
+    // Bot completion scheduling is now handled in calculateAndStoreBotCompletionTimes()
 
     // End match timer
     this.clock.setInterval(async () => {
@@ -270,6 +350,60 @@ export class MatchRoom extends Room {
           return;
         }
 
+        // Check cache for identical submission
+        const cachedResult = await this.getCachedSubmissionResult(userId, language, source_code);
+        if (cachedResult) {
+          console.log(`Using cached result for user ${userId} competitive submission`);
+          
+          // Send cached result back to client
+          client.send('submission_result', {
+            userId,
+            success: true,
+            allPassed: cachedResult.allPassed,
+            passedTests: cachedResult.passedTests,
+            totalTests: cachedResult.totalTests,
+            testResults: cachedResult.testResults,
+            averageTime: cachedResult.averageTime,
+            averageMemory: cachedResult.averageMemory
+          });
+          
+          // Broadcast cached submission to both players
+          client.send('new_submission', {
+            userId,
+            submission: cachedResult.submission
+          });
+          this.broadcast('new_submission', { userId, submission: cachedResult.submission }, { except: client });
+
+          // If cached result shows all tests passed, declare winner
+          if (cachedResult.allPassed) {
+            await this.updateMatchBlob((obj) => {
+              obj.winnerUserId = userId;
+              obj.endedAt = new Date().toISOString();
+              obj.status = 'finished';
+            });
+            
+            // Calculate rating changes
+            const ratingChanges = await this.calculateRatingChanges(userId, false);
+            // Store rating changes for UI and persist to DB
+            await this.updateMatchBlob((obj) => {
+              obj.ratingChanges = ratingChanges;
+              obj.winnerUserId = userId;
+            });
+            await this.persistRatings(ratingChanges, userId, false);
+            this.broadcast('match_winner', { 
+              userId, 
+              reason: 'all_tests_passed',
+              ratingChanges 
+            });
+            // Delay endMatch to allow client to receive the submission_result message
+            setTimeout(async () => {
+              await this.endMatch(`winner_${userId}`);
+            }, 2000);
+          }
+          
+          return; // Exit early with cached result
+        }
+
         // Execute code against all testCases
         const executionResult = await executeAllTestCases(
           mappedLang,
@@ -309,6 +443,8 @@ export class MatchRoom extends Room {
                 code: source_code,
                 averageTime: executionResult.averageTime,
                 averageMemory: executionResult.averageMemory,
+                testsPassed: executionResult.passedTests,
+                totalTests: executionResult.totalTests,
               };
               
               await this.updateMatchBlob((obj) => {
@@ -322,14 +458,12 @@ export class MatchRoom extends Room {
                 const db = client.db(DB_NAME);
                 const submissions = db.collection('submissions') as any;
                 
-                const submissionId = `${this.matchId}_${userId}_${failedSubmission.timestamp}`;
                 const submissionDoc = {
-                  _id: submissionId,
-                  matchId: this.matchId,
-                  problemId: this.problemId,
-                  userId,
+                  matchId: new ObjectId(this.matchId),
+                  problemId: new ObjectId(this.problemId),
+                  userId: userId.startsWith('guest_') ? userId : new ObjectId(userId),
                   language,
-                  code: source_code,
+                  sourceCode: source_code,
                   passed: false,
                   complexityFailed: true,
                   derivedComplexity: complexityResult.derived_complexity,
@@ -337,15 +471,14 @@ export class MatchRoom extends Room {
                   testResults,
                   averageTime: executionResult.averageTime,
                   averageMemory: executionResult.averageMemory,
+                  testsPassed: executionResult.passedTests,
+                  totalTests: executionResult.totalTests,
                   timestamp: new Date(failedSubmission.timestamp),
                   createdAt: new Date(),
                 };
                 
-                await submissions.updateOne(
-                  { _id: submissionId },
-                  { $set: submissionDoc },
-                  { upsert: true }
-                );
+                const result = await submissions.insertOne(submissionDoc);
+                const submissionId = result.insertedId;
                 
                 console.log(`Saved complexity-failed submission ${submissionId} to MongoDB`);
                 
@@ -355,11 +488,13 @@ export class MatchRoom extends Room {
             { _id: new ObjectId(this.matchId) },
             { 
               $addToSet: { submissionIds: submissionId },
-              $setOnInsert: {
-                playerIds: [],
-                problemId: this.problemId,
-                status: 'ongoing',
+              $set: {
                 startedAt: new Date(this.startTime),
+                problemId: new ObjectId(this.problemId),
+                status: 'ongoing'
+              },
+              $setOnInsert: {
+                playerIds: []
               }
             },
             { upsert: true }
@@ -389,6 +524,17 @@ export class MatchRoom extends Room {
               });
               this.broadcast('new_submission', { userId, submission: failedSubmission }, { except: client });
               
+              // Cache the complexity-failed result
+              await this.cacheSubmissionResult(userId, language, source_code, {
+                allPassed: false,
+                passedTests: executionResult.passedTests,
+                totalTests: executionResult.totalTests,
+                testResults,
+                averageTime: executionResult.averageTime,
+                averageMemory: executionResult.averageMemory,
+                submission: failedSubmission
+              });
+              
               return; // Don't declare winner, don't send submission_result
             }
             
@@ -409,6 +555,8 @@ export class MatchRoom extends Room {
           code: source_code,
           averageTime: executionResult.averageTime,
           averageMemory: executionResult.averageMemory,
+          testsPassed: executionResult.passedTests,
+          totalTests: executionResult.totalTests,
         };
         
         await this.updateMatchBlob((obj) => {
@@ -422,27 +570,24 @@ export class MatchRoom extends Room {
           const db = client.db(DB_NAME);
           const submissions = db.collection('submissions') as any;
           
-          const submissionId = `${this.matchId}_${userId}_${submission.timestamp}`;
           const submissionDoc = {
-            _id: submissionId,
-            matchId: this.matchId,
-            problemId: this.problemId,
-            userId,
+            matchId: new ObjectId(this.matchId),
+            problemId: new ObjectId(this.problemId),
+            userId: userId.startsWith('guest_') ? userId : new ObjectId(userId),
             language,
-            code: source_code,
+            sourceCode: source_code,
             passed: executionResult.allPassed,
             testResults,
             averageTime: executionResult.averageTime,
             averageMemory: executionResult.averageMemory,
+            testsPassed: executionResult.passedTests,
+            totalTests: executionResult.totalTests,
             timestamp: new Date(submission.timestamp),
             createdAt: new Date(),
           };
           
-          await submissions.updateOne(
-            { _id: submissionId },
-            { $set: submissionDoc },
-            { upsert: true }
-          );
+          const result = await submissions.insertOne(submissionDoc);
+          const submissionId = result.insertedId;
           
           console.log(`Saved submission ${submissionId} to MongoDB`);
           
@@ -452,11 +597,13 @@ export class MatchRoom extends Room {
             { _id: new ObjectId(this.matchId) },
             { 
               $addToSet: { submissionIds: submissionId },
-              $setOnInsert: {
-                playerIds: [], // Will be updated properly on match end
-                problemId: this.problemId,
-                status: 'ongoing',
+              $set: {
                 startedAt: new Date(this.startTime),
+                problemId: new ObjectId(this.problemId),
+                status: 'ongoing'
+              },
+              $setOnInsert: {
+                playerIds: [] // Will be updated properly on match end
               }
             },
             { upsert: true }
@@ -467,6 +614,17 @@ export class MatchRoom extends Room {
           console.error('Failed to save submission to MongoDB:', dbError);
           // Don't fail the submission if DB save fails
         }
+
+        // Cache the submission result for future identical submissions
+        await this.cacheSubmissionResult(userId, language, source_code, {
+          allPassed: executionResult.allPassed,
+          passedTests: executionResult.passedTests,
+          totalTests: executionResult.totalTests,
+          testResults,
+          averageTime: executionResult.averageTime,
+          averageMemory: executionResult.averageMemory,
+          submission
+        });
 
         // Send results back to client
         client.send('submission_result', {
@@ -592,6 +750,68 @@ export class MatchRoom extends Room {
           error: testResult.error || null
         }));
 
+        // Store test submission results
+        const testSubmission = {
+          userId,
+          language,
+          timestamp: new Date().toISOString(),
+          passed: executionResult.allPassed,
+          testResults,
+          code: source_code,
+          averageTime: executionResult.averageTime,
+          averageMemory: executionResult.averageMemory,
+          testsPassed: executionResult.passedTests,
+          totalTests: executionResult.totalTests,
+          submissionType: 'test'
+        };
+        
+        await this.updateMatchBlob((obj) => {
+          obj.testSubmissions = obj.testSubmissions || [];
+          obj.testSubmissions.push(testSubmission);
+        });
+
+        // Save test submission to MongoDB
+        try {
+          const client = await getMongoClient();
+          const db = client.db(DB_NAME);
+          const submissions = db.collection('submissions') as any;
+          
+          const testSubmissionDoc = {
+            matchId: new ObjectId(this.matchId),
+            problemId: new ObjectId(this.problemId),
+            userId: userId.startsWith('guest_') ? userId : new ObjectId(userId),
+            language,
+            sourceCode: source_code,
+            passed: executionResult.allPassed,
+            testResults,
+            averageTime: executionResult.averageTime,
+            averageMemory: executionResult.averageMemory,
+            testsPassed: executionResult.passedTests,
+            totalTests: executionResult.totalTests,
+            submissionType: 'test',
+            timestamp: new Date(testSubmission.timestamp),
+            createdAt: new Date(),
+          };
+          
+          const result = await submissions.insertOne(testSubmissionDoc);
+          const testSubmissionId = result.insertedId;
+          
+          console.log(`Saved test submission ${testSubmissionId} to MongoDB`);
+          
+          // Update match document with test submission ID
+          const matches = db.collection('matches') as any;
+          await matches.updateOne(
+            { _id: new ObjectId(this.matchId) },
+            { 
+              $addToSet: { testRunIds: testSubmissionId }
+            }
+          );
+          
+          console.log(`Added test submission ${testSubmissionId} to match ${this.matchId}`);
+        } catch (dbError) {
+          console.error('Failed to save test submission to MongoDB:', dbError);
+        }
+
         // Send results back to client
         client.send('test_submission_result', {
           userId,
@@ -708,6 +928,18 @@ export class MatchRoom extends Room {
       });
     }
     
+    // Track bot players in active matches set
+    try {
+      const isBot = await this.redis.get(`bots:state:${userId}`);
+      if (isBot) {
+        console.log(`Bot ${userId} joined match, adding to active set`);
+        await this.redis.sadd(RedisKeys.botsActiveSet, userId);
+        await this.redis.setex(RedisKeys.botStateKey(userId), 3600, 'playing');
+      }
+    } catch (error) {
+      console.error('Error tracking bot in match:', error);
+    }
+    
     // CRITICAL: Always keep room unlocked
     this.unlock();
     console.log('Room explicitly unlocked');
@@ -733,7 +965,49 @@ export class MatchRoom extends Room {
     console.log(`MatchRoom disposed - matchId: ${this.matchId}`);
     // Room disposal happens only when match ends (via disconnect() in endMatch)
     // NOT when players disconnect temporarily
-    try { if (this.botCompletionTimer && typeof this.botCompletionTimer.clear === 'function') { this.botCompletionTimer.clear(); this.botCompletionTimer = null; } } catch {}
+    
+    // Clear all bot completion timers
+    for (const botId of Object.keys(this.botCompletionTimers)) {
+      try {
+        if (this.botCompletionTimers[botId] && typeof this.botCompletionTimers[botId].clear === 'function') {
+          this.botCompletionTimers[botId].clear();
+        }
+      } catch {}
+    }
+    this.botCompletionTimers = {};
+    
+    // Clean up bot simulation timers
+    for (const botUserId of Object.keys(this.botSimulationTimers)) {
+      this.stopBotSimulation(botUserId);
+    }
+    
+    // Clean up bot states and notify bot service of match completion
+    try {
+      const players = Object.keys(this.state.players);
+      for (const playerId of players) {
+        // Check if this player is a bot
+        const isBot = await this.redis.get(`bots:state:${playerId}`);
+        if (isBot) {
+          console.log(`Cleaning up bot state for ${playerId} after match completion`);
+          
+          // Remove bot from active matches set
+          await this.redis.srem(RedisKeys.botsActiveSet, playerId);
+          
+          // Clear bot state
+          await this.redis.del(RedisKeys.botStateKey(playerId));
+          
+          // Notify bot service that this bot completed a match
+          await this.redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
+            type: 'botMatchComplete',
+            botId: playerId
+          }));
+          
+          console.log(`Notified bot service that bot ${playerId} completed match`);
+        }
+      }
+    } catch (error) {
+      console.error('Error cleaning up bot states:', error);
+    }
   }
 
   private ensurePlayer(userId: string) {
@@ -765,19 +1039,77 @@ export class MatchRoom extends Room {
   }
 
   private async endMatch(reason: string) {
+    // Calculate match duration in milliseconds
+    this.matchDuration = Date.now() - this.startTime;
+    console.log(`Match ${this.matchId} ended after ${this.matchDuration}ms (${Math.round(this.matchDuration / 1000)}s)`);
+    
+    // Check if we need to calculate rating changes (if no winner determined yet)
+    const matchKey = RedisKeys.matchKey(this.matchId);
+    const matchRaw = await this.redis.get(matchKey);
+    let needsRatingCalculation = false;
+    let winnerUserId = null;
+    
+    if (matchRaw) {
+      const matchData = JSON.parse(matchRaw);
+      if (!matchData.winnerUserId && !matchData.ratingChanges) {
+        needsRatingCalculation = true;
+        // For disconnections, treat as draw unless one player clearly won
+        if (reason.includes('winner_')) {
+          winnerUserId = reason.replace('winner_', '');
+        }
+      }
+    }
+    
+    // Calculate rating changes if needed
+    if (needsRatingCalculation) {
+      console.log(`Calculating rating changes for match end reason: ${reason}, winner: ${winnerUserId || 'none'}`);
+      const ratingChanges = await this.calculateRatingChanges(winnerUserId, !winnerUserId);
+      await this.updateMatchBlob((obj) => {
+        obj.ratingChanges = ratingChanges;
+        if (winnerUserId) {
+          obj.winnerUserId = winnerUserId;
+        }
+      });
+      await this.persistRatings(ratingChanges, winnerUserId, !winnerUserId);
+      
+      if (winnerUserId) {
+        this.broadcast('match_winner', { userId: winnerUserId, reason, ratingChanges });
+      } else {
+        this.broadcast('match_draw', { reason, ratingChanges });
+      }
+    }
+    
     // Update match state in Redis before publishing event
     await this.updateMatchBlob((obj) => {
       obj.status = 'finished';
       obj.endedAt = obj.endedAt || new Date().toISOString();
       // winnerUserId is already set for wins; for timeouts we won't set extra flags
+      // Store final bot stats
+      obj.botStats = this.botStats;
     });
 
-    try { if (this.botCompletionTimer && typeof this.botCompletionTimer.clear === 'function') { this.botCompletionTimer.clear(); this.botCompletionTimer = null; } } catch {}
+    // Handle guest user match storage
+    await this.handleGuestMatchStorage();
 
-    const matchKey = RedisKeys.matchKey(this.matchId);
+    // Clear all bot completion timers
+    for (const botId of Object.keys(this.botCompletionTimers)) {
+      try {
+        if (this.botCompletionTimers[botId] && typeof this.botCompletionTimers[botId].clear === 'function') {
+          this.botCompletionTimers[botId].clear();
+        }
+      } catch {}
+    }
+    this.botCompletionTimers = {};
+    
+    // Clean up bot simulation timers
+    for (const botUserId of Object.keys(this.botSimulationTimers)) {
+      this.stopBotSimulation(botUserId);
+    }
+
+    const matchKeyForCleanup = RedisKeys.matchKey(this.matchId);
     try {
       // Clear reservations for both players ONLY when match actually ends
-      const matchRaw = await this.redis.get(matchKey);
+      const matchRaw = await this.redis.get(matchKeyForCleanup);
       if (matchRaw) {
         const matchData = JSON.parse(matchRaw);
         const playersField = matchData.players;
@@ -817,7 +1149,15 @@ export class MatchRoom extends Room {
         
           for (const playerId of players) {
             if (playerId && await this.isBotUser(playerId)) {
-              await this.redis.srem(RedisKeys.botsActiveSet, playerId);
+              const wasActive = await this.redis.srem(RedisKeys.botsActiveSet, playerId);
+              if (wasActive) {
+                // This was a bot that was active, trigger rotation
+                console.log(`Bot ${playerId} completed match, triggering rotation`);
+                await this.redis.publish(
+                  RedisKeys.botsCommandsChannel,
+                  JSON.stringify({ type: 'botMatchComplete', botId: playerId })
+                );
+              }
             }
           }
       } catch (err) {
@@ -828,12 +1168,266 @@ export class MatchRoom extends Room {
     }
   }
 
+  private async handleGuestMatchStorage() {
+    try {
+      // Check if any player is a guest user
+      const matchKey = RedisKeys.matchKey(this.matchId);
+      const matchRaw = await this.redis.get(matchKey);
+      
+      if (!matchRaw) return;
+      
+      const matchData = JSON.parse(matchRaw);
+      const players = matchData.players || {};
+      const playerIds = Object.keys(players);
+      
+      // Find guest user
+      const guestUserId = playerIds.find(id => id.startsWith('guest_'));
+      if (!guestUserId) return;
+      
+      // Get opponent ID (should be the bot)
+      const opponentId = playerIds.find(id => id !== guestUserId);
+      if (!opponentId) return;
+      
+      // Determine match result for guest
+      let result = 'draw';
+      if (matchData.winnerUserId === guestUserId) {
+        result = 'win';
+      } else if (matchData.winnerUserId === opponentId) {
+        result = 'loss';
+      }
+      
+      // Get guest's submissions and test results
+      const guestSubmissions = matchData.submissions || [];
+      const guestSubmissionsData = guestSubmissions
+        .filter((sub: any) => sub.userId === guestUserId)
+        .map((sub: any) => ({
+          language: sub.language,
+          code: sub.code,
+          passed: sub.passed,
+          testResults: sub.testResults,
+          timestamp: sub.timestamp
+        }));
+      
+      // Calculate tests passed
+      const latestSubmission = guestSubmissionsData[guestSubmissionsData.length - 1];
+      const testsPassed = latestSubmission?.testResults?.filter((t: any) => t.status === 3).length || 0;
+      const totalTests = latestSubmission?.testResults?.length || 0;
+      
+      // Store guest match data in Redis with 3-hour TTL
+      const guestMatchData = {
+        matchId: this.matchId,
+        guestId: guestUserId,
+        opponentId: opponentId,
+        problemId: this.problemId,
+        result: result,
+        submissions: guestSubmissionsData,
+        testsPassed: testsPassed,
+        totalTests: totalTests,
+        completedAt: Date.now()
+      };
+      
+      await this.redis.setex(
+        RedisKeys.guestMatchKey(guestUserId), 
+        3 * 3600, // 3 hours TTL
+        JSON.stringify(guestMatchData)
+      );
+      
+      console.log(`Stored guest match data for ${guestUserId}: ${result}, ${testsPassed}/${totalTests} tests passed`);
+    } catch (error) {
+      console.error('Error storing guest match data:', error);
+    }
+  }
+
   private async updateMatchBlob(mutator: (obj: any) => void) {
     const key = RedisKeys.matchKey(this.matchId);
     const raw = await this.redis.get(key);
     let obj: any = raw ? JSON.parse(raw) : {};
     mutator(obj);
     await this.redis.set(key, JSON.stringify(obj));
+    // Extend expiration time to ensure data persists for match history
+    await this.redis.expire(key, 86400); // 24 hours
+  }
+
+  private async createInitialMatchDocument() {
+    try {
+      const client = await getMongoClient();
+      const db = client.db(DB_NAME);
+      const matches = db.collection('matches') as any;
+      
+      // Create initial match document with startedAt
+      await matches.updateOne(
+        { _id: new ObjectId(this.matchId) },
+        {
+          $set: {
+            startedAt: new Date(this.startTime),
+            problemId: new ObjectId(this.problemId),
+            status: 'ongoing',
+            playerIds: []
+          },
+          $setOnInsert: {
+            submissionIds: []
+          }
+        },
+        { upsert: true }
+      );
+      
+      console.log(`Created initial match document for ${this.matchId} with startedAt: ${new Date(this.startTime).toISOString()}`);
+    } catch (error) {
+      console.error('Failed to create initial match document:', error);
+    }
+  }
+
+  private async createBotCompletionSubmission(botUserId: string) {
+    try {
+      const client = await getMongoClient();
+      const db = client.db(DB_NAME);
+      const submissions = db.collection('submissions') as any;
+      
+      // Create a submission document for bot completion
+      const submissionDoc = {
+        matchId: new ObjectId(this.matchId),
+        problemId: new ObjectId(this.problemId),
+        userId: new ObjectId(botUserId),
+        language: 'javascript', // Default language for bot
+        sourceCode: '// Bot completed the problem', // Placeholder code
+        passed: true,
+        testResults: [], // Bot automatically passes all tests
+        averageTime: 0,
+        averageMemory: 0,
+        testsPassed: this.problemData?.testCases?.length || 0, // Bot passes all test cases
+        totalTests: this.problemData?.testCases?.length || 0,
+        timestamp: new Date(),
+        createdAt: new Date(),
+        isBotCompletion: true
+      };
+      
+      const result = await submissions.insertOne(submissionDoc);
+      const submissionId = result.insertedId;
+      
+      console.log(`Created bot completion submission ${submissionId} for bot ${botUserId}`);
+      
+      // Update match document with submission ID
+      const matches = db.collection('matches') as any;
+      await matches.updateOne(
+        { _id: new ObjectId(this.matchId) },
+        { 
+          $addToSet: { submissionIds: submissionId }
+        }
+      );
+      
+      console.log(`Added bot completion submission ${submissionId} to match ${this.matchId}`);
+    } catch (error) {
+      console.error('Failed to create bot completion submission:', error);
+    }
+  }
+
+  // Calculate and store bot completion times immediately when room is created
+  private async calculateAndStoreBotCompletionTimes() {
+    try {
+      // Get player IDs from options passed during room creation
+      const userId1 = (this as any).player1Id;
+      const userId2 = (this as any).player2Id;
+      
+      if (!userId1 || !userId2) {
+        console.log('Player IDs not provided in room options, skipping bot completion time calculation');
+        return;
+      }
+      
+      const players = [userId1, userId2];
+      console.log(`Calculating bot completion times for players: ${players.join(', ')}`);
+      
+      // Track all bots and their completion times
+      const botCompletionData: Array<{ botId: string; completionMs: number }> = [];
+      
+      for (const playerId of players) {
+        try {
+          // Check if this is a bot
+          const bot = await this.isBotUser(playerId);
+          if (bot) {
+            console.log(`Player ${playerId} is a bot, calculating completion time`);
+            
+            const problemDifficulty = (this.problemData?.difficulty || 'Medium') as 'Easy' | 'Medium' | 'Hard';
+            const completionMs = this.sampleBotCompletionMs(problemDifficulty, this.matchId, playerId);
+            
+            if (completionMs < this.maxDuration) {
+              console.log(`Storing bot completion time for ${playerId}: ${completionMs}ms`);
+              
+              await this.updateMatchBlob((obj) => {
+                if (!obj.botCompletionTimes) obj.botCompletionTimes = {};
+                obj.botCompletionTimes[playerId] = {
+                  plannedCompletionMs: completionMs,
+                  plannedCompletionTime: new Date(Date.now() + completionMs).toISOString()
+                };
+              });
+              
+              // Add bot to completion data for timer scheduling
+              botCompletionData.push({ botId: playerId, completionMs });
+              
+              console.log(`Bot completion time stored for ${playerId}: ${completionMs}ms`);
+            } else {
+              console.log(`Bot completion time ${completionMs}ms exceeds max duration, not storing`);
+            }
+          } else {
+            console.log(`Player ${playerId} is not a bot`);
+          }
+        } catch (error) {
+          console.warn(`Failed to check if ${playerId} is a bot:`, error);
+        }
+      }
+      
+      // Start bot simulation and schedule completion timers for ALL bots
+      for (const { botId, completionMs } of botCompletionData) {
+        console.log(`🤖 Bot detected in match ${this.matchId}: ${botId}`);
+        this.startBotSimulation(botId);
+        
+        console.log(`Scheduling bot completion timer for ${botId} in ${completionMs}ms`);
+        
+        this.botCompletionTimers[botId] = this.clock.setTimeout(async () => {
+          try {
+            console.log(`🤖 Bot completion timer fired for ${botId} in match ${this.matchId}`);
+            
+            // Check if match is already finished
+            const matchKey = RedisKeys.matchKey(this.matchId);
+            const matchRaw = await this.redis.get(matchKey);
+            if (matchRaw) {
+              const matchData = JSON.parse(matchRaw);
+              if (matchData.status === 'finished' || matchData.winnerUserId) {
+                console.log(`Match ${this.matchId} already finished, skipping bot ${botId} completion`);
+                return;
+              }
+            }
+            
+            console.log(`🤖 Bot ${botId} completing match ${this.matchId} - creating submission`);
+            
+            // Create a submission document for bot completion
+            await this.createBotCompletionSubmission(botId);
+            
+            console.log(`🤖 Bot ${botId} submission created, declaring winner`);
+            
+            // Mark bot as completed by simulating a perfect submission outcome
+            const winnerId = botId; // Bot wins by completing first
+            await this.updateMatchBlob((obj) => {
+              obj.winnerUserId = winnerId;
+              obj.endedAt = new Date().toISOString();
+              obj.status = 'finished';
+            });
+            const ratingChanges = await this.calculateRatingChanges(winnerId, false);
+            await this.updateMatchBlob((obj) => { obj.ratingChanges = ratingChanges; });
+            await this.persistRatings(ratingChanges, winnerId, false);
+            
+            console.log(`🤖 Bot ${botId} declared winner, broadcasting match_winner`);
+            this.broadcast('match_winner', { userId: winnerId, reason: 'bot_completion', ratingChanges });
+            await this.endMatch('bot_completion');
+            
+            console.log(`🤖 Bot ${botId} match ended successfully`);
+          } catch (err) {
+            console.error('Bot completion error:', err);
+          }
+        }, completionMs);
+      }
+    } catch (error) {
+      console.error('Failed to calculate bot completion times:', error);
+    }
   }
 
   // Persist rating changes to MongoDB and invalidate caches
@@ -883,7 +1477,12 @@ export class MatchRoom extends Room {
         }
 
         let problemIdValue: any = this.problemId;
-        try { problemIdValue = new ObjectId(this.problemId); } catch {}
+        try { 
+          // Only convert to ObjectId if it's a valid 24-character hex string
+          if (this.problemId && this.problemId.length === 24 && /^[0-9a-fA-F]+$/.test(this.problemId)) {
+            problemIdValue = new ObjectId(this.problemId); 
+          }
+        } catch {}
         
         // Get winner ObjectId
         let winnerObjectId = null;
@@ -911,7 +1510,9 @@ export class MatchRoom extends Room {
               winnerUserId: winnerObjectId,
               endedAt: new Date(),
               status: 'finished',
-              ratingChanges: ratingChangesDoc
+              ratingChanges: ratingChangesDoc,
+              startedAt: new Date(this.startTime),
+              botStats: this.botStats
             },
             $setOnInsert: {
               submissionIds: []
@@ -926,7 +1527,11 @@ export class MatchRoom extends Room {
       for (const playerId of playerIds) {
         const change = ratingChanges[playerId]?.change ?? 0;
 
-        const statUpdate: any = { 'stats.totalMatches': 1, 'stats.rating': change };
+        const statUpdate: any = { 
+          'stats.totalMatches': 1, 
+          'stats.rating': change,
+          'stats.timeCoded': this.matchDuration // Add time coded in milliseconds
+        };
         if (isDraw) {
           statUpdate['stats.draws'] = 1;
         } else if (winnerUserId === playerId) {
@@ -937,27 +1542,88 @@ export class MatchRoom extends Room {
 
         if (await this.isBotUser(playerId)) {
           // Update bot stats and add match to history
+          console.log(`🤖 Updating bot stats for ${playerId}, change: ${change}, isDraw: ${isDraw}, winnerUserId: ${winnerUserId}`);
           try {
-            await bots.updateOne(
-              { _id: new ObjectId(playerId) },
+            // Validate ObjectId format
+            let botObjectId: ObjectId;
+            try {
+              botObjectId = new ObjectId(playerId);
+            } catch (error) {
+              console.error(`Invalid bot ID format: ${playerId}`, error);
+              continue;
+            }
+            
+            // Ensure bot has proper stats structure before updating
+            const botDoc = await bots.findOne({ _id: botObjectId });
+            if (!botDoc) {
+              console.error(`Bot ${playerId} not found in database`);
+              continue;
+            }
+            console.log(`🤖 Found bot document for ${playerId}:`, botDoc.username, 'current rating:', botDoc.stats?.rating);
+            
+            // Initialize stats if missing
+            if (!botDoc.stats) {
+              await bots.updateOne(
+                { _id: botObjectId },
+                { 
+                  $set: { 
+                    stats: { 
+                      rating: 1200, 
+                      wins: 0, 
+                      losses: 0, 
+                      draws: 0, 
+                      totalMatches: 0,
+                      timeCoded: 0
+                    },
+                    updatedAt: new Date()
+                  }
+                }
+              );
+              console.log(`Initialized stats for bot ${playerId}`);
+            }
+            
+            // Update bot stats with proper rating calculation
+            const currentRating = botDoc.stats?.rating || 1200;
+            const newRating = currentRating + change;
+            
+            console.log(`🤖 Updating bot ${playerId}: ${currentRating} -> ${newRating} (change: ${change})`);
+            console.log(`🤖 Match result: ${isDraw ? 'draw' : (winnerUserId === playerId ? 'win' : 'loss')}`);
+            
+            const updateResult = await bots.updateOne(
+              { _id: botObjectId },
               { 
-                $inc: statUpdate,
-                $push: { matchIds: new ObjectId(this.matchId) } as any,
-                $set: { updatedAt: new Date() }
+                $inc: { 
+                  'stats.totalMatches': 1, 
+                  'stats.draws': isDraw ? 1 : 0, 
+                  'stats.wins': (winnerUserId === playerId && !isDraw) ? 1 : 0, 
+                  'stats.losses': (winnerUserId !== playerId && !isDraw) ? 1 : 0,
+                  'stats.timeCoded': this.matchDuration // Add time coded in milliseconds
+                },
+                $set: { 'stats.rating': newRating, updatedAt: new Date() },
+                $push: { matchIds: new ObjectId(this.matchId) } as any
               }
             );
+            
+            console.log(`🤖 Bot ${playerId} rating updated: ${currentRating} -> ${newRating} (change: ${change}), match result: ${isDraw ? 'draw' : (winnerUserId === playerId ? 'win' : 'loss')}, updateResult:`, updateResult);
           } catch (err) {
-            console.warn(`Failed to update bot ${playerId} stats:`, err);
+            console.error(`Failed to update bot ${playerId} stats:`, err);
           }
         } else {
           // Update user stats
           try {
-            const objectId = new ObjectId(playerId);
+            // Validate ObjectId format
+            let objectId: ObjectId;
+            try {
+              objectId = new ObjectId(playerId);
+            } catch (error) {
+              console.error(`Invalid user ID format: ${playerId}`, error);
+              continue;
+            }
             
             // Ensure defaults then increment
             await users.updateOne(
               { _id: objectId },
-              { $setOnInsert: { 'stats.wins': 0, 'stats.losses': 0, 'stats.draws': 0, 'stats.totalMatches': 0, 'stats.rating': 1200 } },
+              { $setOnInsert: { 'stats.wins': 0, 'stats.losses': 0, 'stats.draws': 0, 'stats.totalMatches': 0, 'stats.rating': 1200, 'stats.timeCoded': 0 } },
               { upsert: true }
             );
             await users.updateOne(
@@ -969,7 +1635,7 @@ export class MatchRoom extends Room {
             try {
               await users.updateOne(
                 { _id: objectId },
-                { $addToSet: { matchIds: this.matchId } }
+                { $addToSet: { matchIds: new ObjectId(this.matchId) } }
               );
             } catch (linkErr) {
               console.warn(`Failed to add match ${this.matchId} to user ${playerId}:`, linkErr);
@@ -1012,6 +1678,16 @@ export class MatchRoom extends Room {
 
   private async isBotUser(userId: string): Promise<boolean> {
     try {
+      // Guest users are not bots
+      if (userId.startsWith('guest_')) {
+        return false;
+      }
+      
+      // Check if this is a valid ObjectId format first
+      if (!ObjectId.isValid(userId)) {
+        return false;
+      }
+      
       // getMongoClient is already available in this file
       const mongoClient = await getMongoClient();
       const db = mongoClient.db(DB_NAME);
@@ -1026,9 +1702,9 @@ export class MatchRoom extends Room {
   }
 
   // Sample completion time in ms from configured distribution. If no config, return +Infinity.
-  private sampleBotCompletionMs(difficulty: 'Easy' | 'Medium' | 'Hard', matchId: string): number {
+  private sampleBotCompletionMs(difficulty: 'Easy' | 'Medium' | 'Hard', matchId: string, botId: string): number {
     const dist = (process.env.BOT_TIME_DIST || 'lognormal').toLowerCase();
-    const rng = this.createSeededRng(`${matchId}:${difficulty}`);
+    const rng = this.createSeededRng(`${matchId}:${difficulty}:${botId}`);
 
     // Parse params from env JSON per difficulty
     const envKey = `BOT_TIME_PARAMS_${difficulty.toUpperCase()}`;
@@ -1112,19 +1788,55 @@ export class MatchRoom extends Room {
         return {};
       }
 
-      // Get player ratings from MongoDB
+      // Get player ratings from MongoDB (check both users and bots collections)
       const mongoClient = await getMongoClient();
       const db = mongoClient.db(DB_NAME);
       const users = db.collection('users');
+      const bots = db.collection('bots');
 
-      const player1Id = new ObjectId(playerIds[0]);
-      const player2Id = new ObjectId(playerIds[1]);
+      // Validate and convert player IDs to ObjectIds
+      let player1Id: ObjectId;
+      let player2Id: ObjectId;
+      
+      try {
+        player1Id = new ObjectId(playerIds[0]);
+      } catch (error) {
+        console.error(`Invalid player1 ID format: ${playerIds[0]}`, error);
+        return {};
+      }
+      
+      try {
+        player2Id = new ObjectId(playerIds[1]);
+      } catch (error) {
+        console.error(`Invalid player2 ID format: ${playerIds[1]}`, error);
+        return {};
+      }
 
-      const player1 = await users.findOne({ _id: player1Id }, { projection: { 'stats.rating': 1 } });
-      const player2 = await users.findOne({ _id: player2Id }, { projection: { 'stats.rating': 1 } });
+      // Get ratings for both players, checking both users and bots collections
+      let player1Rating = 1200;
+      let player2Rating = 1200;
 
-      const player1Rating = player1?.stats?.rating || 1200;
-      const player2Rating = player2?.stats?.rating || 1200;
+      // Check if player1 is a bot
+      const player1Bot = await bots.findOne({ _id: player1Id }, { projection: { 'stats.rating': 1 } });
+      if (player1Bot) {
+        player1Rating = player1Bot.stats?.rating || 1200;
+        console.log(`Player1 ${playerIds[0]} is a bot with rating ${player1Rating}`);
+      } else {
+        const player1User = await users.findOne({ _id: player1Id }, { projection: { 'stats.rating': 1 } });
+        player1Rating = player1User?.stats?.rating || 1200;
+        console.log(`Player1 ${playerIds[0]} is a user with rating ${player1Rating}`);
+      }
+
+      // Check if player2 is a bot
+      const player2Bot = await bots.findOne({ _id: player2Id }, { projection: { 'stats.rating': 1 } });
+      if (player2Bot) {
+        player2Rating = player2Bot.stats?.rating || 1200;
+        console.log(`Player2 ${playerIds[1]} is a bot with rating ${player2Rating}`);
+      } else {
+        const player2User = await users.findOne({ _id: player2Id }, { projection: { 'stats.rating': 1 } });
+        player2Rating = player2User?.stats?.rating || 1200;
+        console.log(`Player2 ${playerIds[1]} is a user with rating ${player2Rating}`);
+      }
 
       // Difficulty-aware scaling using problemElo from ratings hash
       const problemEloRaw = await this.redis.hget(`match:${this.matchId}:ratings`, 'problemElo');
@@ -1177,6 +1889,156 @@ export class MatchRoom extends Room {
     } catch (error) {
       console.error('Error calculating rating changes:', error);
       return {};
+    }
+  }
+
+  // Bot simulation methods
+  private startBotSimulation(botUserId: string) {
+    console.log(`🤖 Starting bot simulation for ${botUserId}`);
+    console.log(`🤖 Problem data:`, this.problemData?.title, 'Test cases:', this.problemData?.testCasesCount);
+    
+    // Initialize bot simulation state
+    this.botSimulationState[botUserId] = {
+      currentLines: 0,
+      currentTests: 0,
+      maxTests: this.problemData?.testCasesCount || 10
+    };
+    
+    // Initialize bot stats
+    this.botStats[botUserId] = {
+      submissions: 0,
+      testCasesSolved: 0
+    };
+    
+    console.log(`🤖 Bot simulation state initialized:`, this.botSimulationState[botUserId]);
+    
+    // Start code simulation
+    this.scheduleBotCodeUpdate(botUserId);
+    
+    // Start test case simulation (less frequent)
+    this.scheduleBotTestCaseUpdate(botUserId);
+    
+    console.log(`🤖 Bot simulation timers scheduled for ${botUserId}`);
+  }
+
+  private stopBotSimulation(botUserId: string) {
+    console.log(`Stopping bot simulation for ${botUserId}`);
+    
+    // Clear timers
+    if (this.botSimulationTimers[botUserId]) {
+      if (this.botSimulationTimers[botUserId].codeTimer) {
+        this.botSimulationTimers[botUserId].codeTimer.clear();
+      }
+      if (this.botSimulationTimers[botUserId].testTimer) {
+        this.botSimulationTimers[botUserId].testTimer.clear();
+      }
+      delete this.botSimulationTimers[botUserId];
+    }
+    
+    // Clear state
+    delete this.botSimulationState[botUserId];
+    delete this.botStats[botUserId];
+  }
+
+  private scheduleBotCodeUpdate(botUserId: string) {
+    // Random interval between 1-60 seconds
+    const interval = Math.random() * 59000 + 1000; // 1-60 seconds
+    
+    const timer = this.clock.setTimeout(() => {
+      this.performBotCodeUpdate(botUserId);
+      // Schedule next update
+      this.scheduleBotCodeUpdate(botUserId);
+    }, interval);
+    
+    // Store timer reference
+    if (!this.botSimulationTimers[botUserId]) {
+      this.botSimulationTimers[botUserId] = { codeTimer: null, testTimer: null };
+    }
+    this.botSimulationTimers[botUserId].codeTimer = timer;
+  }
+
+  private scheduleBotTestCaseUpdate(botUserId: string) {
+    // Random interval between 500-1000 seconds (much less frequent than code updates)
+    const interval = Math.random() * 500000 + 500000; // 500-1000 seconds
+    
+    const timer = this.clock.setTimeout(() => {
+      this.performBotTestCaseUpdate(botUserId);
+      // Schedule next update
+      this.scheduleBotTestCaseUpdate(botUserId);
+    }, interval);
+    
+    // Store timer reference
+    if (!this.botSimulationTimers[botUserId]) {
+      this.botSimulationTimers[botUserId] = { codeTimer: null, testTimer: null };
+    }
+    this.botSimulationTimers[botUserId].testTimer = timer;
+  }
+
+  private performBotCodeUpdate(botUserId: string) {
+    console.log(`🤖 performBotCodeUpdate called for ${botUserId}`);
+    const state = this.botSimulationState[botUserId];
+    if (!state) {
+      console.log(`🤖 No state found for bot ${botUserId}`);
+      return;
+    }
+    
+    // Random change: 1-2 lines at a time, max 75 total
+    const change = Math.floor(Math.random() * 2) + 1; // 1-2 lines
+    const newLines = Math.min(state.currentLines + change, 75);
+    
+    console.log(`🤖 Bot ${botUserId} code change: ${state.currentLines} -> ${newLines} lines (change: +${change})`);
+    
+    if (newLines !== state.currentLines) {
+      state.currentLines = newLines;
+      
+      // Broadcast code update to all clients
+      this.broadcast('code_update', { 
+        userId: botUserId, 
+        language: 'javascript', // Default language for bot
+        lines: newLines 
+      });
+      
+      console.log(`🤖 Bot ${botUserId} code update broadcasted: ${newLines} lines`);
+    }
+  }
+
+  private async performBotTestCaseUpdate(botUserId: string) {
+    console.log(`🤖 performBotTestCaseUpdate called for ${botUserId}`);
+    const state = this.botSimulationState[botUserId];
+    if (!state) {
+      console.log(`🤖 No state found for bot ${botUserId}`);
+      return;
+    }
+    
+    // Random change: 0-2 test cases, never decrease, max is problem's testCasesCount
+    const change = Math.floor(Math.random() * 3); // 0-2 test cases
+    const newTests = Math.min(state.currentTests + change, state.maxTests);
+    
+    console.log(`🤖 Bot ${botUserId} test change: ${state.currentTests} -> ${newTests} tests (change: +${change})`);
+    
+    if (newTests !== state.currentTests) {
+      state.currentTests = newTests;
+      
+      // Update bot stats - increment submissions count and update test cases solved
+      if (this.botStats[botUserId]) {
+        this.botStats[botUserId].submissions += 1;
+        this.botStats[botUserId].testCasesSolved = newTests;
+        
+        // Store bot stats in Redis match blob
+        await this.updateMatchBlob((obj) => {
+          obj.botStats = this.botStats;
+        });
+      }
+      
+      // Broadcast test progress update
+      this.broadcast('test_progress_update', {
+        userId: botUserId,
+        testsPassed: newTests,
+        totalTests: state.maxTests
+      });
+      
+      console.log(`🤖 Bot ${botUserId} test update broadcasted: ${newTests}/${state.maxTests} tests passed`);
+      console.log(`🤖 Bot ${botUserId} stats updated: submissions=${this.botStats[botUserId]?.submissions}, testCasesSolved=${this.botStats[botUserId]?.testCasesSolved}`);
     }
   }
 }

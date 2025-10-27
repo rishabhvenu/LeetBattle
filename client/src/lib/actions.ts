@@ -6,29 +6,33 @@ import connectDB, { getMongoClient } from './mongodb';
 import bcrypt from 'bcryptjs';
 import { generatePresignedUrl } from './minio';
 import { getRedis, RedisKeys } from './redis';
-import { ensureMatchEventsSubscriber } from './matchEventsSubscriber';
 import { ObjectId } from 'mongodb';
 import { tryToObjectId } from './utilsObjectId';
 import { REST_ENDPOINTS } from '../constants/RestEndpoints';
-import { 
-  authLimiter, 
-  generalLimiter, 
-  queueLimiter, 
-  adminLimiter, 
-  uploadLimiter, 
-  rateLimit, 
-  getClientIdentifier 
+import {
+  authLimiter,
+  generalLimiter,
+  queueLimiter,
+  adminLimiter,
+  uploadLimiter,
+  rateLimit,
+  getClientIdentifier,
 } from './rateLimiter';
+import {
+  createSession,
+  getSession as getSessionImpl,
+  deleteSession,
+  assertAdminSession,
+  getSessionCookieName,
+} from './session';
 
-const MONGODB_URI = process.env.MONGODB_URI!;
+// Re-export getSession as async function wrapper to comply with "use server" requirements
+export async function getSession() {
+  return getSessionImpl();
+}
+
 const DB_NAME = 'codeclashers';
 
-// Disable MongoDB native driver logging
-const mongoOptions = {
-  monitorCommands: false,
-  serverSelectionTimeoutMS: 5000,
-  socketTimeoutMS: 45000,
-};
 const USERS_COLLECTION = 'users';
 const SESSIONS_COLLECTION = 'sessions';
 
@@ -50,20 +54,25 @@ export interface User {
     draws: number;
     rating: number;
   };
+  matchIds?: string[];
   lastLogin: Date;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface SessionData {
-  userId?: string;
-  user?: {
-    id: string;
-    email: string;
-    username: string;
-    avatar?: string;
-  };
-  authenticated: boolean;
+const ADMIN_GUARD_ERROR = 'Admin privileges required';
+const AUTH_REQUIRED_ERROR = 'Authentication required';
+
+async function ensureAdminAccess(): Promise<string | null> {
+  try {
+    await assertAdminSession();
+    return null;
+  } catch (error) {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+    return ADMIN_GUARD_ERROR;
+  }
 }
 
 export async function registerUser(prevState: any, formData: FormData) {
@@ -131,6 +140,7 @@ export async function registerUser(prevState: any, formData: FormData) {
         draws: 0,
         rating: 1200,
       },
+      matchIds: [],
       lastLogin: new Date(),
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -165,18 +175,9 @@ export async function loginUser(prevState: any, formData: FormData) {
     return { error: (error as Error).message };
   }
 
-  // Debug: Log what we're receiving
-  console.log('FormData received:', formData);
-  console.log('FormData type:', typeof formData);
-  console.log('Has get method:', typeof formData.get === 'function');
-  console.log('FormData entries:', Array.from(formData.entries()));
-  
   // Extract form data - should always be FormData in Next.js 15
   const email = formData.get('email') as string;
   const password = formData.get('password') as string;
-    
-  console.log('Extracted email:', email);
-  console.log('Extracted password:', password ? '[REDACTED]' : 'undefined');
 
   if (!email || !password) {
     return { error: 'Email and password are required' };
@@ -203,7 +204,6 @@ export async function loginUser(prevState: any, formData: FormData) {
     }
 
     // Update last login
-    await client.connect();
     await users.updateOne(
       { _id: user._id },
       { $set: { lastLogin: new Date() } }
@@ -223,62 +223,18 @@ export async function loginUser(prevState: any, formData: FormData) {
   }
 }
 
-export async function getSession(): Promise<SessionData> {
-  try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('codeclashers.sid');
-    
-    if (!sessionCookie) {
-      return { authenticated: false };
-    }
-
-    await connectDB();
-    const client = await getMongoClient();
-    
-    const db = client.db(DB_NAME);
-    const sessions = db.collection(SESSIONS_COLLECTION);
-    
-    // Find session in MongoDB
-    const session = await sessions.findOne({ 
-      _id: sessionCookie.value as any,
-      expires: { $gt: new Date() }
-    } as any);
-    
-    
-    if (session && session.userId) {
-      return {
-        authenticated: true,
-        userId: (session.userId && typeof session.userId === 'object' && 'toString' in session.userId)
-          ? (session.userId as any).toString()
-          : String(session.userId),
-        user: session.user
-      };
-    }
-    
-    return { authenticated: false };
-  } catch (error) {
-    console.error('Session error:', error);
-    return { authenticated: false };
-  }
-}
-
 export async function logoutUser() {
   try {
     const cookieStore = await cookies();
-    const sessionId = cookieStore.get('codeclashers.sid')?.value;
+    const cookieName = await getSessionCookieName();
+    const sessionId = cookieStore.get(cookieName)?.value;
 
     if (sessionId) {
-      await connectDB();
-      const client = await getMongoClient();
-      const db = client.db(DB_NAME);
-      const sessions = db.collection(SESSIONS_COLLECTION);
-      
-      // Remove session from MongoDB
-      await sessions.deleteOne({ _id: sessionId as any } as any);
+      await deleteSession(sessionId);
     }
 
     // Clear cookie
-    cookieStore.delete('codeclashers.sid');
+    cookieStore.delete(cookieName);
     redirect('/login');
   } catch (error) {
     // Check if it's a redirect error (which is expected)
@@ -290,13 +246,71 @@ export async function logoutUser() {
   }
 }
 
+export async function changePassword(currentPassword: string, newPassword: string) {
+  // Rate limiting
+  const identifier = await getClientIdentifier();
+  try {
+    await rateLimit(authLimiter, identifier);
+  } catch (error: unknown) {
+    return { error: (error as Error).message };
+  }
+
+  // Validation
+  if (!currentPassword || !newPassword) {
+    return { error: 'Both current and new passwords are required' };
+  }
+
+  if (newPassword.length < 8) {
+    return { error: 'New password must be at least 8 characters long' };
+  }
+
+  try {
+    await connectDB();
+    const client = await getMongoClient();
+    const db = client.db(DB_NAME);
+    const users = db.collection(USERS_COLLECTION);
+
+    // Get current session
+    const session = await getSession();
+    if (!session.authenticated || !session.userId) {
+      return { error: 'User not authenticated' };
+    }
+
+    // Find user by ID
+    const user = await users.findOne({ _id: new ObjectId(session.userId) });
+    if (!user) {
+      return { error: 'User not found' };
+    }
+
+    // Verify current password
+    const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    if (!isCurrentPasswordValid) {
+      return { error: 'Current password is incorrect' };
+    }
+
+    // Hash new password
+    const hashedNewPassword = await bcrypt.hash(newPassword, 12);
+
+    // Update password
+    await users.updateOne(
+      { _id: new ObjectId(session.userId) },
+      { $set: { password: hashedNewPassword, updatedAt: new Date() } }
+    );
+
+    return { success: true, message: 'Password updated successfully' };
+  } catch (error) {
+    console.error('Password change error:', error);
+    return { error: 'An error occurred while changing password' };
+  }
+}
+
 // Leaderboard server action
 export async function getLeaderboardData(page: number = 1, limit: number = 10) {
-  const K_FACTOR = 32;
-  const INITIAL_RATING = 1200;
-  const ROLLING_DAYS = 180;
+  // Validate and sanitize inputs
+  const validPage = Math.max(1, Math.floor(page));
+  const validLimit = Math.max(1, Math.floor(limit));
   
-  const cacheKey = `leaderboard:page:${page}:limit:${limit}`;
+  const cacheKey = `leaderboard:page:${validPage}:limit:${validLimit}`;
 
   try {
     const redis = getRedis();
@@ -306,172 +320,92 @@ export async function getLeaderboardData(page: number = 1, limit: number = 10) {
     }
 
     const client = await getMongoClient();
-    const db = client.db();
+    const db = client.db(DB_NAME);
+    const usersCollection = db.collection('users');
+    const botsCollection = db.collection('bots');
 
-    const cutoff = new Date(Date.now() - ROLLING_DAYS * 24 * 60 * 60 * 1000);
+    const filter = { 'stats.totalMatches': { $gt: 0 } };
+    const [userCount, botCount] = await Promise.all([
+      usersCollection.countDocuments(filter),
+      botsCollection.countDocuments(filter),
+    ]);
 
-    const matches = await db
-      .collection('matches')
-      .find({ status: 'finished', endedAt: { $gte: cutoff } })
-      .project({ playerIds: 1, winnerUserId: 1, endedAt: 1 })
-      .sort({ endedAt: 1 })
-      .toArray();
+    const totalEntries = userCount + botCount;
+    const totalPages = Math.max(1, Math.ceil(totalEntries / validLimit));
+    const skip = (validPage - 1) * validLimit;
 
-    const userStats = new Map();
-
-    function ensureUser(userId: any) {
-      if (!userStats.has(userId)) {
-        userStats.set(userId, { rating: INITIAL_RATING, gamesWon: 0, gamesPlayed: 0 });
-      }
-    }
-
-    function expectedScore(rating: number, opponentRating: number): number {
-      return 1 / (1 + Math.pow(10, (opponentRating - rating) / 400));
-    }
-
-    function updateRating(current: number, opponent: number, score: 0 | 0.5 | 1): number {
-      const exp = expectedScore(current, opponent);
-      return current + K_FACTOR * (score - exp);
-    }
-
-    for (const m of matches) {
-      if (!Array.isArray(m.playerIds) || m.playerIds.length !== 2) continue;
-      const [a, b] = m.playerIds;
-      ensureUser(a);
-      ensureUser(b);
-      const aStats = userStats.get(a);
-      const bStats = userStats.get(b);
-
-      let aScore: 0 | 0.5 | 1 = 0.5;
-      let bScore: 0 | 0.5 | 1 = 0.5;
-      if (m.winnerUserId) {
-        if (String(m.winnerUserId) === String(a)) {
-          aScore = 1;
-          bScore = 0;
-        } else if (String(m.winnerUserId) === String(b)) {
-          aScore = 0;
-          bScore = 1;
-        }
-      }
-
-      const aNew = updateRating(aStats.rating, bStats.rating, aScore);
-      const bNew = updateRating(bStats.rating, aStats.rating, bScore);
-      aStats.rating = aNew;
-      bStats.rating = bNew;
-      aStats.gamesPlayed += 1;
-      bStats.gamesPlayed += 1;
-      if (aScore === 1) aStats.gamesWon += 1;
-      if (bScore === 1) bStats.gamesWon += 1;
-    }
-
-    const userIds = Array.from(userStats.keys());
-    const users = await db
-      .collection('users')
-      .find({ _id: { $in: userIds } })
-      .project({ username: 1, avatarUrl: 1 })
-      .toArray();
-
-    const idToUser = {};
-    for (const u of users) {
-      idToUser[String(u._id)] = u;
-    }
-
-    const bucketUrl = process.env.NEXT_PUBLIC_PFP_BUCKET_URL || '';
-    function toAvatarPath(avatarUrl) {
-      if (!avatarUrl) return null;
-      if (bucketUrl && avatarUrl.startsWith(bucketUrl)) {
-        return avatarUrl.slice(bucketUrl.length);
-      }
-      return null;
-    }
-
-    const rows = await Promise.all(Array.from(userStats.entries()).map(async ([id, stats]) => {
-      const u = idToUser[String(id)];
-      
-      // Fetch avatar using centralized function
-      let avatar = null;
-      const avatarResult = await getAvatarByIdAction(id);
-      if (avatarResult.success) {
-        avatar = avatarResult.avatar;
-      }
-      
-      return {
-        _id: String(id),
-        username: u?.username || 'Unknown',
-        avatar: avatar,
-        rating: Math.round(stats.rating),
-        stats: {
-          gamesWon: stats.gamesWon,
-          gamesPlayed: stats.gamesPlayed,
+    const leaderboardEntries = await usersCollection
+      .aggregate([
+        { $match: filter },
+        {
+          $project: {
+            username: 1,
+            stats: 1,
+            avatarFromProfile: '$profile.avatar',
+            avatarUrl: 1,
+          },
         },
-      };
+        {
+          $addFields: {
+            avatar: {
+              $ifNull: ['$avatarFromProfile', '$avatarUrl'],
+            },
+            isBot: false,
+          },
+        },
+        { $project: { avatarFromProfile: 0, avatarUrl: 0 } },
+        {
+          $unionWith: {
+            coll: 'bots',
+            pipeline: [
+              { $match: filter },
+              {
+                $project: {
+                  username: 1,
+                  stats: 1,
+                  avatar: 1,
+                  isBot: { $literal: true },
+                },
+              },
+            ],
+          },
+        },
+        {
+          $addFields: {
+            rating: {
+              $round: [{ $ifNull: ['$stats.rating', 1200] }, 0],
+            },
+          },
+        },
+        { $sort: { rating: -1 } },
+        { $skip: skip },
+        { $limit: validLimit },
+      ])
+      .toArray();
+
+    const usersPage = leaderboardEntries.map((entry) => ({
+      _id: String(entry._id),
+      username: entry.username || (entry.isBot ? 'Unknown Bot' : 'Unknown'),
+      avatar: entry.avatar || null,
+      rating: entry.rating ?? 1200,
+      stats: {
+        gamesWon: entry.stats?.wins || 0,
+        gamesLost: entry.stats?.losses || 0,
+        gamesDrawn: entry.stats?.draws || 0,
+        gamesPlayed: entry.stats?.totalMatches || 0,
+      },
+      isBot: Boolean(entry.isBot),
     }));
-
-    rows.sort((a, b) => b.rating - a.rating);
-
-    const totalPages = Math.max(1, Math.ceil(rows.length / limit));
-    const start = (page - 1) * limit;
-    const usersPage = rows.slice(start, start + limit);
 
     const payload = { users: usersPage, totalPages };
 
+    // Cache the result for 60 seconds
     await redis.set(cacheKey, JSON.stringify(payload), 'EX', 60);
 
     return payload;
   } catch (err) {
     console.error('Leaderboard server action error', err);
     return { users: [], totalPages: 1 };
-  }
-}
-
-async function createSession(userId: string, email: string, username: string) {
-  try {
-    const sessionId = crypto.randomUUID();
-    
-    await connectDB();
-    const client = await getMongoClient();
-    
-    const db = client.db(DB_NAME);
-    const users = db.collection(USERS_COLLECTION);
-    const sessions = db.collection(SESSIONS_COLLECTION);
-    
-    // Get full user data including profile
-    const user = await users.findOne({ _id: new ObjectId(userId) });
-    
-    // Check both possible locations for avatar (schema migration compatibility)
-    const userAvatar = user?.profile?.avatar || user?.avatarUrl || null;
-    
-    // Create session data
-    const sessionData = {
-      _id: sessionId,
-      userId: new ObjectId(userId),
-      user: {
-        id: userId,
-        email,
-        username,
-        avatar: userAvatar,
-        firstName: user?.profile?.firstName || '',
-        lastName: user?.profile?.lastName || ''
-      },
-      expires: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-      createdAt: new Date()
-    };
-    
-    // Store session in MongoDB
-    await sessions.insertOne(sessionData as any);
-    
-    // Set session cookie
-    const cookieStore = await cookies();
-    cookieStore.set('codeclashers.sid', sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 24 * 60 * 60, // 24 hours
-      path: '/'
-    });
-  } catch (error) {
-    console.error('Session creation error:', error);
-    throw error;
   }
 }
 
@@ -496,7 +430,8 @@ export async function generatePresignedUploadUrl(fileName: string, contentType: 
 export async function saveUserAvatar(fileName: string) {
   try {
     const cookieStore = await cookies();
-    const sessionId = cookieStore.get('codeclashers.sid')?.value;
+    const cookieName = await getSessionCookieName();
+    const sessionId = cookieStore.get(cookieName)?.value;
     if (!sessionId) return { success: false, error: 'No session' };
 
     await connectDB();
@@ -515,7 +450,7 @@ export async function saveUserAvatar(fileName: string) {
     // Update user profile avatar
     const sessionDoc = await sessions.findOne({ _id: sessionId } as any);
     if (sessionDoc?.userId) {
-      const userObjectId = tryToObjectId(sessionDoc.userId) || new (await import('mongodb')).ObjectId(String(sessionDoc.userId));
+      const userObjectId = tryToObjectId(sessionDoc.userId) || new ObjectId(String(sessionDoc.userId));
       await users.updateOne(
         { _id: userObjectId },
         { $set: { 'profile.avatar': fileName } }
@@ -548,13 +483,14 @@ export async function getUserStatsCached(userId: string) {
   const matches = db.collection('matches');
   const users = db.collection('users');
 
-  // Aggregate wins and total matches; timeCoded placeholder 0 for now
-  const userObjectId = new (await import('mongodb')).ObjectId(userId);
+  // Aggregate wins and total matches; get timeCoded from user stats
+  const userObjectId = new ObjectId(userId);
   const totalMatches = await matches.countDocuments({ playerIds: userObjectId });
   const wins = await matches.countDocuments({ winnerUserId: userObjectId });
-  // Get user's rating (default 1200 if missing)
-  const userDoc: any = await users.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1 } });
+  // Get user's rating and timeCoded (default 1200 if missing)
+  const userDoc: any = await users.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1, 'stats.timeCoded': 1 } });
   const rating = userDoc?.stats?.rating ?? 1200;
+  const timeCoded = userDoc?.stats?.timeCoded ?? 0;
   // Compute global rank among all users by rating: count users with higher rating + 1
   const higherCount = await users.countDocuments({ 'stats.rating': { $gt: rating } });
   const globalRank = higherCount + 1;
@@ -564,7 +500,7 @@ export async function getUserStatsCached(userId: string) {
     wins,
     losses: Math.max(totalMatches - wins, 0),
     draws: 0,
-    timeCoded: 0,
+    timeCoded,
     globalRank,
     rating,
   };
@@ -593,7 +529,7 @@ export async function getUserActivityCached(userId: string) {
   const db = client.db(DB_NAME);
   const matches = db.collection('matches');
 
-  const userObjectId = new (await import('mongodb')).ObjectId(userId);
+  const userObjectId = new ObjectId(userId);
   
   // Get matches from the last 7 days
   const sevenDaysAgo = new Date();
@@ -656,6 +592,7 @@ export async function getOngoingMatchesCount(): Promise<number> {
 
 export async function getActiveMatches() {
   try {
+    await assertAdminSession();
     const redis = getRedis();
     await connectDB();
     const client = await getMongoClient();
@@ -681,6 +618,11 @@ export async function getActiveMatches() {
         if (!matchRaw) continue;
         
         const matchData = JSON.parse(matchRaw);
+        
+        // Debug logging for bot completion times
+        if (matchData.botCompletionTimes) {
+          console.log(`Match ${matchId} has bot completion times:`, matchData.botCompletionTimes);
+        }
         
         // Skip if match is finished
         if (matchData.status === 'finished' || matchData.endedAt) continue;
@@ -710,14 +652,56 @@ export async function getActiveMatches() {
         const playerIds = Object.keys(matchData.players || {});
         
         for (const playerId of playerIds) {
-          const isBot = playerId.startsWith('bot:');
+          // Check if this is a bot by looking up in MongoDB
+          let isBot = false;
+          let botCompletionInfo = null;
+          let botUsername = null;
+          let botAvatar = null;
+          
+          try {
+            const user = await users.findOne(
+              { _id: new ObjectId(playerId) },
+              { projection: { username: 1, 'profile.avatar': 1, 'stats.rating': 1 } }
+            );
+            
+            if (!user) {
+              // Check if it's a bot
+              const bots = mongoDb.collection('bots');
+              const bot = await bots.findOne(
+                { _id: new ObjectId(playerId) },
+                { projection: { username: 1, avatar: 1 } }
+              );
+              
+              console.log(`Checking if ${playerId} is a bot:`, bot ? 'YES' : 'NO');
+              
+              if (bot) {
+                isBot = true;
+                botUsername = bot.username || `Bot ${playerId}`;
+                botAvatar = bot.avatar;
+                console.log(`Bot found: ${botUsername}`);
+                
+                // Get bot completion info from match data
+                console.log('Match data botCompletionTimes:', matchData.botCompletionTimes);
+                if (matchData.botCompletionTimes && matchData.botCompletionTimes[playerId]) {
+                  botCompletionInfo = matchData.botCompletionTimes[playerId];
+                  console.log(`Found bot completion info for ${botUsername}:`, botCompletionInfo);
+                } else {
+                  console.log(`No bot completion info found for ${playerId}`);
+                }
+              }
+            }
+          } catch (error) {
+            console.warn(`Could not check if ${playerId} is a bot:`, error);
+          }
+          
           const playerInfo = {
             userId: playerId,
-            username: matchData.players[playerId]?.username || playerId,
+            username: isBot ? botUsername : (matchData.players[playerId]?.username || playerId),
             isBot,
             rating: 1200,
             linesWritten: matchData.linesWritten?.[playerId] || 0,
-            avatar: undefined as string | undefined
+            avatar: isBot ? botAvatar : undefined,
+            botCompletionInfo
           };
           
           // Get real user data if not a bot
@@ -774,7 +758,11 @@ export async function getActiveMatches() {
     return { success: true, matches };
   } catch (error) {
     console.error('Error fetching active matches:', error);
-    return { success: false, error: 'Failed to fetch active matches', matches: [] };
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed to fetch active matches', 
+      matches: [] 
+    };
   }
 }
 
@@ -842,11 +830,16 @@ export async function getMatchData(matchId: string, userId: string) {
     const redis = getRedis();
     const matchKey = RedisKeys.matchKey(matchId);
     
+    console.log('Looking for match with key:', matchKey, 'for userId:', userId);
+    
     // Get match data from Redis
     const matchRaw = await redis.get(matchKey);
     if (!matchRaw) {
+      console.log('Match not found in Redis with key:', matchKey);
       return { success: false, error: 'match_not_found' };
     }
+    
+    console.log('Match found in Redis, parsing data...');
     
     const matchData = JSON.parse(matchRaw);
     const problem = matchData.problem;
@@ -855,13 +848,35 @@ export async function getMatchData(matchId: string, userId: string) {
     const playerUserIds = Array.isArray(matchData.players) 
       ? matchData.players 
       : Object.keys(matchData.players || {});
-    const opponentUserId = playerUserIds.find(id => id !== userId) || playerUserIds[0];
+    const opponentUserId = playerUserIds.find((id: string) => id !== userId) || playerUserIds[0];
     
-    // Get opponent stats
-    const opponentStats = await getUserStatsCached(opponentUserId);
+    // Get opponent stats (handle bots and guests)
+    let opponentStats;
+    if (opponentUserId.startsWith('guest_') || opponentUserId.length === 24) {
+      // Bot (24-char ObjectId) or guest opponent gets default stats
+      opponentStats = {
+        rating: 1200,
+        wins: 0,
+        losses: 0,
+        totalMatches: 0
+      };
+    } else {
+      opponentStats = await getUserStatsCached(opponentUserId);
+    }
     
-    // Get current user stats
-    const userStats = await getUserStatsCached(userId);
+    // Get current user stats (handle guest users)
+    let userStats;
+    if (userId.startsWith('guest_')) {
+      // Guest users get default stats
+      userStats = {
+        rating: 1200,
+        wins: 0,
+        losses: 0,
+        totalMatches: 0
+      };
+    } else {
+      userStats = await getUserStatsCached(userId);
+    }
     
     // Get opponent info from Redis playerData
     const opponentPlayerData = matchData.playerData?.[opponentUserId];
@@ -1105,7 +1120,6 @@ function calculateEloChange(winnerRating: number, loserRating: number, isDraw: b
  */
 async function updatePlayerStatsAndRatings(playerIds: string[], winnerUserId: string | null, isDraw: boolean, db: any, ratingChanges?: Record<string, { oldRating: number; newRating: number; change: number }>) {
   const users = db.collection('users');
-  const { ObjectId } = await import('mongodb');
   const redis = getRedis();
   
   // Use pre-calculated rating changes if available (from MatchRoom with difficulty adjustments)
@@ -1663,6 +1677,11 @@ export async function generateProblem(data: {
   difficulty: 'Easy' | 'Medium' | 'Hard';
   timeComplexity: string;
 }) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   // Rate limiting for admin operations
   const identifier = await getClientIdentifier();
   try {
@@ -2014,6 +2033,11 @@ Example 3 - TreeNode:
  * Verify an existing problem's solutions against test cases
  */
 export async function verifyProblemSolutions(problemId: string) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   // Rate limiting for admin operations
   const identifier = await getClientIdentifier();
   try {
@@ -2049,7 +2073,9 @@ export async function verifyProblemSolutions(problemId: string) {
     
     const validationResponse = await fetch(`${COLYSEUS_URL}/admin/validate-solutions`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
         signature: problem.signature,
         solutions: problem.solutions,
@@ -2181,6 +2207,11 @@ export async function verifyProblemSolutions(problemId: string) {
  * Fetch all unverified problems from the database
  */
 export async function getUnverifiedProblems() {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    throw new Error(adminError);
+  }
+
   try {
     await connectDB();
     const client = await getMongoClient();
@@ -2214,6 +2245,12 @@ export async function getUnverifiedProblems() {
     }));
   } catch (error: any) {
     console.error('Error fetching unverified problems:', error);
+    if (
+      error instanceof Error &&
+      (error.message === ADMIN_GUARD_ERROR || error.message === AUTH_REQUIRED_ERROR)
+    ) {
+      throw error;
+    }
     return [];
   }
 }
@@ -2222,6 +2259,11 @@ export async function getUnverifiedProblems() {
  * Get a single problem by ID for editing
  */
 export async function getProblemById(problemId: string) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    throw new Error(adminError);
+  }
+
   try {
     await connectDB();
     const client = await getMongoClient();
@@ -2251,6 +2293,12 @@ export async function getProblemById(problemId: string) {
     };
   } catch (error: any) {
     console.error('Error fetching problem:', error);
+    if (
+      error instanceof Error &&
+      (error.message === ADMIN_GUARD_ERROR || error.message === AUTH_REQUIRED_ERROR)
+    ) {
+      throw error;
+    }
     return null;
   }
 }
@@ -2262,6 +2310,11 @@ export async function updateProblem(problemId: string, updates: {
   testCases?: Array<{ input: Record<string, unknown>; output: unknown }>;
   solutions?: { python?: string; cpp?: string; java?: string; js?: string };
 }) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     await connectDB();
     const client = await getMongoClient();
@@ -2299,6 +2352,11 @@ export async function updateProblem(problemId: string, updates: {
  * Note: This does NOT delete user accounts or login information
  */
 export async function resetAllPlayerData() {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   // Rate limiting for admin actions
   const identifier = await getClientIdentifier();
   try {
@@ -2415,6 +2473,11 @@ export async function getUsers(
   searchTerm?: string, 
   searchType?: 'username' | 'id'
 ) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   // Rate limiting for admin operations
   const identifier = await getClientIdentifier();
   try {
@@ -2484,6 +2547,11 @@ export async function getTotalUsersCount(
   searchTerm?: string, 
   searchType?: 'username' | 'id'
 ) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   // Rate limiting for admin operations
   const identifier = await getClientIdentifier();
   try {
@@ -2531,6 +2599,11 @@ export async function getTotalUsersCount(
  * Update user fields (excluding password)
  */
 export async function updateUser(userId: string, updates: Partial<User>) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   // Rate limiting for admin operations
   const identifier = await getClientIdentifier();
   try {
@@ -2639,6 +2712,11 @@ export async function updateUser(userId: string, updates: Partial<User>) {
  * Get a single user by ID for editing
  */
 export async function getUserById(userId: string) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   // Rate limiting for admin operations
   const identifier = await getClientIdentifier();
   try {
@@ -2724,7 +2802,22 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
           from: 'users',
           localField: 'playerIds',
           foreignField: '_id',
-          as: 'players'
+          as: 'users'
+        }
+      },
+      {
+        $lookup: {
+          from: 'bots',
+          localField: 'playerIds',
+          foreignField: '_id',
+          as: 'bots'
+        }
+      },
+      {
+        $addFields: {
+          players: {
+            $concatArrays: ['$users', '$bots']
+          }
         }
       },
       {
@@ -2782,6 +2875,54 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
               { $toDate: '$endedAt' },
               { $toDate: '$startedAt' }
             ]
+          },
+          opponentBotStats: {
+            $cond: [
+              { $ne: ['$botStats', null] },
+              {
+                $let: {
+                  vars: {
+                    opponentId: {
+                      $arrayElemAt: [
+                        {
+                          $filter: {
+                            input: '$playerIds',
+                            cond: { $ne: ['$$this', userObjectId] }
+                          }
+                        },
+                        0
+                      ]
+                    }
+                  },
+                  in: {
+                    $cond: [
+                      { $ne: ['$$opponentId', null] },
+                      {
+                        $arrayElemAt: [
+                          {
+                            $objectToArray: '$botStats'
+                          },
+                          {
+                            $indexOfArray: [
+                              {
+                                $map: {
+                                  input: { $objectToArray: '$botStats' },
+                                  as: 'stat',
+                                  in: '$$stat.k'
+                                }
+                              },
+                              { $toString: '$$opponentId' }
+                            ]
+                          }
+                        ]
+                      },
+                      null
+                    ]
+                  }
+                }
+              },
+              null
+            ]
           }
         }
       },
@@ -2801,6 +2942,7 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
       
       // Try to get rating changes from Redis match data
       let ratingChange = 0;
+      let foundInRedis = false;
       try {
         const matchKey = RedisKeys.matchKey(match._id.toString());
         const matchData = await redis.get(matchKey);
@@ -2808,27 +2950,75 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
           const parsed = JSON.parse(matchData);
           if (parsed.ratingChanges && parsed.ratingChanges[userId]) {
             ratingChange = parsed.ratingChanges[userId].change || 0;
+            foundInRedis = true;
           }
         }
       } catch (error) {
         console.warn('Could not fetch rating changes from Redis for match:', match._id.toString());
       }
       
-      // Fetch opponent avatar using centralized function
-      let opponentAvatar = null;
-      const avatarResult = await getAvatarByIdAction(match.opponent._id.toString());
-      if (avatarResult.success) {
-        opponentAvatar = avatarResult.avatar;
+      // Fallback to MongoDB if Redis doesn't have the data
+      let ratingBefore = 0;
+      let ratingAfter = 0;
+      
+      // Always check MongoDB for ratingChanges (more reliable than Redis for old matches)
+      if (match.ratingChanges && typeof match.ratingChanges === 'object') {
+        const userIdStr = userObjectId.toString();
+        
+        // Try to find rating change data using various key formats
+        let rcData = null;
+        
+        // Try with userId string as key
+        if (match.ratingChanges[userIdStr]) {
+          rcData = match.ratingChanges[userIdStr];
+        }
+        // Try finding by any key that might match (fallback)
+        else {
+          for (const key in match.ratingChanges) {
+            if (String(key) === userIdStr || String(key) === String(userObjectId)) {
+              rcData = match.ratingChanges[key];
+              break;
+            }
+          }
+        }
+        
+        // Use the found rating change data
+        if (rcData) {
+          if (!foundInRedis) {
+            ratingChange = rcData.change || 0;
+          }
+          ratingBefore = rcData.old || 0;
+          ratingAfter = rcData.new || 0;
+        }
       }
       
+      // Fetch opponent avatar using centralized function
+      let opponentAvatar = null;
+      if (match.opponent && match.opponent._id) {
+        const avatarResult = await getAvatarByIdAction(match.opponent._id.toString());
+        if (avatarResult.success) {
+          opponentAvatar = avatarResult.avatar;
+        }
+      }
+      
+      // Extract bot stats if opponent is a bot
+      let opponentBotStats = null;
+      if (match.opponentBotStats && match.opponentBotStats.v) {
+        opponentBotStats = {
+          submissions: match.opponentBotStats.v.submissions || 0,
+          testCasesSolved: match.opponentBotStats.v.testCasesSolved || 0
+        };
+      }
+
       return {
         matchId: match._id.toString(),
-        opponent: {
+        opponent: match.opponent ? {
           userId: match.opponent._id.toString(),
           username: match.opponent.username,
           avatar: opponentAvatar,
-          rating: match.opponent.stats?.rating || 1200
-        },
+          rating: match.opponent.stats?.rating || 1200,
+          botStats: opponentBotStats
+        } : null,
         problem: {
           title: match.problem?.title || 'Unknown Problem',
           difficulty: match.problem?.difficulty || 'Medium',
@@ -2836,6 +3026,8 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
         },
         result: match.result,
         ratingChange: ratingChange,
+        ratingBefore: ratingBefore,
+        ratingAfter: ratingAfter,
         duration: match.duration,
         endedAt: match.endedAt,
         startedAt: match.startedAt
@@ -2884,7 +3076,22 @@ export async function getMatchDetails(matchId: string, userId: string) {
           from: 'users',
           localField: 'playerIds',
           foreignField: '_id',
-          as: 'players'
+          as: 'users'
+        }
+      },
+      {
+        $lookup: {
+          from: 'bots',
+          localField: 'playerIds',
+          foreignField: '_id',
+          as: 'bots'
+        }
+      },
+      {
+        $addFields: {
+          players: {
+            $concatArrays: ['$users', '$bots']
+          }
         }
       },
       {
@@ -2960,19 +3167,23 @@ export async function getMatchDetails(matchId: string, userId: string) {
         submissionsCount: submissions.length,
         testsPassed,
         totalTests,
-        bestSubmission: bestSubmission ? {
-          code: bestSubmission.sourceCode || '',
-          language: bestSubmission.language || 'unknown',
-          runtime: bestSubmission.time || undefined,
-          memory: bestSubmission.memory || undefined,
-          timeComplexity: 'O(n)', // Placeholder
-          spaceComplexity: 'O(1)' // Placeholder
-        } : undefined
       };
     };
 
     const userStats = getUserStats(userSubmissions);
     const opponentStats = getUserStats(opponentSubmissions);
+
+    // Extract bot stats if opponent is a bot
+    let opponentBotStats = null;
+    if (matchData.botStats && matchData.opponent) {
+      const opponentId = matchData.opponent._id.toString();
+      if (matchData.botStats[opponentId]) {
+        opponentBotStats = {
+          submissions: matchData.botStats[opponentId].submissions || 0,
+          testCasesSolved: matchData.botStats[opponentId].testCasesSolved || 0
+        };
+      }
+    }
 
     // Fetch avatars using centralized function
     let currentUserAvatar = null;
@@ -2983,13 +3194,16 @@ export async function getMatchDetails(matchId: string, userId: string) {
       currentUserAvatar = currentUserAvatarResult.avatar;
     }
     
-    const opponentAvatarResult = await getAvatarByIdAction(matchData.opponent._id.toString());
-    if (opponentAvatarResult.success) {
-      opponentAvatar = opponentAvatarResult.avatar;
+    // Check if opponent exists before accessing their avatar
+    if (matchData.opponent && matchData.opponent._id) {
+      const opponentAvatarResult = await getAvatarByIdAction(matchData.opponent._id.toString());
+      if (opponentAvatarResult.success) {
+        opponentAvatar = opponentAvatarResult.avatar;
+      }
     }
 
     // Try to get rating changes from Redis match data
-    let ratingChanges = {};
+    let ratingChanges: Record<string, { oldRating: number; newRating: number; change: number }> = {};
     try {
       const redis = getRedis();
       const matchKey = RedisKeys.matchKey(matchId);
@@ -3026,15 +3240,16 @@ export async function getMatchDetails(matchId: string, userId: string) {
           ratingChange: ratingChanges[userId]?.change || 0,
           ...userStats
         },
-        opponent: {
+        opponent: matchData.opponent ? {
           userId: matchData.opponent._id.toString(),
           username: matchData.opponent.username,
           avatar: opponentAvatar,
           ratingBefore: (ratingChanges[matchData.opponent._id.toString()]?.oldRating || matchData.opponent.stats?.rating || 1200),
           ratingAfter: (ratingChanges[matchData.opponent._id.toString()]?.newRating || matchData.opponent.stats?.rating || 1200),
           ratingChange: ratingChanges[matchData.opponent._id.toString()]?.change || 0,
-          ...opponentStats
-        }
+          ...opponentStats,
+          botStats: opponentBotStats
+        } : null
       }
     };
 
@@ -3048,12 +3263,18 @@ export async function getMatchDetails(matchId: string, userId: string) {
 // AI Bot Generation Functions
 
 export async function generateBotProfile(count: number, gender?: 'male' | 'female' | 'random') {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify({ count, gender }),
     });
 
@@ -3066,12 +3287,18 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
 }
 
 export async function generateBotAvatar(fullName: string, gender: 'male' | 'female' | 'nonbinary') {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/avatar`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify({ fullName, gender }),
     });
 
@@ -3084,29 +3311,65 @@ export async function generateBotAvatar(fullName: string, gender: 'male' | 'fema
 }
 
 export async function getBots() {
+  // Check admin access on server side first
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    console.error('Admin access denied:', adminError);
+    return { success: false, error: adminError };
+  }
+
   try {
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots`, {
+    // Get the session cookie to include in the request
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('codeclashers.sid');
+    
+    if (!sessionCookie) {
+      console.error('No session cookie found');
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    const url = `${REST_ENDPOINTS.API_BASE}/admin/bots`;
+    console.log('Fetching bots from:', url);
+    
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        'Cookie': `codeclashers.sid=${sessionCookie.value}`
       },
+      credentials: 'include' // Include cookies for authentication
     });
 
+    console.log('Response status:', response.status, response.statusText);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Response error:', errorText);
+      return { success: false, error: `HTTP ${response.status}: ${errorText}` };
+    }
+
     const result = await response.json();
+    console.log('Bots fetched successfully:', result);
     return result;
   } catch (error) {
     console.error('Error fetching bots:', error);
-    return { success: false, error: 'Failed to fetch bots' };
+    return { success: false, error: `Failed to fetch bots: ${error}` };
   }
 }
 
 export async function deployBots(botIds: string[], deploy: boolean) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/deploy`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json'
       },
+      credentials: 'include',
       body: JSON.stringify({ botIds, deploy }),
     });
 
@@ -3119,12 +3382,18 @@ export async function deployBots(botIds: string[], deploy: boolean) {
 }
 
 export async function updateBot(botId: string, updates: any) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/${botId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify(updates),
     });
 
@@ -3137,12 +3406,18 @@ export async function updateBot(botId: string, updates: any) {
 }
 
 export async function deleteBot(botId: string) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/${botId}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
     });
 
     const result = await response.json();
@@ -3154,12 +3429,18 @@ export async function deleteBot(botId: string) {
 }
 
 export async function resetBotData(resetType: 'stats' | 'all' = 'stats') {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/reset`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify({ resetType }),
     });
 
@@ -3172,12 +3453,18 @@ export async function resetBotData(resetType: 'stats' | 'all' = 'stats') {
 }
 
 export async function deleteAllBots() {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/reset`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify({ resetType: 'all' }),
     });
 
@@ -3190,12 +3477,18 @@ export async function deleteAllBots() {
 }
 
 export async function resetBotStats() {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
   try {
     const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/reset`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify({ resetType: 'stats' }),
     });
 
@@ -3266,5 +3559,100 @@ export async function getAvatarByIdAction(id: string) {
       success: false, 
       error: error.message || 'Failed to fetch avatar' 
     };
+  }
+}
+
+// Bot rotation management functions
+export async function setRotationConfig(maxDeployed: number) {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('codeclashers.sid');
+    
+    if (!sessionCookie) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/rotation/config`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `codeclashers.sid=${sessionCookie.value}`
+      },
+      credentials: 'include',
+      body: JSON.stringify({ maxDeployed }),
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error setting rotation config:', error);
+    return { success: false, error: 'Failed to set rotation config' };
+  }
+}
+
+export async function getRotationStatus() {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('codeclashers.sid');
+    
+    if (!sessionCookie) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/rotation/status`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `codeclashers.sid=${sessionCookie.value}`
+      },
+      credentials: 'include',
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error getting rotation status:', error);
+    return { success: false, error: 'Failed to get rotation status' };
+  }
+}
+
+export async function initializeRotationSystem() {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
+  try {
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('codeclashers.sid');
+    
+    if (!sessionCookie) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/rotation/init`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': `codeclashers.sid=${sessionCookie.value}`
+      },
+      credentials: 'include',
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error('Error initializing rotation system:', error);
+    return { success: false, error: 'Failed to initialize rotation system' };
   }
 }

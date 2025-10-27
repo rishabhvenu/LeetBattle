@@ -1,5 +1,6 @@
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import { getRedis } from './redis';
+import { getSession } from './session';
 
 // Create different rate limiters for different types of operations
 const redis = getRedis();
@@ -104,7 +105,6 @@ export async function getClientIdentifier(): Promise<string> {
     }
     
     // Fallback: try to get session-based identifier
-    const { getSession } = await import('./actions');
     const session = await getSession();
     if (session.userId) {
       return `user:${session.userId}`;
@@ -139,4 +139,3 @@ export async function checkRateLimit(
     return { remainingPoints: 0, msBeforeNext: 60000 };
   }
 }
-

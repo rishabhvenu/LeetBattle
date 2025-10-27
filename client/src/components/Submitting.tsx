@@ -43,11 +43,13 @@ export default function Submitting({
       className={`fixed inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity duration-300 ease-in-out z-50 ${
         isVisible ? "opacity-100" : "opacity-0 pointer-events-none"
       }`}
+      onClick={() => setSubmittingPage(false)}
     >
       <div
         className={`transform transition-transform duration-300 ease-in-out w-full max-w-lg mx-4 bg-white rounded-lg shadow-xl ${
           isVisible ? "translate-x-0" : "translate-x-full"
         }`}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-blue-200">

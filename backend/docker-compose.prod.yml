@@ -1,0 +1,118 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: codeclashers-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    restart: unless-stopped
+
+  judge0-server:
+    image: judge0/judge0:latest
+    container_name: codeclashers-judge0
+    depends_on:
+      - judge0-db
+      - redis
+    environment:
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      POSTGRES_HOST: codeclashers-judge0-db
+      POSTGRES_USER: ${JUDGE0_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${JUDGE0_POSTGRES_DB}
+    ports:
+      - "2358:2358"
+    restart: unless-stopped
+
+  judge0-worker:
+    image: judge0/judge0:latest
+    container_name: codeclashers-judge0-worker
+    command: ["./scripts/workers"]
+    depends_on:
+      - judge0-db
+      - redis
+    environment:
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      POSTGRES_HOST: codeclashers-judge0-db
+      POSTGRES_USER: ${JUDGE0_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${JUDGE0_POSTGRES_DB}
+    privileged: true
+    restart: unless-stopped
+
+  colyseus:
+    build:
+      context: ./colyseus
+      dockerfile: Dockerfile
+    container_name: codeclashers-colyseus
+    env_file:
+      - .env.production
+    environment:
+      PORT: 2567
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # MongoDB Atlas connection string (external)
+      MONGODB_URI: ${MONGODB_URI}
+      JUDGE0_URL: http://codeclashers-judge0:2358
+      NODE_ENV: production
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      BOTS_ENABLED: ${BOTS_ENABLED:-true}
+      BOT_FILL_DELAY_MS: ${BOT_FILL_DELAY_MS:-15000}
+      BOT_TIME_DIST: ${BOT_TIME_DIST:-lognormal}
+      # Example distribution params as JSON strings
+      BOT_TIME_PARAMS_EASY: ${BOT_TIME_PARAMS_EASY:-{"muMinutes":30,"sigma":0.35}}
+      BOT_TIME_PARAMS_MEDIUM: ${BOT_TIME_PARAMS_MEDIUM:-{"muMinutes":35,"sigma":0.35}}
+      BOT_TIME_PARAMS_HARD: ${BOT_TIME_PARAMS_HARD:-{"muMinutes":40,"sigma":0.35}}
+      # Internal service authentication
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
+      BOT_SERVICE_SECRET: ${BOT_SERVICE_SECRET}
+      COLYSEUS_RESERVATION_SECRET: ${COLYSEUS_RESERVATION_SECRET}
+      # AWS S3 configuration (no local MinIO)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+    depends_on:
+      - redis
+      - judge0-server
+    ports:
+      - "2567:2567"
+    restart: unless-stopped
+
+  bots:
+    build:
+      context: ./bots
+      dockerfile: Dockerfile
+    container_name: codeclashers-bots
+    environment:
+      REDIS_HOST: codeclashers-redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      BOT_COUNT: ${BOT_COUNT:-30}
+      BOT_SERVICE_SECRET: ${BOT_SERVICE_SECRET}
+      COLYSEUS_URL: ws://codeclashers-colyseus:2567
+    depends_on:
+      - redis
+      - colyseus
+    restart: unless-stopped
+
+  judge0-db:
+    image: postgres:15-alpine
+    container_name: codeclashers-judge0-db
+    environment:
+      POSTGRES_DB: ${JUDGE0_POSTGRES_DB}
+      POSTGRES_USER: ${JUDGE0_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD}
+    volumes:
+      - judge0_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  judge0_db_data:

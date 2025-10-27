@@ -3,12 +3,12 @@ import React, { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Users, X, Zap, Clock, Copy, Check } from "lucide-react";
+import { Loader2, Users, X, Zap, Clock, Copy, Check, Search, Play } from "lucide-react";
 import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from "framer-motion";
 import { Client, Room } from 'colyseus.js';
 
-interface MatchQueueProps { userId: string; rating: number; }
+interface MatchQueueProps { userId: string; username: string; rating: number; }
 
 interface PlayerInfo {
   userId: string;
@@ -19,9 +19,17 @@ interface PrivateRoomData {
   roomCode: string;
   players: PlayerInfo[];
   isCreator: boolean;
+  selectedProblemId?: string;
 }
 
-const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
+interface Problem {
+  _id: string;
+  title: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  topics: string[];
+}
+
+const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => {
   const searchParams = useSearchParams();
   const isPrivate = searchParams?.get('private') === 'true';
   const roomCodeParam = searchParams?.get('roomCode');
@@ -34,6 +42,11 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
   const [privateRoomData, setPrivateRoomData] = useState<PrivateRoomData | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
   const [isCreator, setIsCreator] = useState(false);
+  const [availableProblems, setAvailableProblems] = useState<Problem[]>([]);
+  const [selectedProblem, setSelectedProblem] = useState<Problem | null>(null);
+  const [difficultyFilter, setDifficultyFilter] = useState<string>('All');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isStartingMatch, setIsStartingMatch] = useState(false);
   const router = useRouter();
   const roomRef = useRef<Room | null>(null);
   const shouldCancelRef = useRef(true);
@@ -42,19 +55,19 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
     let isMounted = true;
 
     if (isPrivate && roomCodeParam) {
-      // Private room logic - simple Redis-based approach
+      // Private room logic - WebSocket-based approach
       const joinPrivateRoom = async () => {
         try {
           const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
           
-          // Join the private room
+          // First, get room info from HTTP endpoint
           const response = await fetch(`${base}/private/join`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
               roomCode: roomCodeParam, 
               userId, 
-              username: userId // You might want to get actual username from session
+              username: username
             })
           });
           
@@ -63,14 +76,62 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
             throw new Error(error.error || 'Failed to join room');
           }
           
-          const roomData = await response.json();
+          const roomInfo = await response.json();
           if (!isMounted) return;
           
-          setPrivateRoomData(roomData);
-          setIsCreator(roomData.isCreator);
+          // Now connect to the specific WebSocket room using the roomId from the HTTP response
+          const client = new Client(process.env.NEXT_PUBLIC_COLYSEUS_WS_URL!);
           
-          // Start polling for updates
-          pollPrivateRoom();
+          // Use join() instead of joinById to connect to existing room
+          const room = await client.join('private', { 
+            roomCode: roomCodeParam, 
+            userId, 
+            username 
+          });
+          
+          roomRef.current = room;
+          setIsCreator(roomInfo.isCreator);
+          
+          // Listen for player updates
+          room.onMessage('players_updated', (data) => {
+            if (!isMounted) return;
+            
+            setPrivateRoomData({
+              roomCode: roomCodeParam,
+              players: data.players,
+              isCreator: data.creatorId === userId
+            });
+            setIsCreator(data.creatorId === userId);
+          });
+          
+          // Listen for problem selection
+          room.onMessage('problem_selected', (data) => {
+            if (!isMounted) return;
+            
+            const problem = availableProblems.find(p => p._id === data.problemId);
+            if (problem) {
+              setSelectedProblem(problem);
+              toast.success(`Problem selected: ${problem.title}`);
+            }
+          });
+          
+          // Listen for match start
+          room.onMessage('match_started', (data) => {
+            if (!isMounted) return;
+            
+            console.log('Match started:', data);
+            shouldCancelRef.current = false;
+            toast.success('Match starting!');
+            router.push('/match');
+          });
+          
+          room.onMessage('error', (data) => {
+            if (!isMounted) return;
+            
+            toast.error(data.message);
+          });
+          
+          console.log('Connected to private room via WebSocket');
           
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to join room';
@@ -81,48 +142,14 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
         }
       };
 
-      const pollPrivateRoom = async () => {
-        try {
-          const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
-          const response = await fetch(`${base}/private/room?roomCode=${roomCodeParam}`);
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (!isMounted) return;
-            
-            setPrivateRoomData(data);
-            
-            // If we have 2 players, auto-start the match
-            if (data.players && data.players.length === 2) {
-              shouldCancelRef.current = false;
-              toast.success('Match starting!');
-              router.push('/match');
-              return;
-            }
-          } else {
-            // Room not found or error
-            toast.error('Private room not found or expired');
-            setQueueStatus('error');
-            return;
-          }
-        } catch (error) {
-          console.error('Error polling private room:', error);
-        }
-      };
-
       // Initial join
       joinPrivateRoom();
       
-      // Poll every 2 seconds for updates
-      const pollInterval = setInterval(() => {
-        if (isMounted && shouldCancelRef.current) {
-          pollPrivateRoom();
-        }
-      }, 2000);
-      
       return () => {
         isMounted = false;
-        clearInterval(pollInterval);
+        if (roomRef.current && shouldCancelRef.current) {
+          roomRef.current.leave();
+        }
       };
     } else {
       // Public queue logic (existing)
@@ -172,26 +199,6 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
         }
       };
 
-      const checkForMatch = async () => {
-        try {
-          const response = await fetch(
-            `${process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL}/queue/reservation?userId=${userId}`
-          );
-          
-          if (response.ok) {
-            console.log('Match reservation found! Redirecting...');
-            setQueueStatus('matched');
-            shouldCancelRef.current = false;
-            if (roomRef.current) {
-              try { roomRef.current.leave(); } catch {}
-            }
-            router.push('/match');
-          }
-        } catch {
-          // No reservation yet
-        }
-      };
-
       const fetchQueueStats = async () => {
         setQueueStats({
           playersInQueue: Math.floor(Math.random() * 100) + 50,
@@ -204,12 +211,10 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
       fetchQueueStats();
 
       const statsInterval = setInterval(fetchQueueStats, 5000);
-      const matchCheckInterval = setInterval(checkForMatch, 1000);
 
       return () => {
         isMounted = false;
         clearInterval(statsInterval);
-        clearInterval(matchCheckInterval);
         if (roomRef.current && shouldCancelRef.current) {
           try {
             roomRef.current.leave();
@@ -217,7 +222,53 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
         }
       };
     }
-  }, [userId, rating, router, isPrivate, roomCodeParam]);
+  }, [userId, username, rating, router, isPrivate, roomCodeParam, availableProblems]);
+
+  // Fetch available problems when component mounts
+  useEffect(() => {
+    const fetchProblems = async () => {
+      try {
+        const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+        const response = await fetch(`${base}/problems/list`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableProblems(data.problems || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch problems:', error);
+      }
+    };
+
+    if (isPrivate) {
+      fetchProblems();
+    }
+  }, [isPrivate]);
+
+  // Filter problems based on difficulty and search
+  const filteredProblems = availableProblems.filter(problem => {
+    const matchesDifficulty = difficultyFilter === 'All' || problem.difficulty === difficultyFilter;
+    const matchesSearch = problem.title.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesDifficulty && matchesSearch;
+  });
+
+  // Handle problem selection
+  const handleSelectProblem = (problem: Problem) => {
+    if (!isCreator || !roomRef.current) return;
+    
+    roomRef.current.send('select_problem', {
+      userId,
+      problemId: problem._id
+    });
+  };
+
+  // Handle starting the match
+  const handleStartMatch = () => {
+    if (!isCreator || !roomRef.current || privateRoomData?.players.length !== 2) return;
+    
+    setIsStartingMatch(true);
+    roomRef.current.send('start_match', { userId });
+  };
 
   const handleCancelQueue = async () => {
     try {
@@ -393,6 +444,153 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
                               </div>
                             </div>
 
+                            {/* Problem Selection (Host Only) */}
+                            {isCreator && (
+                              <div className="bg-white rounded-lg p-6 border border-blue-200">
+                                <h3 className="text-lg font-semibold text-black mb-4">Select Problem</h3>
+                                
+                                {/* Selected Problem Display */}
+                                {selectedProblem ? (
+                                  <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                                    <p className="text-sm text-green-700 font-medium">Selected Problem:</p>
+                                    <p className="text-black font-semibold">{selectedProblem.title}</p>
+                                    <div className="flex gap-2 mt-1">
+                                      <span className={`text-xs px-2 py-1 rounded ${
+                                        selectedProblem.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+                                        selectedProblem.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                        'bg-red-100 text-red-700'
+                                      }`}>
+                                        {selectedProblem.difficulty}
+                                      </span>
+                                      {selectedProblem.topics.slice(0, 2).map((topic, idx) => (
+                                        <span key={idx} className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                          {topic}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <p className="text-sm text-yellow-700">No problem selected - will use random Medium problem</p>
+                                  </div>
+                                )}
+
+                                {/* Difficulty Filter */}
+                                <div className="mb-4">
+                                  <p className="text-sm font-medium text-black mb-2">Filter by Difficulty:</p>
+                                  <div className="flex gap-2">
+                                    {['All', 'Easy', 'Medium', 'Hard'].map((diff) => (
+                                      <Button
+                                        key={diff}
+                                        variant={difficultyFilter === diff ? "default" : "outline"}
+                                        size="sm"
+                                        onClick={() => setDifficultyFilter(diff)}
+                                        className={difficultyFilter === diff ? "bg-blue-500 text-white" : ""}
+                                      >
+                                        {diff}
+                                      </Button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Search */}
+                                <div className="mb-4">
+                                  <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                                    <input
+                                      type="text"
+                                      placeholder="Search problems..."
+                                      value={searchQuery}
+                                      onChange={(e) => setSearchQuery(e.target.value)}
+                                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Problems List */}
+                                <div className="max-h-60 overflow-y-auto space-y-2">
+                                  {filteredProblems.map((problem) => (
+                                    <div
+                                      key={problem._id}
+                                      className={`p-3 border rounded-lg cursor-pointer transition-colors ${
+                                        selectedProblem?._id === problem._id
+                                          ? 'border-blue-500 bg-blue-50'
+                                          : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+                                      }`}
+                                      onClick={() => handleSelectProblem(problem)}
+                                    >
+                                      <div className="flex justify-between items-start">
+                                        <div className="flex-1">
+                                          <p className="font-medium text-black">{problem.title}</p>
+                                          <div className="flex gap-2 mt-1">
+                                            <span className={`text-xs px-2 py-1 rounded ${
+                                              problem.difficulty === 'Easy' ? 'bg-green-100 text-green-700' :
+                                              problem.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                              'bg-red-100 text-red-700'
+                                            }`}>
+                                              {problem.difficulty}
+                                            </span>
+                                            {problem.topics.slice(0, 3).map((topic, idx) => (
+                                              <span key={idx} className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded">
+                                                {topic}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        </div>
+                                        {selectedProblem?._id === problem._id && (
+                                          <Check className="h-5 w-5 text-blue-500" />
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Start Match Button (Host Only) */}
+                            {isCreator && (
+                              <div className="flex justify-center">
+                                <Button
+                                  className={`px-8 py-3 text-white font-semibold rounded-full transition-all duration-300 ${
+                                    privateRoomData.players.length === 2
+                                      ? 'bg-green-500 hover:bg-green-600 transform hover:scale-105'
+                                      : 'bg-gray-400 cursor-not-allowed'
+                                  }`}
+                                  onClick={handleStartMatch}
+                                  disabled={privateRoomData.players.length !== 2 || isStartingMatch}
+                                >
+                                  {isStartingMatch ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                                      Starting...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play className="mr-2 h-5 w-5" />
+                                      Start Match
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            )}
+
+                            {/* Status Message */}
+                            {isCreator ? (
+                              <p className="text-center text-black/60">
+                                {privateRoomData.players.length === 2 
+                                  ? "Ready to start the match!" 
+                                  : "Waiting for another player to join..."
+                                }
+                              </p>
+                            ) : (
+                              <p className="text-center text-black/60">
+                                {selectedProblem 
+                                  ? `Host selected: ${selectedProblem.title}` 
+                                  : "Host is selecting a problem..."
+                                }
+                              </p>
+                            )}
+
                             {/* Leave Button */}
                             <div className="flex justify-center">
                               <Button
@@ -404,10 +602,6 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, rating }) => {
                                 Leave Room
                               </Button>
                             </div>
-
-                            <p className="text-center text-black/60">
-                              Waiting for another player to join...
-                            </p>
                           </div>
                         ) : (
                           <>

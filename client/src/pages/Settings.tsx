@@ -10,12 +10,15 @@ import {
   User,
   Mail,
   Key,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "react-toastify";
 import { ToastContainer } from "@/components/ToastContainer";
-import { generatePresignedUploadUrl, saveUserAvatar } from "@/lib/actions";
+import { generatePresignedUploadUrl, saveUserAvatar, changePassword } from "@/lib/actions";
 import { useRouter } from "next/navigation";
+// Image import removed - using regular img tags instead
 import { getAvatarUrl } from "@/lib/utils";
 
 export default function SettingsPage({ session, restHandler }) {
@@ -25,6 +28,11 @@ export default function SettingsPage({ session, restHandler }) {
   const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
   const [isAvatarChanged, setIsAvatarChanged] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [passwordVisibility, setPasswordVisibility] = useState({
+    currentPassword: false,
+    newPassword: false,
+    confirmPassword: false,
+  });
   const [formData, setFormData] = useState({
     username: session?.username || "User",
     email: session?.email || "user@example.com",
@@ -40,6 +48,13 @@ export default function SettingsPage({ session, restHandler }) {
     setFormData((prevData) => ({
       ...prevData,
       [name]: value,
+    }));
+  };
+
+  const togglePasswordVisibility = (field: 'currentPassword' | 'newPassword' | 'confirmPassword') => {
+    setPasswordVisibility(prev => ({
+      ...prev,
+      [field]: !prev[field],
     }));
   };
 
@@ -90,28 +105,24 @@ export default function SettingsPage({ session, restHandler }) {
         toast.error("New password and confirm password do not match");
         return;
       }
-      if (restHandler) {
-        try {
-          await restHandler.updateSettings({
-            currentPassword: formData.currentPassword,
-            newPassword: formData.newPassword,
-          });
-          toast.success("Settings updated successfully!");
-        } catch (e) {
-          if (e.response.status === 429) {
-            toast.error("Too many requests! Please try again in a minute.");
-          } else if (e.response.data === "Invalid current password") {
-            toast.error("Current password is incorrect!");
-          } else if (
-            e.response.data === "Password must be at least 8 characters long"
-          ) {
-            toast.error("New password must be at least 8 characters long!");
-          } else {
-            toast.error(e.response.data + "!");
-          }
+      
+      try {
+        const result = await changePassword(formData.currentPassword, formData.newPassword);
+        if (result.success) {
+          toast.success("Password updated successfully!");
+          // Clear password fields after successful change
+          setFormData(prev => ({
+            ...prev,
+            currentPassword: "",
+            newPassword: "",
+            confirmPassword: "",
+          }));
+        } else {
+          toast.error(result.error || "Failed to update password");
         }
-      } else {
-        toast.info("Password change functionality not available in demo mode.");
+      } catch (error) {
+        console.error("Password change error:", error);
+        toast.error("An error occurred while changing password");
       }
     } else if (!isAvatarChanged) {
       toast.info("No changes to save.");
@@ -211,6 +222,8 @@ export default function SettingsPage({ session, restHandler }) {
                       <img 
                         src="/placeholder_avatar.png"
                         alt="Profile placeholder"
+                        width={96}
+                        height={96}
                         className="w-full h-full object-cover"
                       />
                     </AvatarFallback>
@@ -310,14 +323,27 @@ export default function SettingsPage({ session, restHandler }) {
                           ? "New Password"
                           : "Confirm New Password"}
                       </label>
-                      <Input
-                        id={field}
-                        name={field}
-                        type="password"
-                        value={formData[field as keyof typeof formData]}
-                        onChange={handleInputChange}
-                        className="bg-white border-blue-200 text-black"
-                      />
+                      <div className="relative">
+                        <Input
+                          id={field}
+                          name={field}
+                          type={passwordVisibility[field as keyof typeof passwordVisibility] ? "text" : "password"}
+                          value={formData[field as keyof typeof formData]}
+                          onChange={handleInputChange}
+                          className="bg-white border-blue-200 text-black pr-10"
+                        />
+                        <button
+                          type="button"
+                          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700 focus:outline-none"
+                          onClick={() => togglePasswordVisibility(field as 'currentPassword' | 'newPassword' | 'confirmPassword')}
+                        >
+                          {passwordVisibility[field as keyof typeof passwordVisibility] ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   )
                 )}

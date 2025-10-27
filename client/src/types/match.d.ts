@@ -53,6 +53,10 @@ export interface MatchHistoryItem {
     username: string;
     avatar?: string;
     rating: number;
+    botStats?: {
+      submissions: number;
+      testCasesSolved: number;
+    };
   };
   problem: {
     title: string;
@@ -61,6 +65,8 @@ export interface MatchHistoryItem {
   };
   result: 'win' | 'loss' | 'draw';
   ratingChange: number;
+  ratingBefore: number;
+  ratingAfter: number;
   duration: number; // in milliseconds
   endedAt: string;
   startedAt: string;
@@ -76,13 +82,9 @@ export interface PlayerMatchStats {
   submissionsCount: number;
   testsPassed: number;
   totalTests: number;
-  bestSubmission?: {
-    code: string;
-    language: string;
-    runtime?: string;
-    memory?: string;
-    timeComplexity?: string;
-    spaceComplexity?: string;
+  botStats?: {
+    submissions: number;
+    testCasesSolved: number;
   };
 }
 

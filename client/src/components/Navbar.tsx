@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
+// Image import removed - using regular img tags instead
 
 const navItems = [
   { to: "/", icon: Home, label: "Home" },
@@ -62,6 +63,8 @@ export default function Navbar({ session, logoutAction }: NavbarProps) {
               <img
                 src="/logo.png"
                 alt="LeetBattle Logo"
+                width={32}
+                height={32}
                 className="h-8 w-8"
               />
               <span className="text-xl font-semibold font-mono" style={{ color: '#2599D4' }}>
@@ -78,6 +81,8 @@ export default function Navbar({ session, logoutAction }: NavbarProps) {
               <img
                 src="/logo.png"
                 alt="LeetBattle Logo"
+                width={32}
+                height={32}
                 className="h-8 w-8"
               />
             </motion.div>

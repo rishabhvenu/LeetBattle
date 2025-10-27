@@ -43,6 +43,7 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
   const [roomCode, setRoomCode] = useState<string>('');
   const [isCreatingRoom, setIsCreatingRoom] = useState<boolean>(false);
   const [isJoiningRoom, setIsJoiningRoom] = useState<boolean>(false);
+  const [joinError, setJoinError] = useState<string>('');
 
   useEffect(() => {
     let mounted = true;
@@ -103,9 +104,24 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
   const handleCreatePrivateRoom = async () => {
     setIsCreatingRoom(true);
     try {
-      // Generate a room code and immediately join it
-      const roomCode = generateRoomCode();
-      router.push(`/queue?private=true&roomCode=${roomCode}`);
+      // Create the room on the backend first
+      const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+      const response = await fetch(`${base}/private/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          userId: session._id,
+          username: session.username || 'User'
+        })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        router.push(`/queue?private=true&roomCode=${data.roomCode}`);
+      } else {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to create room');
+      }
     } catch (error) {
       console.error('Error creating private room:', error);
       alert('Failed to create private room. Please try again.');
@@ -114,13 +130,39 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
     }
   };
 
-  const handleJoinPrivateRoom = () => {
+  const handleJoinPrivateRoom = async () => {
     if (!roomCode.trim()) {
-      alert('Please enter a room code');
+      setJoinError('Please enter a room code');
       return;
     }
-    // Redirect to queue page with room code to join
-    router.push(`/queue?private=true&roomCode=${roomCode.toUpperCase()}`);
+    
+    setIsJoiningRoom(true);
+    setJoinError(''); // Clear any previous errors
+    try {
+      // Join the room on the backend first
+      const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+      const response = await fetch(`${base}/private/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          roomCode: roomCode.toUpperCase(),
+          userId: session._id,
+          username: session.username || 'User'
+        })
+      });
+      
+      if (response.ok) {
+        router.push(`/queue?private=true&roomCode=${roomCode.toUpperCase()}`);
+      } else {
+        const error = await response.json();
+        setJoinError(error.error || 'Failed to join room. Please check the room code and try again.');
+      }
+    } catch (error) {
+      console.error('Error joining private room:', error);
+      setJoinError('Failed to join private room. Please check the room code and try again.');
+    } finally {
+      setIsJoiningRoom(false);
+    }
   };
 
   const generateRoomCode = (): string => {
@@ -258,6 +300,11 @@ export default function Play({ session, ongoingMatches }: { session: any; ongoin
                       >
                         {isJoiningRoom ? 'Joining...' : 'Join Private Room'}
                       </Button>
+                      {joinError && (
+                        <div className="mt-2 text-center">
+                          <p className="text-sm text-red-600">{joinError}</p>
+                        </div>
+                      )}
                       <div className="relative">
                         <div className="absolute inset-0 flex items-center">
                           <span className="w-full border-t border-blue-200"></span>

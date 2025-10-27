@@ -36,19 +36,18 @@ docker-compose ps
 docker-compose logs -f
 ```
 
-### Production Deployment (AWS)
+### Production Deployment (Oracle Cloud + AWS)
 
 **Production Stack:**
-- **EC2 (Private Subnet)** - Colyseus + Judge0 + Redis + Bot Service
+- **Oracle Cloud VM** - Colyseus + Judge0 + Redis + Bot Service
 - **MongoDB Atlas** - Managed MongoDB (not local container)
 - **AWS S3** - Avatar storage (not MinIO)
 
-See main README.md for complete production deployment guide with:
-- VPC and subnet configuration
-- Security group rules
-- ALB setup for private EC2
-- MongoDB Atlas connection
-- S3 bucket configuration
+**Use:** `docker-compose.prod.yml` for production (no MongoDB/MinIO)
+
+See `README-PROD.md` for complete production setup guide.
+
+The default `docker-compose.yml` is for local development only.
 
 ### 3. Verify Services Are Running
 

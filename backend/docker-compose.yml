@@ -111,6 +111,10 @@ services:
       BOT_TIME_PARAMS_EASY: ${BOT_TIME_PARAMS_EASY:-{"muMinutes":30,"sigma":0.35}}
       BOT_TIME_PARAMS_MEDIUM: ${BOT_TIME_PARAMS_MEDIUM:-{"muMinutes":35,"sigma":0.35}}
       BOT_TIME_PARAMS_HARD: ${BOT_TIME_PARAMS_HARD:-{"muMinutes":40,"sigma":0.35}}
+      # Internal service authentication
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-dev_internal_secret}
+      BOT_SERVICE_SECRET: ${BOT_SERVICE_SECRET:-dev_bot_secret}
+      COLYSEUS_RESERVATION_SECRET: ${COLYSEUS_RESERVATION_SECRET:-dev_secret}
     depends_on:
       - redis
       - mongodb

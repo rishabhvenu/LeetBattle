@@ -26,12 +26,12 @@ export default function AdminPageContent() {
   // Prevent hydration issues by not rendering until mounted
   if (!mounted) {
     return (
-      <div className="min-h-screen bg-gray-900 p-6">
+      <div className="min-h-screen bg-blue-50 p-6">
         <div className="max-w-7xl mx-auto">
           <div className="animate-pulse">
-            <div className="h-8 bg-gray-700 rounded w-1/4 mb-6"></div>
-            <div className="h-4 bg-gray-700 rounded w-1/2 mb-4"></div>
-            <div className="h-4 bg-gray-700 rounded w-3/4"></div>
+            <div className="h-8 bg-white/60 rounded w-1/4 mb-6"></div>
+            <div className="h-4 bg-white/60 rounded w-1/2 mb-4"></div>
+            <div className="h-4 bg-white/60 rounded w-3/4"></div>
           </div>
         </div>
       </div>
@@ -58,35 +58,41 @@ export default function AdminPageContent() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
-      <div className="max-w-7xl mx-auto">
+    <div className="min-h-screen bg-blue-50 p-6 relative overflow-hidden">
+      {/* Background decorative elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute left-0 top-0 h-[500px] w-[500px] bg-blue-400/8 rounded-full filter blur-3xl"></div>
+        <div className="absolute right-0 bottom-0 h-[500px] w-[500px] bg-cyan-400/6 rounded-full filter blur-3xl"></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 h-[600px] w-[600px] bg-blue-500/6 rounded-full filter blur-3xl"></div>
+      </div>
+      <div className="max-w-7xl mx-auto relative z-10">
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2 flex items-center gap-2">
-            <Settings className="h-8 w-8" />
+          <h1 className="text-3xl font-bold text-black mb-2 flex items-center gap-2">
+            <Settings className="h-8 w-8" style={{ color: '#2599D4' }} />
             Admin Panel
           </h1>
-          <p className="text-gray-400">Monitor matches, manage problems, users, and bot opponents</p>
+          <p className="text-black/70">Monitor matches, manage problems, users, and bot opponents</p>
         </div>
 
         <Tabs defaultValue="matches" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 bg-gray-800 border-gray-700">
-            <TabsTrigger value="matches" className="flex items-center gap-2 data-[state=active]:bg-gray-700">
+          <TabsList className="grid w-full grid-cols-5 h-14 bg-white/50 p-1 rounded-lg border border-blue-200 [&_[data-state=active]]:bg-[#2599D4] [&_[data-state=active]]:text-white">
+            <TabsTrigger value="matches" className="flex items-center gap-2 rounded-md h-12 text-lg font-medium transition-colors data-[state=inactive]:text-black/70 data-[state=inactive]:hover:text-black">
               <Eye className="h-4 w-4" />
               Active Matches
             </TabsTrigger>
-            <TabsTrigger value="problems" className="flex items-center gap-2 data-[state=active]:bg-gray-700">
+            <TabsTrigger value="problems" className="flex items-center gap-2 rounded-md h-12 text-lg font-medium transition-colors data-[state=inactive]:text-black/70 data-[state=inactive]:hover:text-black">
               <FileText className="h-4 w-4" />
               Problems
             </TabsTrigger>
-            <TabsTrigger value="users" className="flex items-center gap-2 data-[state=active]:bg-gray-700">
+            <TabsTrigger value="users" className="flex items-center gap-2 rounded-md h-12 text-lg font-medium transition-colors data-[state=inactive]:text-black/70 data-[state=inactive]:hover:text-black">
               <Users className="h-4 w-4" />
               Users
             </TabsTrigger>
-            <TabsTrigger value="bots" className="flex items-center gap-2 data-[state=active]:bg-gray-700">
+            <TabsTrigger value="bots" className="flex items-center gap-2 rounded-md h-12 text-lg font-medium transition-colors data-[state=inactive]:text-black/70 data-[state=inactive]:hover:text-black">
               <Bot className="h-4 w-4" />
               Bots
             </TabsTrigger>
-            <TabsTrigger value="settings" className="flex items-center gap-2 data-[state=active]:bg-gray-700">
+            <TabsTrigger value="settings" className="flex items-center gap-2 rounded-md h-12 text-lg font-medium transition-colors data-[state=inactive]:text-black/70 data-[state=inactive]:hover:text-black">
               <Settings className="h-4 w-4" />
               Settings
             </TabsTrigger>
@@ -111,33 +117,33 @@ export default function AdminPageContent() {
           <TabsContent value="settings">
             <div className="space-y-6">
               <div>
-                <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
-                  <Settings className="h-6 w-6" />
+                <h2 className="text-2xl font-bold text-black mb-2 flex items-center gap-2">
+                  <Settings className="h-6 w-6" style={{ color: '#2599D4' }} />
                   System Settings
                 </h2>
-                <p className="text-gray-400">Manage system-wide settings and dangerous operations</p>
+                <p className="text-black/70">Manage system-wide settings and dangerous operations</p>
               </div>
 
-          <Card className="bg-gray-800 border-gray-700">
+          <Card className="bg-white/90 border-blue-200 shadow-lg hover:shadow-xl transition-shadow duration-300">
             <CardHeader>
-                  <CardTitle className="text-white flex items-center gap-2">
-                    <Trash2 className="h-5 w-5 text-red-400" />
+                  <CardTitle className="text-black flex items-center gap-2">
+                    <Trash2 className="h-5 w-5 text-red-500" />
                     Danger Zone
                   </CardTitle>
-              <CardDescription className="text-gray-400">
+              <CardDescription className="text-black/70">
                     Irreversible actions that will permanently delete data
               </CardDescription>
             </CardHeader>
             <CardContent>
-                  <div className="flex items-center justify-between p-4 border border-red-600 rounded-lg bg-red-900/10">
+                  <div className="flex items-center justify-between p-4 border border-red-500 rounded-lg bg-red-50">
                                         <div>
-                      <h3 className="text-white font-medium">Reset All Player Data</h3>
-                      <p className="text-sm text-gray-400">This will permanently delete all player data including matches, submissions, and statistics.</p>
+                      <h3 className="text-black font-medium">Reset All Player Data</h3>
+                      <p className="text-sm text-black/70">This will permanently delete all player data including matches, submissions, and statistics.</p>
                     </div>
           <Button
             onClick={() => setResetDialogOpen(true)}
             variant="outline"
-            className="border-red-600 text-red-400 hover:bg-red-900/20"
+            className="border-red-500 text-red-600 hover:bg-red-50"
           >
                       Reset All Data
                     </Button>
@@ -151,10 +157,10 @@ export default function AdminPageContent() {
 
         {/* Reset Confirmation Dialog */}
         <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
-          <DialogContent className="bg-gray-800 border-gray-700">
+          <DialogContent className="bg-white border-blue-200">
             <DialogHeader>
-              <DialogTitle className="text-white">Reset All Player Data</DialogTitle>
-              <DialogDescription className="text-gray-400">
+              <DialogTitle className="text-black">Reset All Player Data</DialogTitle>
+              <DialogDescription className="text-black/70">
                 This will permanently delete all player data including matches, submissions, and statistics. This action cannot be undone.
               </DialogDescription>
             </DialogHeader>
@@ -162,7 +168,7 @@ export default function AdminPageContent() {
               <Button
                 onClick={() => setResetDialogOpen(false)}
                 variant="outline"
-                className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+                className="bg-white border-blue-200 text-black hover:bg-blue-50"
               >
                 Cancel
               </Button>

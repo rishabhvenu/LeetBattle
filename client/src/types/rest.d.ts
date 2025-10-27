@@ -14,6 +14,8 @@ export interface User {
     mediumProblemsSolved: number;
     hardProblemsSolved: number;
     gamesWon: number;
+    gamesLost: number;
+    gamesDrawn: number;
     gamesPlayed: number;
   };
 }

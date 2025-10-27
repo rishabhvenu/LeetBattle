@@ -20,7 +20,17 @@ jobs:
           set -e
           cd /opt/CodeClashers/backend
           git pull origin main
-          docker-compose down || true
-          docker-compose up -d
-          docker-compose ps
+          
+          # Use production docker-compose
+          docker-compose -f docker-compose.prod.yml down || true
+          
+          # Rebuild containers in case code changed
+          docker-compose -f docker-compose.prod.yml build --no-cache
+          
+          # Start services
+          docker-compose -f docker-compose.prod.yml up -d
+          
+          # Show status
+          docker-compose -f docker-compose.prod.yml ps
+          
           echo "Deployment complete!"

@@ -44,8 +44,12 @@ export default function Running({
         isVisible ? "translate-y-0" : "translate-y-full"
       }`}
       style={{ zIndex: 40 }}
+      onClick={() => setRunningPage(false)}
     >
-      <div className="flex flex-col h-full">
+      <div 
+        className="flex flex-col h-full"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
         <div className="relative px-6 py-4 border-b border-blue-200 bg-white/90">
           <div className="flex items-center justify-between">

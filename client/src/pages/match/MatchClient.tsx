@@ -8,8 +8,11 @@ import CountdownTimer from '@/components/CountdownTimer';
 import Running, { TestCaseResult } from '@/components/Running';
 import MatchupAnimation from '@/components/MatchupAnimation';
 import MatchResultAnimation from '@/components/MatchResultAnimation';
+import GuestSignUpModal from '../../components/GuestSignUpModal';
 import Editor from "@monaco-editor/react";
 import { getAvatarUrl } from '@/lib/utils';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+// Image import removed - using regular img tags instead
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -59,7 +62,19 @@ const difficultyConfig: Record<string, { color: string; bg: string; text: string
   hard: { color: "text-red-600", bg: "bg-red-100", text: "text-red-600", icon: Timer },
 };
 
-export default function MatchClient({ userId, username, userAvatar }: { userId: string; username: string; userAvatar?: string | null }) {
+export default function MatchClient({ 
+  userId, 
+  username, 
+  userAvatar, 
+  isGuest = false, 
+  guestMatchData = null 
+}: { 
+  userId: string; 
+  username: string; 
+  userAvatar?: string | null;
+  isGuest?: boolean;
+  guestMatchData?: any;
+}) {
   // Use refs to persist state across renders without leaking across component instances
   const roomRef = useRef<Room | null>(null);
   const joinPromiseRef = useRef<Promise<Room> | null>(null);
@@ -139,6 +154,12 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   const [showResultAnimation, setShowResultAnimation] = useState(false);
   const [matchResult, setMatchResult] = useState<{ winner: boolean; draw: boolean } | null>(null);
   const [ratingChanges, setRatingChanges] = useState<Record<string, { oldRating: number; newRating: number; change: number }> | null>(null);
+  const [showGuestSignUpModal, setShowGuestSignUpModal] = useState(false);
+  const [matchDataRetryCount, setMatchDataRetryCount] = useState(0);
+  const [matchInitReceived, setMatchInitReceived] = useState(false);
+  const [opponentTestCaseResults, setOpponentTestCaseResults] = useState<TestCaseResult[]>([]);
+  const [submissionResult, setSubmissionResult] = useState<any | null>(null);
+  const [opponentSubmissionResult, setOpponentSubmissionResult] = useState<any | null>(null);
   // roomRef defined at top of component (line 64)
   const matchupAnimationShownRef = useRef(false);
 
@@ -153,15 +174,29 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
 
   // Separate effect to load match data (runs even with cached room)
   useEffect(() => {
-    if (!matchId) {
+    if (!matchId && !isGuest) {
       console.log('No matchId yet, skipping data load');
       return;
     }
     
-    if (!connected) {
+    // For guests, we need to set the matchId from guestMatchData
+    if (isGuest && guestMatchData && !matchId) {
+      console.log('Setting matchId for guest from guestMatchData:', guestMatchData.matchId);
+      setMatchId(guestMatchData.matchId);
+    }
+    
+    // For guests, wait for match_init before loading data
+    if (isGuest && !matchInitReceived) {
+      console.log('Guest user waiting for match_init message...');
+      return;
+    }
+    
+    if (!connected && !isGuest) {
       console.log('Not connected yet, waiting for room join...');
       return;
     }
+    
+    // Guests follow the same flow as regular users
     
     console.log('Loading match data for matchId:', matchId);
     
@@ -169,27 +204,41 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
       try {
         const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
         
-        // Load full match data (problem and opponent)
+        // All users (including guests) follow the same data loading flow
+        
+        // Load full match data (problem and opponent) for all users
+        console.log('Loading match data for matchId:', matchId, 'userId:', userId, 'isGuest:', isGuest);
+        console.log('Match key would be:', `match:${matchId}`);
+        
+        if (!matchId) {
+          console.log('No matchId available for data loading');
+          return;
+        }
+        
         const matchDataResult = await getMatchData(matchId, userId);
+        console.log('Match data result:', matchDataResult);
         
         if (!matchDataResult.success) {
           console.error('Failed to load match data:', matchDataResult.error);
           
-          // If match key doesn't exist yet, retry after a short delay
-          if (matchDataResult.error === 'match_not_found' && roomRef.current) {
-            console.log('Match data not ready yet, retrying in 500ms...');
+          // If match key doesn't exist yet, retry after a short delay (max 5 retries)
+          if (matchDataResult.error === 'match_not_found' && roomRef.current && matchDataRetryCount < 5) {
+            console.log(`Match data not ready yet, retrying in 1000ms... (attempt ${matchDataRetryCount + 1}/5)`);
+            setMatchDataRetryCount(prev => prev + 1);
             setTimeout(() => {
               loadMatchData();
-            }, 500);
+            }, 1000);
             return;
           }
           
-          // Clear potentially stale reservation and redirect to queue
+        // Clear potentially stale reservation and redirect to queue
+        if (userId) {
           await fetch(`${base}/queue/clear`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId })
           });
+        }
           toast.error('Match no longer exists. Redirecting to queue...');
           setTimeout(() => {
             window.location.href = '/queue';
@@ -302,7 +351,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
     };
     
     loadMatchData();
-  }, [matchId, userId, language, connected]); // Added connected to wait for room join
+  }, [matchId, userId, language, connected, matchInitReceived]); // Added matchInitReceived for guests
 
   useEffect(() => {
     // Use ref-based singleton to prevent duplicate joins from React Strict Mode
@@ -335,8 +384,207 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
       return;
     }
     
+    const setupRoomMessageHandlers = (room: Room) => {
+      console.log('Setting up message handlers for room:', room.id, 'isGuest:', isGuest);
+      
+      // Setup room event handlers for both guest and regular users
+      room.onMessage('code_update', (payload) => {
+        console.log('Received code_update:', payload);
+        if (payload?.userId && payload.userId !== userId) {
+          setOpponentLines(payload.lines || 0);
+        }
+      });
+        
+      room.onMessage('kicked', () => {
+        toast.error('You were disconnected: another connection detected.');
+        try { room.leave(); } catch {}
+      });
+      
+      // Receive match initialization data via WebSocket
+      room.onMessage('match_init', (payload) => {
+        console.log('Received match_init:', payload);
+        console.log('Current loading state before clearing:', loading);
+        console.log('Is guest user:', isGuest);
+        
+        // For guests, mark that match is ready and trigger data load
+        if (isGuest) {
+          setMatchInitReceived(true);
+          console.log('Guest user: match_init received, match is ready');
+        }
+        
+        // Don't clear loading state here - let loadMatchData handle it after real data is loaded
+        
+        // Set match start time from the server
+        if (payload.startedAt) {
+          const startTime = new Date(payload.startedAt).getTime();
+          setMatchStartTime(startTime);
+          console.log('Match started at (from WebSocket):', new Date(startTime).toISOString());
+          
+          // Trigger matchup animation (only once)
+          if (!matchupAnimationShownRef.current) {
+            setShowMatchupAnimation(true);
+            matchupAnimationShownRef.current = true;
+            console.log('Matchup animation triggered for guest');
+          }
+        }
+        
+        // Restore lines written
+        if (payload.linesWritten) {
+          setLines(payload.linesWritten[userId] || 0);
+          const otherUserId = Object.keys(payload.linesWritten).find((u: string) => u !== userId);
+          if (otherUserId) {
+            setOpponentLines(payload.linesWritten[otherUserId] || 0);
+          }
+        }
+      });
+      
+      // Listen for new submissions (from backend with correct data)
+      room.onMessage('new_submission', (payload) => {
+        console.log('New submission received:', payload);
+        // Handle submissions for this user
+        if (payload.userId === userId) {
+          const formattedSubmission = formatSubmission(payload.submission);
+          setSubmissions(prev => [formattedSubmission, ...prev]);
+          setActiveTab('submissions');
+          const passed = payload.submission.testResults?.filter((t: TestCaseResult) => t.status === 3).length || 0;
+          setUserTestsPassed(passed);
+        } else {
+          // Handle submissions for opponent
+          const formattedSubmission = formatSubmission(payload.submission);
+          setSubmissions(prev => [formattedSubmission, ...prev]);
+          const passed = payload.submission.testResults?.filter((t: TestCaseResult) => t.status === 3).length || 0;
+          setOpponentTestsPassed(passed);
+        }
+      });
+
+      room.onMessage('rate_limit', ({ action }) => {
+        const msg = action === 'submit_code' ? 'Too many submits. Slow down.' : 'Too many test runs.';
+        toast.info(msg);
+      });
+
+      room.onMessage('match_winner', (payload) => {
+        console.log('Match winner received:', payload);
+        const isWinner = payload.userId === userId;
+
+        setMatchResult({ winner: isWinner, draw: false });
+        setRatingChanges(payload.ratingChanges || null);
+
+        if (isGuest) {
+          // For guests, show sign-up modal after 2 seconds
+          setTimeout(() => {
+            setShowGuestSignUpModal(true);
+          }, 2000);
+        } else {
+          setShowResultAnimation(true);
+        }
+      });
+
+      room.onMessage('match_draw', (payload) => {
+        console.log('Match draw received:', payload);
+
+        setMatchResult({ winner: false, draw: true });
+        setRatingChanges(payload.ratingChanges || null);
+
+        if (isGuest) {
+          // For guests, show sign-up modal after 2 seconds
+          setTimeout(() => {
+            setShowGuestSignUpModal(true);
+          }, 2000);
+        } else {
+          setShowResultAnimation(true);
+        }
+      });
+
+      room.onMessage('test_submission_result', (payload) => {
+        console.log('Test results received:', payload);
+        setIsRunning(false);
+        if (payload.userId === userId) {
+          setTestCaseResults(payload.testResults);
+          const passed = payload.testResults?.filter((t: TestCaseResult) => t.status === 3).length || 0;
+          setUserTestsPassed(passed);
+        } else {
+          setOpponentTestCaseResults(payload.testResults);
+          const passed = payload.testResults?.filter((t: TestCaseResult) => t.status === 3).length || 0;
+          setOpponentTestsPassed(passed);
+        }
+      });
+
+      room.onMessage('submission_result', (payload) => {
+        console.log('Submission results received:', payload);
+        setIsSubmitting(false);
+        if (payload.userId === userId) {
+          setSubmissionResult(payload);
+        } else {
+          setOpponentSubmissionResult(payload);
+        }
+      });
+
+      room.onMessage('complexity_failed', (payload) => {
+        console.log('Complexity check failed:', payload);
+        // User passed all tests but failed complexity
+        if (payload.userId === userId) {
+          setIsSubmitting(false); // Stop the submitting bar
+          // Show modal with complexity failure details
+          const complexityFailureResult = {
+            ...payload,
+            allPassed: false,
+            errorType: 'complexity',
+            complexityError: 'All tests passed, but your solution does not meet the required time complexity.',
+            expectedComplexity: payload.expectedComplexity,
+            timeComplexity: payload.derivedComplexity,
+            language: payload.language || language
+          };
+          setLatestSubmissionResult(complexityFailureResult);
+          setShowSubmissionResultPopup(true);
+        }
+      });
+
+      // Handle bot test progress updates
+      room.onMessage('test_progress_update', (payload) => {
+        console.log('Test progress update received:', payload);
+        if (payload?.userId && payload.userId !== userId) {
+          setOpponentTestsPassed(payload.testsPassed || 0);
+        }
+      });
+    };
+
     const doJoin = async (): Promise<Room> => {
       try {
+        // Handle guest users differently
+        if (isGuest) {
+          if (!guestMatchData) {
+            // Guest has no match data, redirect to queue
+            window.location.href = '/queue';
+            throw new Error('No guest match data');
+          }
+          
+          if (!guestMatchData.roomId) {
+            window.location.href = '/queue';
+            throw new Error('No roomId in guest match data');
+          }
+          
+          // For guests, we need to get the reservation from the guest match data
+          const reservation = {
+            roomId: guestMatchData.roomId,
+            matchId: guestMatchData.matchId
+          };
+          
+          const client = new Client(process.env.NEXT_PUBLIC_COLYSEUS_WS_URL!);
+          console.log('Guest attempting to join room:', reservation.roomId, 'with userId:', userId);
+          console.log('Colyseus WS URL:', process.env.NEXT_PUBLIC_COLYSEUS_WS_URL);
+          
+          const room = await client.joinById(reservation.roomId, { userId, matchId: reservation.matchId });
+          console.log('Guest successfully joined room:', room.id);
+          console.log('Room state:', room.state);
+          
+          // Set up room reference and connection state
+          roomRef.current = room;
+          setConnected(true);
+          
+          return room;
+        }
+        
+        // Regular authenticated user flow
         // Get fresh reservation from server
         console.log('Consuming reservation for userId:', userId);
         const res = await consumeReservation(userId);
@@ -377,134 +625,16 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
         roomRef.current = room;
         setConnected(true);
         
-        // Setup room event handlers
-      room.onMessage('code_update', (payload) => {
-          console.log('Received code_update:', payload);
-          if (payload?.userId && payload.userId !== userId) {
-          setOpponentLines(payload.lines || 0);
-        }
-      });
+        console.log('Room connected, setting up message handlers for guest:', isGuest);
         
-      room.onMessage('kicked', () => {
-        toast.error('You were disconnected: another connection detected.');
-        try { room.leave(); } catch {}
-      });
-      
-      // Receive match initialization data via WebSocket
-      room.onMessage('match_init', (payload) => {
-        console.log('Received match_init:', payload);
-        
-        // Set match start time from the server
-        if (payload.startedAt) {
-          const startTime = new Date(payload.startedAt).getTime();
-          setMatchStartTime(startTime);
-          console.log('Match started at (from WebSocket):', new Date(startTime).toISOString());
-          
-          // Trigger matchup animation (only once)
-          if (!matchupAnimationShownRef.current) {
-            setShowMatchupAnimation(true);
-            matchupAnimationShownRef.current = true;
-          }
-        }
-        
-        // Restore lines written
-        if (payload.linesWritten) {
-          setLines(payload.linesWritten[userId] || 0);
-          const otherUserId = Object.keys(payload.linesWritten).find((u: string) => u !== userId);
-          if (otherUserId) {
-            setOpponentLines(payload.linesWritten[otherUserId] || 0);
-          }
-        }
-      });
-      
-      // Listen for new submissions (from backend with correct data)
-      room.onMessage('new_submission', (payload) => {
-        console.log('New submission received:', payload);
-        // Handle submissions for this user
-        if (payload.userId === userId) {
-          const formattedSubmission = formatSubmission(payload.submission);
-          setSubmissions(prev => [formattedSubmission, ...prev]);
-          setActiveTab('submissions');
-          
-          // Show submission result popup
-          setLatestSubmissionResult(formattedSubmission);
-          setShowSubmissionResultPopup(true);
-        } else {
-          // Opponent submission - update their solved count
-          console.log('Opponent submission:', payload.submission);
-          if (payload.submission?.passed) {
-            setOpponentTestsPassed(problem?.testCasesCount || 0);
-          } else if (payload.submission?.testResults) {
-            const passed = payload.submission.testResults.filter((t: any) => t.status === 3).length;
-            setOpponentTestsPassed(passed);
-          }
-        }
-      });
-        
-      room.onMessage('rate_limit', ({ action }) => {
-        const msg = action === 'submit_code' ? 'Too many submits. Slow down.' : 'Too many test runs.';
-        toast.info(msg);
-      });
-
-      room.onMessage('match_winner', (payload) => {
-        console.log('Match winner received:', payload);
-        const isWinner = payload.userId === userId;
-        
-        setMatchResult({ winner: isWinner, draw: false });
-        setRatingChanges(payload.ratingChanges || null);
-        setShowResultAnimation(true);
-      });
-
-      room.onMessage('match_draw', (payload) => {
-        console.log('Match draw received:', payload);
-        
-        setMatchResult({ winner: false, draw: true });
-        setRatingChanges(payload.ratingChanges || null);
-        setShowResultAnimation(true);
-      });
-        
-        room.onMessage('test_submission_result', (payload) => {
-          console.log('Test results received:', payload);
-          setIsRunning(false);
-          
-          if (payload.success) {
-            const testResults = payload.testResults || [];
-            setTestCaseResults(testResults);
-            
-            // Calculate test summary
-            const passedTests = testResults.filter((result: any) => result.status === 3).length;
-            setTestSummary({ passed: passedTests, total: testResults.length });
-            
-            setRunPage(true);
-          } else {
-            toast.error(payload.error || 'Test run failed');
-          }
-        });
-        
-        room.onMessage('submission_result', (payload) => {
-          console.log('Submission results received:', payload);
-          setIsSubmitting(false);
-          
-          if (payload.success) {
-            // Update test cases passed count
-            if (payload.allPassed) {
-              setUserTestsPassed(payload.totalTests || problem?.testCasesCount || 0);
-            } else {
-              const passed = payload.passedTests || 0;
-              setUserTestsPassed(passed);
-            }
-          }
-        });
-
-        room.onMessage('complexity_failed', (payload) => {
-          console.log('Complexity check failed:', payload);
-          // User passed all tests but failed complexity
-          setUserTestsPassed(problem?.testCasesCount || 0);
-          setIsSubmitting(false);
-        });
+        // Message handlers are now set up in setupRoomMessageHandlers function
 
         // Store matchId on room for later access
         (room as unknown as { matchId?: string }).matchId = matchIdValue;
+        
+        // Set up room reference and connection state
+        roomRef.current = room;
+        setConnected(true);
         
         return room;
       } catch (error) {
@@ -520,7 +650,10 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
     
     // Start the join process with ref-based promise
     joinPromiseRef.current = doJoin();
-    joinPromiseRef.current.catch(() => {});
+    joinPromiseRef.current.then(room => {
+      // Set up message handlers for both guest and regular users
+      setupRoomMessageHandlers(room);
+    }).catch(() => {});
     
     // Cleanup: leave room when window closes
     if (typeof window !== 'undefined') {
@@ -547,6 +680,21 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
     const l = (code.match(/\n/g)?.length || 0) + (code ? 1 : 0);
     setLines(l);
   }, [code]);
+
+  // Handle submission results and show popup
+  useEffect(() => {
+    if (submissionResult) {
+      // Only show popup if tests didn't pass (don't show modal on win)
+      if (!submissionResult.allPassed) {
+        // The payload contains the submission object directly or nested
+        const submission = submissionResult.submission || submissionResult;
+        // Format the submission to match UI expectations
+        const formatted = formatSubmission(submission);
+        setLatestSubmissionResult(formatted);
+        setShowSubmissionResultPopup(true);
+      }
+    }
+  }, [submissionResult, language]);
 
   const handleCodeChange = (value: string | undefined) => {
     const newCode = value || '';
@@ -707,6 +855,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
     
     setIsRunning(true);
     setTestCaseResults([]);
+    setRunPage(true); // Show the run window
     roomRef.current.send('test_submit_code', { userId, language, source_code: code });
   };
 
@@ -749,20 +898,23 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
   // Helper function to render profile picture
   const renderProfilePicture = (avatar: string | null | undefined, isOpponent: boolean = false) => {
     const avatarUrl = getAvatarUrl(avatar);
+    const initials = isOpponent ? 'O' : 'Y'; // Opponent or You
     return (
-      <img 
-        src={avatarUrl}
-        alt="Profile"
-        className="w-10 h-10 rounded-full object-cover border-2"
-        style={{ borderColor: isOpponent ? '#ef4444' : '#2599D4' }}
-        onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
-          e.currentTarget.src = '/placeholder_avatar.png';
-        }}
-      />
+      <Avatar className="w-10 h-10 border-2" style={{ borderColor: isOpponent ? '#ef4444' : '#2599D4' }}>
+        {avatarUrl ? (
+          <AvatarImage
+            src={avatarUrl}
+            alt="Profile"
+          />
+        ) : null}
+        <AvatarFallback className="bg-gray-200 text-gray-600 font-semibold">
+          {initials}
+        </AvatarFallback>
+      </Avatar>
     );
   };
 
-  if (loading || !matchStartTime) {
+  if (loading || !matchStartTime || !problem || !opponentStats.name) {
     return (
       <div className="w-screen h-screen flex items-center justify-center bg-blue-50 relative overflow-hidden">
         {/* Background decorative elements */}
@@ -903,8 +1055,8 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
 
                         {/* Problem Description */}
                         <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-md">
-                          <div className="max-w-2xl mx-auto">
-                            <p className="text-gray-700 leading-relaxed whitespace-pre-line text-base">
+                          <div className="w-full">
+                            <p className="text-gray-700 leading-relaxed whitespace-pre-line text-base text-left">
                               {problem.description}
                             </p>
                           </div>
@@ -1032,10 +1184,10 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           </div>
         </ResizablePanel>
         
-        <ResizableHandle className="w-1 bg-blue-200 hover:bg-[#2599D4] transition-colors" />
+        <ResizableHandle className="w-1 bg-gray-200 hover:bg-gray-300 transition-colors" />
         
         <ResizablePanel className="h-full" defaultSize={55} minSize={35}>
-          <div className="h-full flex flex-col bg-slate-900">
+          <div className="h-full flex flex-col bg-white">
             {/* Language selector and buttons */}
             <div className="flex items-center justify-between px-4 h-12 bg-white/90 flex-shrink-0">
             <Select value={language} onValueChange={handleLanguageChange}>
@@ -1120,7 +1272,7 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
               height="100%"
               language={language}
               value={code}
-              theme="vs-dark"
+              theme="vs"
               onChange={handleCodeChange}
               options={{
                 minimap: { enabled: false },
@@ -1375,13 +1527,13 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
               <h3 className="text-lg font-semibold text-black mb-4">
                 Code | {selectedSubmission.language}
               </h3>
-              <div className="bg-gray-900 rounded-lg overflow-hidden">
+              <div className="bg-white rounded-lg overflow-hidden border border-gray-200">
                 <div style={{ position: 'relative', pointerEvents: 'none' }}>
                   <Editor
                     height="300px"
                     language={selectedSubmission.language.toLowerCase()}
                     value={selectedSubmission.code}
-                    theme="vs-dark"
+                    theme="vs"
                     options={{
                       readOnly: true,
                       minimap: { enabled: false },
@@ -1443,6 +1595,17 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
           }}
           onBackToHome={handleBackToHome}
           onJoinQueue={handleJoinQueue}
+        />
+      )}
+
+      {/* Guest Sign-Up Modal */}
+      {showGuestSignUpModal && isGuest && (
+        <GuestSignUpModal
+          matchResult={matchResult}
+          testsPassed={userTestsPassed}
+          totalTests={totalTests}
+          opponentName={opponentStats.name}
+          onClose={() => setShowGuestSignUpModal(false)}
         />
       )}
 
@@ -1651,15 +1814,15 @@ export default function MatchClient({ userId, username, userAvatar }: { userId: 
             {/* Code Section */}
             <div className="p-6">
               <h3 className="text-lg font-semibold text-black mb-4">
-                Code | {latestSubmissionResult.language}
+                Code | {latestSubmissionResult.language || language}
               </h3>
-              <div className="bg-gray-900 rounded-lg overflow-hidden">
+              <div className="bg-white rounded-lg overflow-hidden border border-gray-200">
                 <div style={{ position: 'relative', pointerEvents: 'none' }}>
                   <Editor
                     height="300px"
-                    language={latestSubmissionResult.language.toLowerCase()}
+                    language={latestSubmissionResult.language?.toLowerCase() || language}
                     value={latestSubmissionResult.code}
-                    theme="vs-dark"
+                    theme="vs"
                     options={{
                       readOnly: true,
                       minimap: { enabled: false },

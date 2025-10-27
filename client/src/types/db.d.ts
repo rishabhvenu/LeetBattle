@@ -98,6 +98,10 @@ export interface MatchDoc {
   mode?: 'public' | 'private';
   ratingDelta?: number;           // optional rating change
   status: 'ongoing' | 'finished'; // current status of the match
+  botStats?: Record<string, {     // Bot statistics for this match
+    submissions: number;          // Number of submissions made by bot
+    testCasesSolved: number;      // Number of test cases solved by bot
+  }>;
 }
 
 // Suggested collection names (to keep consistency across codebase)

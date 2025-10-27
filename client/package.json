@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
@@ -43,6 +43,8 @@
     "ioredis": "^5.8.1",
     "lucide-react": "^0.545.0",
     "monaco-themes": "^0.4.7",
+    "mongodb": "^6.20.0",
+    "mongoose": "^8.19.2",
     "next": "15.5.4",
     "next-auth": "^4.24.5",
     "openai": "^6.2.0",
@@ -71,6 +73,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.4",
     "postcss": "^8.5.6",
+    "sst": "^3.17.21",
     "tailwindcss": "^3.4.18",
     "typescript": "^5"
   }

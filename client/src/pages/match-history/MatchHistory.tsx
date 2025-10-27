@@ -18,6 +18,7 @@ import { MatchHistoryItem, MatchDetails } from "@/types/match";
 import { getMatchHistory, getMatchDetails, getAvatarByIdAction } from '@/lib/actions';
 import { getAvatarUrl } from '@/lib/utils';
 import MatchDetailsModal from '@/components/MatchDetailsModal';
+// Image import removed - using regular img tags instead
 
 interface MatchHistoryProps {
   initialData: {
@@ -155,23 +156,6 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
     }
   };
 
-  const getResultText = (result: string) => {
-    switch (result) {
-      case 'win': return 'WIN';
-      case 'loss': return 'LOSS';
-      case 'draw': return 'DRAW';
-      default: return 'UNKNOWN';
-    }
-  };
-
-  const getResultTextColor = (result: string) => {
-    switch (result) {
-      case 'win': return 'text-green-600';
-      case 'loss': return 'text-red-600';
-      case 'draw': return 'text-blue-600';
-      default: return 'text-gray-600';
-    }
-  };
 
   return (
     <div className="flex-1 bg-blue-50 min-h-screen relative overflow-hidden">
@@ -235,12 +219,6 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                           onClick={() => handleMatchClick(match.matchId)}
                         >
                           <CardContent className="p-6 relative">
-                            {/* Result Badge - Top Right */}
-                            <div className="absolute top-4 right-4">
-                              <div className={`px-4 py-2 rounded-full ${getResultColor(match.result)} font-bold text-sm shadow-lg`}>
-                                {getResultText(match.result)}
-                              </div>
-                            </div>
 
                             <div className="flex items-center justify-between">
                               {/* Current User */}
@@ -254,6 +232,8 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                                     <img 
                                       src="/placeholder_avatar.png"
                                       alt="Profile placeholder"
+                                      width={48}
+                                      height={48}
                                       className="w-full h-full object-cover"
                                     />
                                   </AvatarFallback>
@@ -261,7 +241,7 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                                 <div className="text-left">
                                   <div className="font-semibold text-black">You</div>
                                   <div className="text-sm text-black/70">
-                                    Rating: {1200 + match.ratingChange}
+                                    Rating: {match.ratingAfter || 1200}
                                     {match.ratingChange !== 0 && (
                                       <span className={`ml-1 font-semibold ${match.ratingChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
                                         ({match.ratingChange > 0 ? '+' : ''}{match.ratingChange})
@@ -279,9 +259,11 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                               {/* Opponent */}
                               <div className="flex items-center gap-4">
                                 <div className="text-right">
-                                  <div className="font-semibold text-black">{match.opponent.username}</div>
+                                  <div className="font-semibold text-black">
+                                    {match.opponent?.username || 'Unknown Player'}
+                                  </div>
                                   <div className="text-sm text-black/70">
-                                    Rating: {match.opponent.rating}
+                                    Rating: {match.opponent?.rating || 'N/A'}
                                     <span className={`ml-1 font-semibold ${match.ratingChange > 0 ? 'text-red-600' : 'text-green-600'}`}>
                                       ({match.ratingChange > 0 ? '-' : '+'}{Math.abs(match.ratingChange)})
                                     </span>
@@ -289,13 +271,15 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                                 </div>
                                 <Avatar className="w-12 h-12 border-2 border-red-200">
                                   <AvatarImage
-                                    src={getAvatarUrl(match.opponent.avatar)}
-                                    alt={match.opponent.username}
+                                    src={getAvatarUrl(match.opponent?.avatar)}
+                                    alt={match.opponent?.username || 'Unknown Player'}
                                   />
                                   <AvatarFallback>
                                     <img 
                                       src="/placeholder_avatar.png"
                                       alt="Profile placeholder"
+                                      width={48}
+                                      height={48}
                                       className="w-full h-full object-cover"
                                     />
                                   </AvatarFallback>

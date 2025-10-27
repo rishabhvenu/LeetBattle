@@ -14,11 +14,11 @@ export const generalLimiter = new RateLimiterRedis({
   blockDuration: 60, // Block for 60 seconds if exceeded
 });
 
-// Queue operations limiter (20 requests per 10 seconds)
+// Queue operations limiter (100 requests per 10 seconds - increased for testing)
 export const queueLimiter = new RateLimiterRedis({
   storeClient: redis,
   keyPrefix: 'rl:colyseus:queue',
-  points: 20,
+  points: 100,
   duration: 10,
   blockDuration: 30,
 });
