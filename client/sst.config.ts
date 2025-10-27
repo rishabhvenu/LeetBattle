@@ -1,6 +1,3 @@
-/** @jsxImportSource sst */
-import { Bucket, NextjsSite } from "sst/constructs";
-
 export default {
   config(_input) {
     return {
@@ -9,7 +6,10 @@ export default {
     };
   },
   stacks(app) {
-    app.stack(function Site({ stack }) {
+    app.stack(async function Site({ stack }) {
+      // Dynamic import to avoid top-level imports
+      const { Bucket, NextjsSite } = await import("sst/constructs");
+      
       // Create S3 bucket for avatars
       const avatarBucket = new Bucket(stack, "avatars", {
         name: `codeclashers-avatars-${stack.stage}`,
