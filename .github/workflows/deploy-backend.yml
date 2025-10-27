@@ -26,7 +26,7 @@ jobs:
           sudo mkdir -p /opt/CodeClashers
           sudo chown $USER:$USER /opt/CodeClashers
           if [ ! -d "/opt/CodeClashers/.git" ]; then
-            git clone https://github.com/rishabhvenu/LeetBattle.git /opt/CodeClashers
+            git clone https://${{ secrets.GH_TOKEN }}@github.com/rishabhvenu/LeetBattle.git /opt/CodeClashers
           fi
 
       - name: Deploy Backend
