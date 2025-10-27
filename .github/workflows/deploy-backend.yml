@@ -30,19 +30,30 @@ jobs:
           fi
 
       - name: Deploy Backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          REDIS_PORT: ${{ secrets.REDIS_PORT }}
+          COLYSEUS_PORT: ${{ secrets.COLYSEUS_PORT }}
+          JUDGE0_POSTGRES_USER: ${{ secrets.JUDGE0_POSTGRES_USER }}
+          JUDGE0_POSTGRES_PASSWORD: ${{ secrets.JUDGE0_POSTGRES_PASSWORD }}
+          JUDGE0_POSTGRES_DB: ${{ secrets.JUDGE0_POSTGRES_DB }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
+          BOT_SERVICE_SECRET: ${{ secrets.BOT_SERVICE_SECRET }}
+          COLYSEUS_RESERVATION_SECRET: ${{ secrets.COLYSEUS_RESERVATION_SECRET }}
+          BOTS_ENABLED: ${{ secrets.BOTS_ENABLED }}
+          BOT_FILL_DELAY_MS: ${{ secrets.BOT_FILL_DELAY_MS }}
         run: |
           set -e
           cd /opt/CodeClashers
           git pull origin main
           
           cd backend
-          
-          # Create .env.production if it doesn't exist
-          if [ ! -f ".env.production" ]; then
-            echo "Creating .env.production from template..."
-            cp .env.production.template .env.production
-            echo "WARNING: Please add your actual environment variables to .env.production"
-          fi
           
           # Use production docker-compose
           docker-compose -f docker-compose.prod.yml down || true
