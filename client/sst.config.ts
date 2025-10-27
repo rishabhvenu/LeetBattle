@@ -5,10 +5,10 @@ export default {
       region: "us-east-1",
     };
   },
-  stacks(app) {
-    app.stack(function Site({ stack }) {
-      // Use require to avoid top-level imports
-      const { Bucket, NextjsSite } = require("sst/constructs");
+  async stacks(app) {
+    app.stack(async function Site({ stack }) {
+      // Dynamic import inside async function - this is the SST v3 way
+      const { Bucket, NextjsSite } = await import("sst/constructs");
       
       // Create S3 bucket for avatars
       const avatarBucket = new Bucket(stack, "avatars", {
