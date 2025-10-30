@@ -210,12 +210,22 @@ jobs:
           
           echo "All resources applied successfully"
 
+      - name: Check pod status before rollout
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
+        run: |
+          echo "=== Current Pod Status ==="
+          k3s kubectl get pods -n codeclashers
+          echo ""
+          echo "=== Pod Events (last 20) ==="
+          k3s kubectl get events -n codeclashers --sort-by='.lastTimestamp' | tail -20
+
       - name: Wait for rollouts to complete
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           echo "Waiting for Colyseus deployment..."
-          k3s kubectl rollout status deployment/colyseus -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/colyseus -n codeclashers && exit 1)
+          k3s kubectl rollout status deployment/colyseus -n codeclashers --timeout=5m || (echo "Colyseus rollout failed, checking logs..." && k3s kubectl logs deployment/colyseus -n codeclashers --tail=50 && k3s kubectl rollout undo deployment/colyseus -n codeclashers && exit 1)
           
           echo "Waiting for Bots deployment..."
           k3s kubectl rollout status deployment/bots -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/bots -n codeclashers && exit 1)
