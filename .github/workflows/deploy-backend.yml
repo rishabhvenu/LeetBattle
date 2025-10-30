@@ -108,7 +108,7 @@ jobs:
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | k3s kubectl create secret docker-registry ghcr-secret \
+          k3s kubectl create secret docker-registry ghcr-secret \
             --namespace=codeclashers \
             --docker-server=ghcr.io \
             --docker-username=${{ github.actor }} \
