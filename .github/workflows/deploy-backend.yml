@@ -99,10 +99,14 @@ jobs:
           fi
 
       - name: Create namespace if not exists
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           k3s kubectl create namespace codeclashers --dry-run=client -o yaml | k3s kubectl apply -f -
 
       - name: Create or update secrets
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           k3s kubectl create secret generic app-secrets \
             --namespace=codeclashers \
@@ -127,6 +131,7 @@ jobs:
       - name: Deploy to Kubernetes
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          KUBECONFIG: /home/ubuntu/.kube/config
           # MongoDB resources
           K8S_MONGODB_REPLICAS: ${{ secrets.K8S_MONGODB_REPLICAS || '1' }}
           K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '2Gi' }}
@@ -206,6 +211,8 @@ jobs:
           echo "All resources applied successfully"
 
       - name: Wait for rollouts to complete
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           echo "Waiting for Colyseus deployment..."
           k3s kubectl rollout status deployment/colyseus -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/colyseus -n codeclashers && exit 1)
@@ -220,6 +227,8 @@ jobs:
           k3s kubectl rollout status deployment/judge0-worker -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/judge0-worker -n codeclashers && exit 1)
 
       - name: Verify deployments
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           echo "=== Deployment Status ==="
           k3s kubectl get pods -n codeclashers
@@ -228,6 +237,8 @@ jobs:
           k3s kubectl get svc -n codeclashers
           
       - name: Health check
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           echo "Performing health checks..."
           
