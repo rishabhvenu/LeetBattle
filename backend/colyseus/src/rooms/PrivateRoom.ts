@@ -35,8 +35,9 @@ async function getMongoClient(): Promise<MongoClient> {
 }
 
 export class PrivateRoom extends Room {
-  maxClients = 2;
-  private roomCode!: string;
+  // Allow extra sockets for safe reconnections while enforcing 2 unique players at app level
+  maxClients = 4;
+  public roomCode!: string; // Make public so filterBy can access it
   private creatorId!: string;
   private players: Map<string, PlayerInfo> = new Map();
   private selectedProblemId: string | null = null;
@@ -46,16 +47,24 @@ export class PrivateRoom extends Room {
     this.roomCode = options.roomCode.toUpperCase();
     this.creatorId = options.creatorId;
     
+    // Keep room alive even if temporarily empty (creator navigates)
+    this.autoDispose = false;
+
     console.log(`PrivateRoom onCreate called with roomCode: ${this.roomCode}`);
+    console.log(`Room state before unlock - locked: ${this.locked}, clients: ${this.clients.length}/${this.maxClients}`);
     
     // Store room code for lookup
     this.setMetadata({ roomCode: this.roomCode });
     
-    // Set 10 minute timeout for room
-    this.setSeatReservationTime(600);
+    // CRITICAL: Configure room to be joinable (not private) and unlocked
+    this.setPrivate(false); // Make room joinable
+    this.unlock(); // Explicitly unlock the room immediately
     
-    console.log(`PrivateRoom created: ${this.roomCode}`);
+    console.log(`Room state after unlock - locked: ${this.locked}, clients: ${this.clients.length}/${this.maxClients}`);
+    console.log(`PrivateRoom created and unlocked: ${this.roomCode}`);
     
+    // Initial room is empty; HTTP layer seeds Redis info blob. We rely on room_info updates after joins.
+
     // Handle problem selection (creator only)
     this.onMessage('select_problem', (client, message: { userId: string; problemId: string }) => {
       this.handleSelectProblem(client, message);
@@ -67,60 +76,113 @@ export class PrivateRoom extends Room {
     });
   }
 
-  async onAuth(client: Client, options: { userId: string; username: string; roomCode: string }) {
-    // Verify room code matches
-    if (options.roomCode.toUpperCase() !== this.roomCode) {
+  async onAuth(client: Client, options: any) {
+    // Verify room code matches if provided
+    if (options.roomCode && options.roomCode.toUpperCase() !== this.roomCode) {
+      console.log(`Room code mismatch: expected ${this.roomCode}, got ${options.roomCode}`);
       throw new Error('Invalid room code');
     }
     
-    // Check if room is full
-    if (this.clients.length >= 2) {
+    // Allow reconnections by same userId. Only block if room already has 2 unique users and this user is not one of them.
+    const isKnownUser = options.userId && this.players.has(options.userId);
+    if (this.players.size >= 2 && !isKnownUser) {
+      console.log(`Room ${this.roomCode} is full: ${this.players.size} players, ${this.clients.length} clients`);
       throw new Error('Room is full');
     }
     
-    return { userId: options.userId, username: options.username };
+    return { userId: options.userId, username: options.username, roomCode: options.roomCode };
   }
 
   async onJoin(client: Client, options: { userId: string; username: string }) {
     const { userId, username } = options;
     
-    this.players.set(userId, {
-      userId,
-      username,
-      sessionId: client.sessionId
-    });
+    // CRITICAL: Ensure room stays unlocked when players join
+    this.unlock();
     
-    // Broadcast updated player list to all clients
-    this.broadcast('players_updated', {
-      players: Array.from(this.players.values()).map(p => ({ userId: p.userId, username: p.username })),
-      creatorId: this.creatorId
-    });
+    // Ensure we don't duplicate players (in case of reconnection)
+    if (!this.players.has(userId)) {
+      this.players.set(userId, {
+        userId,
+        username,
+        sessionId: client.sessionId
+      });
+    } else {
+      // Update session ID if user reconnected with new session
+      const existingPlayer = this.players.get(userId);
+      if (existingPlayer) {
+        existingPlayer.sessionId = client.sessionId;
+      }
+      console.log(`User ${username} reconnected to private room ${this.roomCode}`);
+    }
+    
+    // Broadcast updated player list to all clients (merge with existing HTTP-seeded blob to avoid wiping host)
+    try {
+      const infoKey = `private:room:${this.roomCode}:info`;
+      const raw = await this.redis.get(infoKey);
+      if (raw) {
+        const blob = JSON.parse(raw);
+        const existingPlayers: Array<{ userId: string; username: string }> = Array.isArray(blob.players) ? blob.players : [];
+        const inMemoryPlayers = Array.from(this.players.values()).map(p => ({ userId: p.userId, username: p.username }));
+        // Merge by userId, prefer in-memory username/session freshness
+        const mergedMap = new Map<string, { userId: string; username: string }>();
+        for (const p of existingPlayers) mergedMap.set(p.userId, p);
+        for (const p of inMemoryPlayers) mergedMap.set(p.userId, p);
+        blob.players = Array.from(mergedMap.values());
+        // Ensure creatorId persists
+        if (!blob.creatorId) { blob.creatorId = this.creatorId; }
+        await this.redis.setex(infoKey, 1800, JSON.stringify(blob));
+        this.broadcast('room_info', blob);
+      }
+    } catch (e) {
+      console.error('Failed to broadcast room_info on join:', e);
+    }
     
     console.log(`Player ${username} joined private room ${this.roomCode}`);
   }
 
   async onLeave(client: Client, consented: boolean) {
     // Find and remove player
+    let leftUserId: string | undefined;
     for (const [userId, player] of this.players.entries()) {
       if (player.sessionId === client.sessionId) {
+        leftUserId = userId;
         this.players.delete(userId);
         console.log(`Player ${player.username} left private room ${this.roomCode}`);
         break;
       }
     }
     
-    // Broadcast updated player list
-    this.broadcast('players_updated', {
-      players: Array.from(this.players.values()).map(p => ({ userId: p.userId, username: p.username })),
-      creatorId: this.creatorId
-    });
+    // No separate players set; info blob is the source of truth
+    
+    // Broadcast updated room info (merge without wiping HTTP-seeded host)
+    try {
+      const infoKey = `private:room:${this.roomCode}:info`;
+      const raw = await this.redis.get(infoKey);
+      if (raw) {
+        const blob = JSON.parse(raw);
+        const existingPlayers: Array<{ userId: string; username: string }> = Array.isArray(blob.players) ? blob.players : [];
+        // Remove the left user from existing list if present
+        const filteredExisting = existingPlayers.filter(p => p.userId !== leftUserId);
+        const inMemoryPlayers = Array.from(this.players.values()).map(p => ({ userId: p.userId, username: p.username }));
+        const mergedMap = new Map<string, { userId: string; username: string }>();
+        for (const p of filteredExisting) mergedMap.set(p.userId, p);
+        for (const p of inMemoryPlayers) mergedMap.set(p.userId, p);
+        blob.players = Array.from(mergedMap.values());
+        if (!blob.creatorId) { blob.creatorId = this.creatorId; }
+        await this.redis.setex(infoKey, 1800, JSON.stringify(blob));
+        this.broadcast('room_info', blob);
+      }
+    } catch (e) {
+      console.error('Failed to broadcast room_info on leave:', e);
+    }
     
     // If creator left, dispose room
     if (!this.players.has(this.creatorId)) {
       console.log(`Creator left, disposing private room ${this.roomCode}`);
-      // Clean up Redis entry
-      const redis = getRedis();
-      await redis.del(`private:room:${this.roomCode}`);
+      // Clean up Redis entries
+      await this.redis.del(`private:room:${this.roomCode}`);
+      await this.redis.del(`private:room:${this.roomCode}:info`);
+      await this.redis.del(`private:room:${this.roomCode}:players`);
       this.disconnect();
     }
   }
@@ -134,8 +196,22 @@ export class PrivateRoom extends Room {
     
     this.selectedProblemId = message.problemId;
     
-    // Broadcast to all players
-    this.broadcast('problem_selected', { problemId: message.problemId });
+    // Update Redis room info blob
+    try {
+      const infoKey = `private:room:${this.roomCode}:info`;
+      const raw = await this.redis.get(infoKey);
+      if (raw) {
+        const blob = JSON.parse(raw);
+        blob.selectedProblemId = message.problemId;
+        await this.redis.setex(infoKey, 1800, JSON.stringify(blob));
+        // Broadcast unified room_info for clients
+        this.broadcast('room_info', blob);
+        // Also emit problem_selected for clients expecting this event
+        this.broadcast('problem_selected', { problemId: message.problemId });
+      }
+    } catch (e) {
+      console.error('Failed to update selectedProblem in room info:', e);
+    }
     console.log(`Problem selected in private room ${this.roomCode}: ${message.problemId}`);
   }
 
@@ -184,15 +260,41 @@ export class PrivateRoom extends Room {
         true // isPrivate
       );
       
-      // Broadcast match_started to ALL players
+      // Update Redis blob status and broadcast unified room_info
+      try {
+        const infoKey = `private:room:${this.roomCode}:info`;
+        const raw = await this.redis.get(infoKey);
+        if (raw) {
+          const blob = JSON.parse(raw);
+          blob.status = 'starting';
+          blob.matchId = matchResult.matchId;
+          blob.matchRoomId = matchResult.roomId;
+          blob.problemId = matchResult.problemId;
+          await this.redis.setex(infoKey, 1800, JSON.stringify(blob));
+          this.broadcast('room_info', blob);
+        }
+      } catch (e) {
+        console.error('Failed to update room status on start:', e);
+      }
+      
+      console.log(`Private match started: ${matchResult.matchId}`);
+      
+      // Emit explicit match_started event for clients listening to it
       this.broadcast('match_started', {
         matchId: matchResult.matchId,
         roomId: matchResult.roomId,
         problemId: matchResult.problemId
       });
-      
-      console.log(`Private match started: ${matchResult.matchId}`);
-      
+
+      // Clean up room metadata in Redis after starting
+      try {
+        await this.redis.del(`private:room:${this.roomCode}`);
+        await this.redis.del(`private:room:${this.roomCode}:info`);
+        await this.redis.del(`private:room:${this.roomCode}:players`);
+      } catch (e) {
+        console.error('Failed to cleanup private room keys after match start:', e);
+      }
+
       // Dispose room after short delay
       setTimeout(() => this.disconnect(), 1000);
       

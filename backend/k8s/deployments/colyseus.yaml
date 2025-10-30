@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: colyseus
+  namespace: codeclashers
+spec:
+  replicas: ${K8S_COLYSEUS_REPLICAS}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: colyseus
+  template:
+    metadata:
+      labels:
+        app: colyseus
+    spec:
+      containers:
+      - name: colyseus
+        image: ghcr.io/rishabhvenu/codeclashers-colyseus:${IMAGE_TAG}
+        ports:
+        - containerPort: 2567
+        envFrom:
+        - configMapRef:
+            name: app-config
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MONGODB_URI_INTERNAL
+        - name: JUDGE0_URL
+          value: "http://judge0-server:2358"
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: OPENAI_API_KEY
+        - name: INTERNAL_SERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: INTERNAL_SERVICE_SECRET
+        - name: BOT_SERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: BOT_SERVICE_SECRET
+        - name: COLYSEUS_RESERVATION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: COLYSEUS_RESERVATION_SECRET
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: AWS_SECRET_ACCESS_KEY
+        - name: S3_BUCKET_NAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: S3_BUCKET_NAME
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: AWS_REGION
+        resources:
+          requests:
+            memory: ${K8S_COLYSEUS_MEMORY_REQUEST}
+            cpu: ${K8S_COLYSEUS_CPU_REQUEST}
+          limits:
+            memory: ${K8S_COLYSEUS_MEMORY_LIMIT}
+            cpu: ${K8S_COLYSEUS_CPU_LIMIT}
+        livenessProbe:
+          tcpSocket:
+            port: 2567
+          initialDelaySeconds: 60
+          periodSeconds: 20
+          timeoutSeconds: 5
+        readinessProbe:
+          tcpSocket:
+            port: 2567
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sh
+              - -c
+              - "sleep 30"
+      terminationGracePeriodSeconds: 60
+

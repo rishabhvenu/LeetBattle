@@ -127,24 +127,82 @@ export function generateJavaRunner(
   const needsHelpers = hasComplexDataTypes(signature);
   const helpers = needsHelpers ? getHelpersForLanguage('java') : '';
   
-  // Map type names to Java types
+  // Map type names to Java types (case-insensitive). Only wrap primitives inside List<>.
   const mapType = (type: string): string => {
-    const typeMap: Record<string, string> = {
+    const normalized = type.replace(/\s+/g, '');
+    const lower = normalized.toLowerCase();
+
+    // Direct primitives and arrays remain as-is (valid Java types already mapped elsewhere)
+    const directMap: Record<string, string> = {
       'int[]': 'int[]',
       'string[]': 'String[]',
+      'double[]': 'double[]',
+      'float[]': 'float[]',
+      'long[]': 'long[]',
+      'boolean[]': 'boolean[]',
+      'char[]': 'char[]',
+      'byte[]': 'byte[]',
+      'short[]': 'short[]',
       'int': 'int',
       'string': 'String',
       'boolean': 'boolean',
       'double': 'double',
       'float': 'float',
       'long': 'long',
-      'ListNode': 'ListNode',
-      'TreeNode': 'TreeNode',
+      'char': 'char',
+      'byte': 'byte',
+      'short': 'short',
+      'listnode': 'ListNode',
+      'treenode': 'TreeNode',
     };
-    return typeMap[type.toLowerCase()] || type;
+    if (directMap[lower]) return directMap[lower];
+
+    // If it's a List<...>, ensure primitives inside are wrapped (Integer, Boolean, etc.)
+    const listMatch = lower.match(/^list<(.+)>$/);
+    if (listMatch) {
+      const innerRaw = listMatch[1];
+      // Handle nested lists recursively
+      if (/^list<.+>$/.test(innerRaw)) {
+        const mappedInner = mapType(innerRaw.replace(/^list</, 'List<'));
+        return `List<${mappedInner}>`;
+      }
+      // Map primitive to wrapper inside List
+      const wrapperMap: Record<string, string> = {
+        'int': 'Integer',
+        'integer': 'Integer',
+        'string': 'String',
+        'boolean': 'Boolean',
+        'double': 'Double',
+        'float': 'Float',
+        'long': 'Long',
+        'char': 'Character',
+        'byte': 'Byte',
+        'short': 'Short',
+      };
+      const wrapped = wrapperMap[innerRaw] || innerRaw;
+      return `List<${wrapped}>`;
+    }
+
+    // If it's already using proper Java generics but with capitalized List, normalize case
+    if (normalized.startsWith('List<')) {
+      // Extract inner and map recursively to enforce wrappers
+      const inner = normalized.slice(5, -1);
+      // Reuse logic by converting to lower-case list<> form first
+      return mapType(`list<${inner}>`);
+    }
+
+    return type; // Fallback untouched
   };
 
   const javaReturnType = mapType(returnType);
+
+  // Helper to detect Java List types
+  const isJavaList = (type: string) => /^list<.+>$/i.test(type.replace(/\s+/g, ''));
+  const isJavaNestedList = (type: string) => /^list<\s*list<.+>\s*>$/i.test(type.replace(/\s+/g, ''));
+  const getJavaInnerType = (type: string) => {
+    const match = type.replace(/\s+/g, '').match(/list<(.+)>/i);
+    return match ? match[1] : type;
+  };
 
   // Generate input parsing and function call
   const inputParsing = parameters.map((param, idx) => {
@@ -155,6 +213,21 @@ export function generateJavaRunner(
       return `        ListNode ${param.name} = ListHelper.deserializeList((List<Integer>) input.get("${param.name}"));`;
     } else if (isTreeNodeType(param.type)) {
       return `        TreeNode ${param.name} = TreeHelper.deserializeTree((List<Integer>) input.get("${param.name}"));`;
+    }
+    // Handle Java List types
+    else if (isJavaList(param.type)) {
+      const inner = getJavaInnerType(param.type).toLowerCase();
+      if (isJavaNestedList(param.type)) {
+        // For List<List<...>>, we need to parse nested arrays
+        return `        List<List<Integer>> ${param.name} = parseNestedIntegerList(input.get("${param.name}"));`;
+      } else {
+        // For List<...>, parse as single array
+        if (inner === 'int' || inner === 'integer') {
+          return `        List<Integer> ${param.name} = parseIntegerList(input.get("${param.name}"));`;
+        } else if (inner === 'string') {
+          return `        List<String> ${param.name} = parseStringList(input.get("${param.name}"));`;
+        }
+      }
     }
     // Handle different primitive types
     else if (param.type.toLowerCase().includes('int[]')) {
@@ -179,6 +252,12 @@ export function generateJavaRunner(
     outputSerialization = 'gson.toJson(ListHelper.serializeList(result))';
   } else if (isTreeNodeType(returnType)) {
     outputSerialization = 'gson.toJson(TreeHelper.serializeTree(result))';
+  } else if (isJavaNestedList(returnType)) {
+    // Print List<List<...>> as JSON-like [[...],[...]]
+    outputSerialization = 'serializeNestedList(result)';
+  } else if (isJavaList(returnType)) {
+    // Print List<...> as JSON-like [a,b,c]
+    outputSerialization = 'serializeList(result)';
   }
 
   return `import com.google.gson.Gson;
@@ -215,6 +294,70 @@ ${inputParsing}
         List<String> list = (List<String>) obj;
         return list.toArray(new String[0]);
     }
+    
+    private static List<Integer> parseIntegerList(Object obj) {
+        List<Number> list = (List<Number>) obj;
+        List<Integer> result = new ArrayList<>();
+        for (Number num : list) {
+            result.add(num.intValue());
+        }
+        return result;
+    }
+    
+    private static List<String> parseStringList(Object obj) {
+        return (List<String>) obj;
+    }
+    
+    private static List<List<Integer>> parseNestedIntegerList(Object obj) {
+        List<List<Number>> outerList = (List<List<Number>>) obj;
+        List<List<Integer>> result = new ArrayList<>();
+        for (List<Number> innerList : outerList) {
+            List<Integer> innerResult = new ArrayList<>();
+            for (Number num : innerList) {
+                innerResult.add(num.intValue());
+            }
+            result.add(innerResult);
+        }
+        return result;
+    }
+    
+    private static String serializeList(List<?> list) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[");
+        for (int i = 0; i < list.size(); i++) {
+            Object val = list.get(i);
+            if (val instanceof String) {
+                sb.append("\\"").append(val).append("\\"");
+            } else {
+                sb.append(String.valueOf(val));
+            }
+            if (i < list.size() - 1) sb.append(",");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+    
+    private static String serializeNestedList(List<?> outerList) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[");
+        for (int i = 0; i < outerList.size(); i++) {
+            List<?> innerList = (List<?>) outerList.get(i);
+            sb.append("[");
+            for (int j = 0; j < innerList.size(); j++) {
+                Object val = innerList.get(j);
+                if (val instanceof String) {
+                    sb.append("\\"").append(val).append("\\"");
+                } else {
+                    sb.append(String.valueOf(val));
+                }
+                if (j < innerList.size() - 1) sb.append(",");
+            }
+            sb.append("]");
+            if (i < outerList.size() - 1) sb.append(",");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
 }
 `;
 }
@@ -235,6 +378,7 @@ export function generateCppRunner(
   
   // Map type names to C++ types
   const mapType = (type: string): string => {
+    const normalizedType = type.replace(/\s+/g, '');
     const typeMap: Record<string, string> = {
       'int[]': 'vector<int>',
       'string[]': 'vector<string>',
@@ -246,8 +390,17 @@ export function generateCppRunner(
       'long': 'long',
       'ListNode': 'ListNode*',
       'TreeNode': 'TreeNode*',
+      // Add List types mapping to C++ vectors
+      'list<int>': 'vector<int>',
+      'list<string>': 'vector<string>',
+      'list<list<int>>': 'vector<vector<int>>',
+      'list<list<string>>': 'vector<vector<string>>',
+      'List<int>': 'vector<int>',
+      'List<string>': 'vector<string>',
+      'List<List<int>>': 'vector<vector<int>>',
+      'List<List<string>>': 'vector<vector<string>>',
     };
-    return typeMap[type.toLowerCase()] || type;
+    return typeMap[normalizedType.toLowerCase()] || type;
   };
 
   const cppReturnType = mapType(returnType);
@@ -285,12 +438,40 @@ export function generateCppRunner(
     outputSerialization = 'serializeList(result)';
   } else if (isTreeNodeType(returnType)) {
     outputSerialization = 'serializeTree(result)';
+  } else if (cppReturnType.includes('vector<vector')) {
+    // Handle nested vectors (e.g., vector<vector<int>>)
+    outputSerialization = `[&]() {
+      cout << "[";
+      for (int i = 0; i < result.size(); i++) {
+        cout << "[";
+        for (int j = 0; j < result[i].size(); j++) {
+          cout << result[i][j];
+          if (j < result[i].size() - 1) cout << ",";
+        }
+        cout << "]";
+        if (i < result.size() - 1) cout << ",";
+      }
+      cout << "]";
+      return json::array();
+    }()`;
+  } else if (cppReturnType.includes('vector')) {
+    // Handle single vectors (e.g., vector<int>)
+    outputSerialization = `[&]() {
+      cout << "[";
+      for (int i = 0; i < result.size(); i++) {
+        cout << result[i];
+        if (i < result.size() - 1) cout << ",";
+      }
+      cout << "]";
+      return json::array();
+    }()`;
   }
 
   return `#include <iostream>
 #include <vector>
 #include <string>
 #include <queue>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -308,8 +489,8 @@ ${inputParsing}
     Solution solution;
     ${cppReturnType} result = solution.${functionName}(${args});
     
-    json output = ${outputSerialization};
-    cout << output.dump() << endl;
+    ${outputSerialization.includes('cout') ? outputSerialization : `json output = ${outputSerialization};
+    cout << output.dump() << endl;`}
     
     return 0;
 }
@@ -464,32 +645,67 @@ export function generateBatchJavaRunner(
   const needsHelpers = hasComplexDataTypes(signature);
   const helpers = needsHelpers ? getHelpersForLanguage('java') : '';
   
-  // Map return type to Java type
+  // Map return type to Java type using same logic as single runner
   const mapReturnType = (type: string): string => {
-    const typeMap: Record<string, string> = {
-      'int[]': 'int[]',
-      'string[]': 'String[]',
-      'double[]': 'double[]',
-      'float[]': 'float[]',
-      'long[]': 'long[]',
-      'boolean[]': 'boolean[]',
-      'char[]': 'char[]',
-      'int': 'int',
-      'string': 'String',
-      'boolean': 'boolean',
-      'double': 'double',
-      'float': 'float',
-      'long': 'long',
-      'char': 'char',
-      'byte': 'byte',
-      'short': 'short',
-      'ListNode': 'ListNode',
-      'TreeNode': 'TreeNode',
+    // Reuse the mapType defined above via a minimal inline replica to avoid scope issues
+    const wrap = (t: string): string => {
+      const normalized = t.replace(/\s+/g, '');
+      const lower = normalized.toLowerCase();
+      const directMap: Record<string, string> = {
+        'int[]': 'int[]',
+        'string[]': 'String[]',
+        'double[]': 'double[]',
+        'float[]': 'float[]',
+        'long[]': 'long[]',
+        'boolean[]': 'boolean[]',
+        'char[]': 'char[]',
+        'byte[]': 'byte[]',
+        'short[]': 'short[]',
+        'int': 'int',
+        'string': 'String',
+        'boolean': 'boolean',
+        'double': 'double',
+        'float': 'float',
+        'long': 'long',
+        'char': 'char',
+        'byte': 'byte',
+        'short': 'short',
+        'listnode': 'ListNode',
+        'treenode': 'TreeNode',
+      };
+      if (directMap[lower]) return directMap[lower];
+      const listMatch = lower.match(/^list<(.+)>$/);
+      if (listMatch) {
+        const innerRaw = listMatch[1];
+        if (/^list<.+>$/.test(innerRaw)) {
+          const mappedInner = wrap(innerRaw.replace(/^list</, 'List<'));
+          return `List<${mappedInner}>`;
+        }
+        const wrapperMap: Record<string, string> = {
+          'int': 'Integer', 'integer': 'Integer', 'string': 'String', 'boolean': 'Boolean', 'double': 'Double',
+          'float': 'Float', 'long': 'Long', 'char': 'Character', 'byte': 'Byte', 'short': 'Short',
+        };
+        const wrapped = wrapperMap[innerRaw] || innerRaw;
+        return `List<${wrapped}>`;
+      }
+      if (normalized.startsWith('List<')) {
+        const inner = normalized.slice(5, -1);
+        return wrap(`list<${inner}>`);
+      }
+      return t;
     };
-    return typeMap[type.toLowerCase()] || type;
+    return wrap(type);
   };
 
   const javaReturnType = mapReturnType(returnType);
+  
+  // Helper to detect Java List types
+  const isJavaList = (type: string) => /^list<.+>$/i.test(type.replace(/\s+/g, ''));
+  const isJavaNestedList = (type: string) => /^list<\s*list<.+>\s*>$/i.test(type.replace(/\s+/g, ''));
+  const getJavaInnerType = (type: string) => {
+    const match = type.replace(/\s+/g, '').match(/list<(.+)>/i);
+    return match ? match[1] : type;
+  };
   
   // Remove 'public' from Solution class to avoid filename conflicts
   const fixedSolutionCode = solutionCode.replace(/public\s+class\s+Solution/g, 'class Solution');
@@ -508,6 +724,27 @@ export function generateBatchJavaRunner(
       } else if (isTreeNodeType(p.type)) {
         const arrayValue = Array.isArray(value) ? value : [];
         return `TreeHelper.deserializeTree(java.util.Arrays.asList(${arrayValue.map(v => v === null ? 'null' : String(v)).join(', ')}))`;
+      }
+      // Handle Java List types
+      else if (isJavaList(p.type)) {
+        const inner = getJavaInnerType(p.type).toLowerCase();
+        if (isJavaNestedList(p.type)) {
+          // For List<List<...>>, value is array of arrays
+          const vv = Array.isArray(value) ? (value as any[]) : [];
+          const innerInner = getJavaInnerType(getJavaInnerType(p.type));
+          const items = vv.map(innerArr => `java.util.Arrays.asList(${(Array.isArray(innerArr)? innerArr:[]).map((x:any)=> inner === 'list<int>' || innerInner.toLowerCase()==='int' ? String(x) : (innerInner.toLowerCase()==='string'?`"${x}"`: String(x))).join(', ')})`).join(', ');
+          return `new java.util.ArrayList<>(java.util.Arrays.asList(${items}))`;
+        } else {
+          const arr = Array.isArray(value) ? value : [];
+          if (inner === 'int' || inner === 'integer') {
+            return `new java.util.ArrayList<>(java.util.Arrays.asList(${arr.map((x:any)=>String(x)).join(', ')}))`;
+          }
+          if (inner === 'string') {
+            return `new java.util.ArrayList<>(java.util.Arrays.asList(${arr.map((x:any)=>`"${x}"`).join(', ')}))`;
+          }
+          // default fallback
+          return `new java.util.ArrayList<>(java.util.Arrays.asList(${arr.map((x:any)=>String(x)).join(', ')}))`;
+        }
       }
       // Handle primitive arrays
       else if (Array.isArray(value)) {
@@ -530,6 +767,46 @@ export function generateBatchJavaRunner(
       outputCode = `System.out.println("Test ${index}: " + ListHelper.serializeList(result${index}));`;
     } else if (isTreeNodeType(returnType)) {
       outputCode = `System.out.println("Test ${index}: " + TreeHelper.serializeTree(result${index}));`;
+    } else if (isJavaNestedList(returnType)) {
+      // Print List<List<...>> as proper JSON [[...],[...]]
+      outputCode = `  {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Test ${index}: [");
+        for (int i = 0; i < result${index}.size(); i++) {
+          java.util.List<?> inner = result${index}.get(i);
+          sb.append("[");
+          for (int j = 0; j < inner.size(); j++) {
+            Object val = inner.get(j);
+            if (val instanceof String) {
+              sb.append("\\"").append(val).append("\\"");
+            } else {
+              sb.append(String.valueOf(val));
+            }
+            if (j < inner.size() - 1) sb.append(",");
+          }
+          sb.append("]");
+          if (i < result${index}.size() - 1) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb.toString());
+      }`;
+    } else if (isJavaList(returnType)) {
+      // Print List<...> as proper JSON [a,b,c]
+      outputCode = `  {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Test ${index}: [");
+        for (int i = 0; i < result${index}.size(); i++) {
+          Object val = result${index}.get(i);
+          if (val instanceof String) {
+            sb.append("\\"").append(val).append("\\"");
+          } else {
+            sb.append(String.valueOf(val));
+          }
+          if (i < result${index}.size() - 1) sb.append(",");
+        }
+        sb.append("]");
+        System.out.println(sb.toString());
+      }`;
     } else if (javaReturnType.includes('[]')) {
       outputCode = `System.out.println("Test ${index}: " + java.util.Arrays.toString(result${index}));`;
     } else {
@@ -571,6 +848,7 @@ export function generateBatchCppRunner(
   
   // Map return type to C++ type
   const mapReturnType = (type: string): string => {
+    const normalizedType = type.replace(/\s+/g, '');
     const typeMap: Record<string, string> = {
       'int[]': 'vector<int>',
       'string[]': 'vector<string>',
@@ -582,8 +860,17 @@ export function generateBatchCppRunner(
       'long': 'long',
       'ListNode': 'ListNode*',
       'TreeNode': 'TreeNode*',
+      // Add List types mapping to C++ vectors
+      'list<int>': 'vector<int>',
+      'list<string>': 'vector<string>',
+      'list<list<int>>': 'vector<vector<int>>',
+      'list<list<string>>': 'vector<vector<string>>',
+      'List<int>': 'vector<int>',
+      'List<string>': 'vector<string>',
+      'List<List<int>>': 'vector<vector<int>>',
+      'List<List<string>>': 'vector<vector<string>>',
     };
-    return typeMap[type.toLowerCase()] || type;
+    return typeMap[normalizedType.toLowerCase()] || type;
   };
 
   const cppReturnType = mapReturnType(returnType);
@@ -643,7 +930,21 @@ export function generateBatchCppRunner(
         if (i < result${index}_serialized.size() - 1) cout << ",";
     }
     cout << "]" << endl;`;
+    } else if (cppReturnType.includes('vector<vector')) {
+      // Handle nested vectors (e.g., vector<vector<int>>)
+      outputCode = `    cout << "Test ${index}: [";
+    for (int i = 0; i < result${index}.size(); i++) {
+        cout << "[";
+        for (int j = 0; j < result${index}[i].size(); j++) {
+            cout << result${index}[i][j];
+            if (j < result${index}[i].size() - 1) cout << ",";
+        }
+        cout << "]";
+        if (i < result${index}.size() - 1) cout << ",";
+    }
+    cout << "]" << endl;`;
     } else if (cppReturnType.includes('vector')) {
+      // Handle single vectors (e.g., vector<int>)
       outputCode = `    cout << "Test ${index}: [";
     for (int i = 0; i < result${index}.size(); i++) {
         cout << result${index}[i];
@@ -664,6 +965,7 @@ ${outputCode}`;
 #include <vector>
 #include <string>
 #include <queue>
+#include <algorithm>
 using namespace std;
 
 ${helpers}

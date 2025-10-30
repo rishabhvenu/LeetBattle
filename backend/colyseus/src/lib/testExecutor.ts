@@ -3,13 +3,16 @@
  * Executes solution code against test cases using Judge0
  */
 
-import { generateBatchRunnableCode, getJudge0LanguageId, compareOutputs } from './codeRunner';
+import { generateBatchRunnableCode, getJudge0LanguageId } from './codeRunner';
+import { VM } from 'vm2';
 import { submitToJudge0, pollJudge0 } from './judge0';
 
 interface FunctionSignature {
   functionName: string;
   parameters: Array<{ name: string; type: string }>;
   returnType: string;
+  comparisonMode?: 'strict' | 'unordered' | 'set' | 'custom';
+  customComparator?: string;
 }
 
 interface TestCase {
@@ -54,6 +57,60 @@ export async function executeAllTestCases(
   return await executeBatchTestCases(language, solutionCode, signature, testCases);
 }
 
+// Advanced comparison supporting modes and custom comparator
+function compareOutputsAdvanced(
+  expected: unknown,
+  actual: unknown,
+  mode: 'strict' | 'unordered' | 'set' | 'custom',
+  customComparator?: string
+): boolean {
+  try {
+    if (mode === 'custom' && customComparator) {
+      const vm = new VM({ timeout: 2000, sandbox: {} });
+      const wrapper = `(${customComparator});`;
+      const compareFn = vm.run(wrapper);
+      if (typeof compareFn !== 'function') return false;
+      return !!compareFn(expected, actual);
+    }
+
+    if (mode === 'unordered') {
+      // For arrays: compare after sorting by JSON string of elements
+      if (!Array.isArray(expected) || !Array.isArray(actual)) return false;
+      const norm = (arr: any[]) => arr.map(x => JSON.stringify(x)).sort();
+      const a = norm(expected);
+      const b = norm(actual);
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+      return true;
+    }
+
+    if (mode === 'set') {
+      // Treat inner arrays as sets: sort inner, then outer unique compare
+      if (!Array.isArray(expected) || !Array.isArray(actual)) return false;
+      const normalizeSet = (arr: any[]) =>
+        Array.from(
+          new Set(
+            arr.map(item =>
+              Array.isArray(item)
+                ? JSON.stringify([...item].sort((x, y) => (x > y ? 1 : x < y ? -1 : 0)))
+                : JSON.stringify(item)
+            )
+          )
+        ).sort();
+      const a = normalizeSet(expected);
+      const b = normalizeSet(actual);
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+      return true;
+    }
+
+    // strict
+    return JSON.stringify(expected) === JSON.stringify(actual);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Execute test cases using batch submission
  */
@@ -63,15 +120,47 @@ async function executeBatchTestCases(
   signature: FunctionSignature,
   testCases: TestCase[]
 ): Promise<ExecutionResult> {
+  // Limit test cases to prevent buffer issues
+  const maxTestCases = 20; // Increased limit to handle more test cases
+  const limitedTestCases = testCases.slice(0, maxTestCases);
+  
+  if (testCases.length > maxTestCases) {
+    console.warn(`Limiting test cases from ${testCases.length} to ${maxTestCases} for ${language}`);
+  }
+  
   try {
     // Generate batch code
-    const batchCode = generateBatchRunnableCode(language, solutionCode, signature, testCases);
+    const batchCode = generateBatchRunnableCode(language, solutionCode, signature, limitedTestCases);
+    
+    // Check if generated code is too large (Judge0 has limits)
+    if (batchCode.length > 100000) { // 100KB limit
+      console.warn(`Generated ${language} code is very large: ${batchCode.length} characters`);
+      return {
+        allPassed: false,
+        totalTests: limitedTestCases.length,
+        passedTests: 0,
+        failedTests: limitedTestCases.length,
+        results: limitedTestCases.map((testCase, index) => ({
+          passed: false,
+          testCase,
+          actualOutput: undefined,
+          error: `Generated code too large (${batchCode.length} chars). Consider reducing test cases.`,
+          testNumber: index + 1,
+        })),
+      };
+    }
+    
+    // Log code size for debugging
+    console.log(`Generated ${language} code size: ${batchCode.length} characters`);
+    if (batchCode.length > 50000) {
+      console.warn(`Large code size detected for ${language}: ${batchCode.length} chars`);
+    }
     
     // Get Judge0 language ID
     const languageId = getJudge0LanguageId(language);
     
     // Submit to Judge0
-    console.log(`Submitting ${language} batch with ${testCases.length} test cases...`);
+    console.log(`Submitting ${language} batch with ${limitedTestCases.length} test cases (${batchCode.length} chars)...`);
     const submission = await submitToJudge0(languageId, batchCode);
     const token = submission.token;
     console.log(`Batch submission token: ${token}`);
@@ -110,10 +199,10 @@ async function executeBatchTestCases(
     
     return {
       allPassed: false,
-      totalTests: testCases.length,
+      totalTests: limitedTestCases.length,
       passedTests: 0,
-      failedTests: testCases.length,
-      results: testCases.map((testCase, index) => ({
+      failedTests: limitedTestCases.length,
+      results: limitedTestCases.map((testCase, index) => ({
         passed: false,
         testCase,
         actualOutput: undefined, // No actual output due to general error
@@ -133,10 +222,10 @@ async function executeBatchTestCases(
   if (!batchOutput) {
     return {
       allPassed: false,
-      totalTests: testCases.length,
+      totalTests: limitedTestCases.length,
       passedTests: 0,
-      failedTests: testCases.length,
-      results: testCases.map((testCase, index) => ({
+      failedTests: limitedTestCases.length,
+      results: limitedTestCases.map((testCase, index) => ({
         passed: false,
         testCase,
         actualOutput: undefined,
@@ -151,16 +240,21 @@ async function executeBatchTestCases(
   
   // Parse each test result from batch output
   const lines = batchOutput.split('\n');
-  for (let i = 0; i < testCases.length && i < lines.length; i++) {
+  for (let i = 0; i < limitedTestCases.length && i < lines.length; i++) {
     const line = lines[i];
-    const testCase = testCases[i];
+    const testCase = limitedTestCases[i];
     
     // Parse "Test X: {result}" format
     const match = line.match(/Test \d+: (.+)/);
     if (match) {
       try {
         const actualOutput = JSON.parse(match[1]);
-        const passed = compareOutputs(testCase.output, actualOutput);
+        const passed = compareOutputsAdvanced(
+          testCase.output,
+          actualOutput,
+          signature.comparisonMode || 'strict',
+          signature.customComparator
+        );
         
         results.push({
           passed,
@@ -198,8 +292,8 @@ async function executeBatchTestCases(
   }
   
   // Fill remaining test cases as failed if not enough results
-  while (results.length < testCases.length) {
-    const testCase = testCases[results.length];
+  while (results.length < limitedTestCases.length) {
+    const testCase = limitedTestCases[results.length];
     results.push({
       passed: false,
       testCase,
@@ -210,6 +304,21 @@ async function executeBatchTestCases(
     });
   }
   
+  // Handle remaining test cases if we limited the batch
+  if (testCases.length > maxTestCases) {
+    const remainingTestCases = testCases.slice(maxTestCases);
+    for (const testCase of remainingTestCases) {
+      results.push({
+        passed: false,
+        testCase,
+        actualOutput: undefined,
+        error: `Test case limit exceeded (${maxTestCases} max)`,
+        status: { id: 4, description: 'Wrong Answer' },
+        testNumber: results.length + 1,
+      });
+    }
+  }
+
   // Calculate statistics
   const passedTests = results.filter(r => r.passed).length;
   const failedTests = results.length - passedTests;
@@ -230,10 +339,10 @@ async function executeBatchTestCases(
     
     return {
       allPassed: false,
-      totalTests: testCases.length,
+      totalTests: limitedTestCases.length,
       passedTests: 0,
-      failedTests: testCases.length,
-      results: testCases.map((testCase, index) => ({
+      failedTests: limitedTestCases.length,
+      results: limitedTestCases.map((testCase, index) => ({
         passed: false,
         testCase,
         actualOutput: undefined,

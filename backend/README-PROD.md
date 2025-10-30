@@ -1,161 +1,297 @@
-# Production Backend Setup
+# Production Backend Setup (Kubernetes)
 
-This guide explains how to set up the backend services on Oracle Cloud without MongoDB and MinIO (using MongoDB Atlas and AWS S3 instead).
+This guide explains how to set up the backend services on Oracle Cloud VM using Kubernetes (k3s) with automatic deployment via GitHub Actions.
+
+## Architecture Overview
+
+**Production (Kubernetes on Oracle VM):**
+- k3s (lightweight Kubernetes)
+- Colyseus (2+ replicas, rolling updates, zero-downtime)
+- Bot Service (2+ replicas)
+- Judge0 Server (2+ replicas)
+- Judge0 Worker (2+ replicas, privileged)
+- MongoDB (StatefulSet, persistent volume)
+- Redis (StatefulSet, persistent volume)
+- PostgreSQL (Deployment, ephemeral)
+
+**Development (Docker Compose):**
+- Keep existing `docker-compose.yml` unchanged
 
 ## What This Setup Includes
 
-- ✅ **Colyseus** - Real-time game server
-- ✅ **Redis** - Caching and matchmaking queue
-- ✅ **Judge0 Server** - Code execution API
-- ✅ **Judge0 Worker** - Code execution engine
-- ✅ **Judge0 PostgreSQL** - Judge0 database
-- ✅ **Bot Service** - Automated bot players
+- ✅ **Colyseus** - Real-time game server (Kubernetes Deployment)
+- ✅ **Redis** - Caching and matchmaking queue (StatefulSet with persistence)
+- ✅ **MongoDB** - Database (StatefulSet with persistence)
+- ✅ **Judge0 Server** - Code execution API (Kubernetes Deployment)
+- ✅ **Judge0 Worker** - Code execution engine (Kubernetes Deployment, privileged)
+- ✅ **Judge0 PostgreSQL** - Judge0 database (Kubernetes Deployment, ephemeral)
+- ✅ **Bot Service** - Automated bot players (Kubernetes Deployment)
 
-## External Services (Not Included)
+## External Services
 
-- ❌ **MongoDB** - Uses MongoDB Atlas (managed)
-- ❌ **MinIO** - Uses AWS S3 for object storage
+- ✅ **All services run locally** on the Oracle VM in Kubernetes
+- ❌ **MinIO** - Uses AWS S3 for object storage (configured via secrets)
 
-## One-Time Setup on Oracle VM
+## Fully Automated Deployment
 
-### 1. Clone Repository
+**No manual setup required!** Everything is automated via GitHub Actions.
 
+When you push to `main` with changes in `backend/`, the workflow will:
+
+1. **First run only**: Install k3s on the self-hosted runner
+2. Build Docker images (Colyseus and Bots)
+3. Push images to GitHub Container Registry
+4. Create Kubernetes namespace and secrets
+5. Deploy all services with zero-downtime rolling updates
+6. Perform health checks and verify deployments
+
+## GitHub Secrets Required
+
+Configure these secrets in your GitHub repository settings:
+
+### Required Secrets
+
+- `REDIS_PASSWORD` - Redis authentication password
+- `JUDGE0_POSTGRES_USER` - PostgreSQL username for Judge0
+- `JUDGE0_POSTGRES_PASSWORD` - PostgreSQL password for Judge0
+- `JUDGE0_POSTGRES_DB` - PostgreSQL database name for Judge0
+- `MONGODB_USERNAME` - MongoDB username (e.g., "admin")
+- `MONGODB_PASSWORD` - MongoDB password
+- `OPENAI_API_KEY` - OpenAI API key for bot generation
+- `INTERNAL_SERVICE_SECRET` - Secret for internal service auth
+- `BOT_SERVICE_SECRET` - Secret for bot service
+- `COLYSEUS_RESERVATION_SECRET` - Secret for Colyseus reservations
+- `AWS_ACCESS_KEY_ID` - AWS access key for S3
+- `AWS_SECRET_ACCESS_KEY` - AWS secret key for S3
+- `S3_BUCKET_NAME` - Name of your S3 bucket
+- `AWS_REGION` - AWS region (default: us-east-1)
+- `MONGODB_URI` - Full MongoDB connection string for external access (CloudFront/Frontend)
+  - Format: `mongodb://<username>:<password>@<vm-ip-or-domain>:32017/codeclashers?authSource=admin`
+  - Get VM IP: `curl ifconfig.me` or check Oracle Cloud console
+  - Example: `mongodb://admin:yourpassword@123.456.789.0:32017/codeclashers?authSource=admin`
+
+### Optional Resource Limits (with defaults)
+
+**MongoDB:**
+- `K8S_MONGODB_REPLICAS` - Default: 1
+- `K8S_MONGODB_MEMORY_REQUEST` - Default: 2Gi
+- `K8S_MONGODB_MEMORY_LIMIT` - Default: 4Gi
+- `K8S_MONGODB_CPU_REQUEST` - Default: 500m
+- `K8S_MONGODB_CPU_LIMIT` - Default: 1000m
+
+**Redis:**
+- `K8S_REDIS_REPLICAS` - Default: 1
+- `K8S_REDIS_MEMORY_REQUEST` - Default: 512Mi
+- `K8S_REDIS_MEMORY_LIMIT` - Default: 1Gi
+- `K8S_REDIS_CPU_REQUEST` - Default: 250m
+- `K8S_REDIS_CPU_LIMIT` - Default: 500m
+
+**PostgreSQL:**
+- `K8S_POSTGRES_REPLICAS` - Default: 1
+- `K8S_POSTGRES_MEMORY_REQUEST` - Default: 256Mi
+- `K8S_POSTGRES_MEMORY_LIMIT` - Default: 512Mi
+- `K8S_POSTGRES_CPU_REQUEST` - Default: 250m
+- `K8S_POSTGRES_CPU_LIMIT` - Default: 500m
+
+**Colyseus (recommended 2+ for zero-downtime):**
+- `K8S_COLYSEUS_REPLICAS` - Default: 2
+- `K8S_COLYSEUS_MEMORY_REQUEST` - Default: 512Mi
+- `K8S_COLYSEUS_MEMORY_LIMIT` - Default: 1Gi
+- `K8S_COLYSEUS_CPU_REQUEST` - Default: 500m
+- `K8S_COLYSEUS_CPU_LIMIT` - Default: 1000m
+
+**Judge0 Server:**
+- `K8S_JUDGE0_SERVER_REPLICAS` - Default: 2
+- `K8S_JUDGE0_SERVER_MEMORY_REQUEST` - Default: 512Mi
+- `K8S_JUDGE0_SERVER_MEMORY_LIMIT` - Default: 1Gi
+- `K8S_JUDGE0_SERVER_CPU_REQUEST` - Default: 500m
+- `K8S_JUDGE0_SERVER_CPU_LIMIT` - Default: 1000m
+
+**Judge0 Worker:**
+- `K8S_JUDGE0_WORKER_REPLICAS` - Default: 2
+- `K8S_JUDGE0_WORKER_MEMORY_REQUEST` - Default: 1Gi
+- `K8S_JUDGE0_WORKER_MEMORY_LIMIT` - Default: 2Gi
+- `K8S_JUDGE0_WORKER_CPU_REQUEST` - Default: 1000m
+- `K8S_JUDGE0_WORKER_CPU_LIMIT` - Default: 2000m
+
+**Bots:**
+- `K8S_BOTS_REPLICAS` - Default: 2
+- `K8S_BOTS_MEMORY_REQUEST` - Default: 256Mi
+- `K8S_BOTS_MEMORY_LIMIT` - Default: 512Mi
+- `K8S_BOTS_CPU_REQUEST` - Default: 250m
+- `K8S_BOTS_CPU_LIMIT` - Default: 500m
+
+## External Access
+
+### Colyseus (WebSocket/HTTP)
+- **Type**: LoadBalancer
+- **Port**: 2567
+- **Internal**: `http://colyseus:2567` or `ws://colyseus:2567`
+- **External**: Accessible on the VM's external IP or domain
+- **CloudFront**: Configure frontend to connect to this endpoint
+
+### MongoDB
+- **Type**: NodePort (accessible externally)
+- **Port**: 32017 (external), 27017 (internal)
+- **Internal URI**: `mongodb://username:password@mongodb:27017/codeclashers?authSource=admin`
+- **External URI**: `mongodb://username:password@<vm-ip>:32017/codeclashers?authSource=admin`
+- **Authentication**: Required (configure via `MONGODB_USERNAME` and `MONGODB_PASSWORD` secrets)
+- **CloudFront/Frontend**: Use external URI with credentials from secrets
+
+Check external IPs:
 ```bash
-cd /opt
-sudo mkdir CodeClashers
-sudo chown ubuntu:ubuntu CodeClashers
-cd CodeClashers
-git clone https://github.com/yourusername/CodeClashers.git .
+k3s kubectl get svc -n codeclashers
+# Look for EXTERNAL-IP or use node IP
 ```
 
-### 2. Install Docker & Docker Compose
+## Zero-Downtime Deployments
+
+All deployments use Kubernetes rolling updates with the following configuration:
+- `maxSurge: 1` - Allow one extra pod during update
+- `maxUnavailable: 0` - Never have fewer than desired replicas
+- PodDisruptionBudgets ensure minimum availability
+- Readiness probes prevent traffic to unhealthy pods
+- Graceful shutdown hooks allow connections to drain
+
+When you push code changes:
+1. New pods are created with the updated image
+2. New pods must pass readiness checks before receiving traffic
+3. Traffic is gradually shifted from old to new pods
+4. Old pods are gracefully terminated after 30-60 seconds
+
+## Manual kubectl Commands
+
+If you need to manually interact with the cluster:
 
 ```bash
-sudo apt update
-sudo apt install -y docker.io docker-compose-v2
-sudo usermod -aG docker ubuntu
-newgrp docker
-```
+# Get pods status
+k3s kubectl get pods -n codeclashers
 
-### 3. Create Production Environment File
+# Get services
+k3s kubectl get svc -n codeclashers
 
-```bash
-cd backend
-cp .env.production.template .env.production
-nano .env.production
-```
+# View logs
+k3s kubectl logs -f deployment/colyseus -n codeclashers
+k3s kubectl logs -f deployment/bots -n codeclashers
 
-Fill in all the values:
-- MongoDB Atlas connection string
-- Redis password
-- Judge0 PostgreSQL credentials
-- AWS S3 credentials
-- OpenAI API key
-- All secret keys
+# Scale a deployment
+k3s kubectl scale deployment colyseus --replicas=3 -n codeclashers
 
-### 4. Set Permissions
+# Restart a deployment (triggers rolling update)
+k3s kubectl rollout restart deployment/colyseus -n codeclashers
 
-```bash
-chmod 600 .env.production
-```
+# Rollback a deployment
+k3s kubectl rollout undo deployment/colyseus -n codeclashers
 
-### 5. Start Services
+# Describe a pod (for debugging)
+k3s kubectl describe pod <pod-name> -n codeclashers
 
-```bash
-docker-compose -f docker-compose.prod.yml up -d
-```
-
-### 6. Verify Services
-
-```bash
-docker-compose -f docker-compose.prod.yml ps
-```
-
-## Environment Variables Explained
-
-| Variable | Description |
-|----------|-------------|
-| `MONGODB_URI` | MongoDB Atlas connection string |
-| `REDIS_PASSWORD` | Redis authentication password |
-| `AWS_ACCESS_KEY_ID` | AWS access key for S3 |
-| `AWS_SECRET_ACCESS_KEY` | AWS secret key for S3 |
-| `S3_BUCKET_NAME` | Name of your S3 bucket |
-| `OPENAI_API_KEY` | OpenAI API key for bot generation |
-| `INTERNAL_SERVICE_SECRET` | Secret for internal service auth |
-| `BOT_SERVICE_SECRET` | Secret for bot service |
-| `COLYSEUS_RESERVATION_SECRET` | Secret for Colyseus reservations |
-
-## GitHub Actions Auto-Deployment
-
-The backend is automatically deployed via GitHub Actions when you push to `main` with changes in `backend/`.
-
-The workflow runs on your self-hosted runner (Oracle VM) and:
-1. Pulls latest code
-2. Rebuilds containers
-3. Restarts services
-
-## Manual Deployment
-
-If you need to manually redeploy:
-
-```bash
-cd /opt/CodeClashers/backend
-git pull origin main
-docker-compose -f docker-compose.prod.yml down
-docker-compose -f docker-compose.prod.yml build --no-cache
-docker-compose -f docker-compose.prod.yml up -d
+# Execute a command in a pod
+k3s kubectl exec -it deployment/colyseus -n codeclashers -- /bin/sh
 ```
 
 ## Health Checks
 
+All services have health checks configured:
+- **Liveness probes** - Restart unhealthy pods
+- **Readiness probes** - Only route traffic to healthy pods
+
+Manual health checks:
 ```bash
 # Check Colyseus
-curl http://localhost:2567/health
+k3s kubectl exec -n codeclashers deployment/colyseus -- nc -z localhost 2567
 
 # Check Judge0
-curl http://localhost:2358/
+k3s kubectl exec -n codeclashers deployment/judge0-server -- curl -f http://localhost:2358
 
 # Check Redis
-docker exec codeclashers-redis redis-cli -a $REDIS_PASSWORD ping
+k3s kubectl exec -n codeclashers deployment/redis -- redis-cli -a $REDIS_PASSWORD ping
+
+# Check MongoDB
+k3s kubectl exec -n codeclashers deployment/mongodb -- mongosh --eval "db.adminCommand('ping')"
+
+# Check all pods
+k3s kubectl get pods -n codeclashers
 ```
 
-## Logs
+## Monitoring
+
+### Resource Usage
 
 ```bash
-# View all logs
-docker-compose -f docker-compose.prod.yml logs -f
+# View resource usage
+k3s kubectl top pods -n codeclashers
 
-# View specific service
-docker-compose -f docker-compose.prod.yml logs -f colyseus
+# View node resources
+k3s kubectl top node
+```
+
+### Logs
+
+```bash
+# View all logs for a deployment
+k3s kubectl logs -f deployment/colyseus -n codeclashers
+
+# View logs for specific pod
+k3s kubectl logs -f <pod-name> -n codeclashers
+
+# View logs for previous crashed container
+k3s kubectl logs --previous deployment/colyseus -n codeclashers
 ```
 
 ## Troubleshooting
 
-### Services won't start
+### Pods not starting
 
-Check logs:
+Check pod status and events:
 ```bash
-docker-compose -f docker-compose.prod.yml logs
+k3s kubectl describe pod <pod-name> -n codeclashers
+k3s kubectl get events -n codeclashers --sort-by='.lastTimestamp'
 ```
 
-### Port conflicts
+### Image pull errors
 
-Check if ports are in use:
-```bash
-sudo netstat -tulpn | grep -E '2567|6379|2358'
-```
+Ensure GitHub Container Registry permissions are set correctly for the `GITHUB_TOKEN`.
 
 ### Out of memory
 
-Oracle Cloud free tier has 24GB RAM. Monitor usage:
+Oracle Cloud free tier has 24GB RAM. Monitor usage and adjust resource limits:
 ```bash
-free -h
+k3s kubectl top node
+```
+
+Scale down replicas or adjust memory limits in GitHub Secrets.
+
+### Persistent volume issues
+
+```bash
+# Check PVC status
+k3s kubectl get pvc -n codeclashers
+
+# Describe PVC
+k3s kubectl describe pvc mongodb-data -n codeclashers
+```
+
+### Judge0 privileged container issues
+
+Judge0 workers require privileged access. Ensure k3s is installed with the correct flags:
+```bash
+k3s --version
+```
+
+### Rollback on deployment failure
+
+The workflow automatically rolls back on health check failure. Manual rollback:
+```bash
+k3s kubectl rollout undo deployment/<service-name> -n codeclashers
+k3s kubectl rollout status deployment/<service-name> -n codeclashers
 ```
 
 ## Security Notes
 
-1. **Never commit `.env.production`** - It's in `.gitignore`
-2. Use strong passwords for all secrets
-3. Restrict MongoDB Atlas network access to Oracle VM IP only
-4. Use IAM roles for S3 access when possible
-5. Keep Docker images updated
+1. **All secrets are in GitHub Secrets** - Never commit actual secrets
+2. Use strong passwords for all services
+3. Keep Docker images updated
+4. Regularly review resource limits
+5. Monitor pod logs for suspicious activity
+6. Judge0 workers run with privileged access (required for code execution isolation)

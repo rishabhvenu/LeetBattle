@@ -482,18 +482,35 @@ export async function getUserStatsCached(userId: string) {
   const db = client.db(DB_NAME);
   const matches = db.collection('matches');
   const users = db.collection('users');
+  const bots = db.collection('bots');
 
   // Aggregate wins and total matches; get timeCoded from user stats
   const userObjectId = new ObjectId(userId);
   const totalMatches = await matches.countDocuments({ playerIds: userObjectId });
   const wins = await matches.countDocuments({ winnerUserId: userObjectId });
-  // Get user's rating and timeCoded (default 1200 if missing)
-  const userDoc = await users.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1, 'stats.timeCoded': 1 } }) as { stats?: { rating?: number; timeCoded?: number } } | null;
-  const rating = userDoc?.stats?.rating ?? 1200;
-  const timeCoded = userDoc?.stats?.timeCoded ?? 0;
-  // Compute global rank among all users by rating: count users with higher rating + 1
-  const higherCount = await users.countDocuments({ 'stats.rating': { $gt: rating } });
-  const globalRank = higherCount + 1;
+  
+  // Check if it's a bot first
+  const botDoc = await bots.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1, 'stats.timeCoded': 1 } }) as { stats?: { rating?: number; timeCoded?: number } } | null;
+  let rating = 1200;
+  let timeCoded = 0;
+  let globalRank = 1;
+  
+  if (botDoc) {
+    // It's a bot - use bot stats
+    rating = botDoc.stats?.rating ?? 1200;
+    timeCoded = botDoc.stats?.timeCoded ?? 0;
+    // For bots, use a simple rank calculation (could be improved)
+    const higherBotCount = await bots.countDocuments({ 'stats.rating': { $gt: rating } });
+    globalRank = higherBotCount + 1;
+  } else {
+    // It's a regular user - use user stats
+    const userDoc = await users.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1, 'stats.timeCoded': 1 } }) as { stats?: { rating?: number; timeCoded?: number } } | null;
+    rating = userDoc?.stats?.rating ?? 1200;
+    timeCoded = userDoc?.stats?.timeCoded ?? 0;
+    // Compute global rank among all users by rating: count users with higher rating + 1
+    const higherCount = await users.countDocuments({ 'stats.rating': { $gt: rating } });
+    globalRank = higherCount + 1;
+  }
 
   const stats = {
     totalMatches,
@@ -854,15 +871,41 @@ export async function getMatchData(matchId: string, userId: string) {
     
     // Get opponent stats (handle bots and guests)
     let opponentStats;
-    if (opponentUserId.startsWith('guest_') || opponentUserId.length === 24) {
-      // Bot (24-char ObjectId) or guest opponent gets default stats
+    if (opponentUserId.startsWith('guest_')) {
+      // Guest opponent gets default stats
       opponentStats = {
         rating: 1200,
         wins: 0,
         losses: 0,
         totalMatches: 0
       };
+    } else if (opponentUserId.length === 24) {
+      // Check if it's a bot or regular user (24-char ObjectId)
+      await connectDB();
+      const client = await getMongoClient();
+      const db = client.db(DB_NAME);
+      
+      // First check if it's a bot
+      const bots = db.collection('bots');
+      const bot = await bots.findOne(
+        { _id: new ObjectId(opponentUserId) },
+        { projection: { 'stats.rating': 1, 'stats.wins': 1, 'stats.losses': 1, 'stats.totalMatches': 1 } }
+      );
+      
+      if (bot) {
+        // It's a bot - use bot stats
+        opponentStats = {
+          rating: bot.stats?.rating || 1200,
+          wins: bot.stats?.wins || 0,
+          losses: bot.stats?.losses || 0,
+          totalMatches: bot.stats?.totalMatches || 0
+        };
+      } else {
+        // It's a regular user - use getUserStatsCached
+        opponentStats = await getUserStatsCached(opponentUserId);
+      }
     } else {
+      // Regular user - use getUserStatsCached
       opponentStats = await getUserStatsCached(opponentUserId);
     }
     
@@ -1048,15 +1091,65 @@ public:
 
 // Helper functions for type conversion
 function convertToJavaType(type: string): string {
-  const typeMap: Record<string, string> = {
+  const normalized = type.replace(/\s+/g, '');
+  const lower = normalized.toLowerCase();
+
+  // Direct primitives and arrays
+  const directMap: Record<string, string> = {
     'int': 'int',
     'int[]': 'int[]',
     'string': 'String',
     'string[]': 'String[]',
     'bool': 'boolean',
     'bool[]': 'boolean[]',
+    'double': 'double',
+    'double[]': 'double[]',
+    'float': 'float',
+    'float[]': 'float[]',
+    'long': 'long',
+    'long[]': 'long[]',
+    'char': 'char',
+    'char[]': 'char[]',
+    'byte': 'byte',
+    'byte[]': 'byte[]',
+    'short': 'short',
+    'short[]': 'short[]',
   };
-  return typeMap[type.toLowerCase()] || type;
+  if (directMap[lower]) return directMap[lower];
+
+  // List generics: wrap primitives in Java wrappers; recurse for nested
+  const listMatch = lower.match(/^list<(.+)>$/);
+  if (listMatch) {
+    const innerRaw = listMatch[1];
+    // Nested List
+    if (/^list<.+>$/.test(innerRaw)) {
+      const mappedInner = convertToJavaType(innerRaw.replace(/^list</, 'List<'));
+      return `List<${mappedInner}>`;
+    }
+    const wrapperMap: Record<string, string> = {
+      'int': 'Integer',
+      'integer': 'Integer',
+      'string': 'String',
+      'bool': 'Boolean',
+      'boolean': 'Boolean',
+      'double': 'Double',
+      'float': 'Float',
+      'long': 'Long',
+      'char': 'Character',
+      'byte': 'Byte',
+      'short': 'Short',
+    };
+    const wrapped = wrapperMap[innerRaw] || innerRaw;
+    return `List<${wrapped}>`;
+  }
+
+  // Already capitalized List<?> case
+  if (normalized.startsWith('List<')) {
+    const inner = normalized.slice(5, -1);
+    return convertToJavaType(`list<${inner}>`);
+  }
+
+  return type;
 }
 
 function convertToCppType(type: string): string {
@@ -2073,11 +2166,18 @@ export async function verifyProblemSolutions(problemId: string) {
     // Call Colyseus validation endpoint
     const COLYSEUS_URL = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || 'http://localhost:2567';
     
+    // Forward session cookie to backend for admin auth
+    const cookieStore = await cookies();
+    const sessionCookie = cookieStore.get('codeclashers.sid');
+    const cookieHeader = sessionCookie ? `${sessionCookie.name}=${sessionCookie.value}` : '';
+    
     const validationResponse = await fetch(`${COLYSEUS_URL}/admin/validate-solutions`, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
+        ...(cookieHeader ? { Cookie: cookieHeader } : {}),
       },
+      credentials: 'include',
       body: JSON.stringify({
         signature: problem.signature,
         solutions: problem.solutions,
@@ -2311,6 +2411,13 @@ export async function getProblemById(problemId: string) {
 export async function updateProblem(problemId: string, updates: {
   testCases?: Array<{ input: Record<string, unknown>; output: unknown }>;
   solutions?: { python?: string; cpp?: string; java?: string; js?: string };
+  signature?: {
+    functionName: string;
+    parameters: Array<{ name: string; type: string }>;
+    returnType: string;
+    comparisonMode?: 'strict' | 'unordered' | 'set' | 'custom';
+    customComparator?: string;
+  };
 }) {
   const adminError = await ensureAdminAccess();
   if (adminError) {
@@ -2334,6 +2441,10 @@ export async function updateProblem(problemId: string, updates: {
 
     if (updates.solutions) {
       updateData.solutions = updates.solutions;
+    }
+
+    if (updates.signature) {
+      updateData.signature = updates.signature;
     }
 
     await problemsCollection.updateOne(

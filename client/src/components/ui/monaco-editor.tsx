@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
+import * as monaco from 'monaco-editor';
 import { codeClashTheme } from '@/themes/codeClashTheme';
 
 interface MonacoEditorProps {
@@ -21,72 +22,57 @@ export function MonacoEditor({
   readOnly = false
 }: MonacoEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
-  const monacoEditorRef = useRef<ReturnType<typeof import('monaco-editor').editor.create> | null>(null);
-  const [monacoLoaded, setMonacoLoaded] = useState(false);
+  const monacoEditorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
 
   useEffect(() => {
-    // Dynamically import Monaco Editor only on client side
-    if (typeof window === 'undefined') return;
+    if (!editorRef.current) return;
 
-    let editorInstance: ReturnType<typeof import('monaco-editor').editor.create> | null = null;
+    // Register the custom theme
+    monaco.editor.defineTheme('codeclash', codeClashTheme);
 
-    import('monaco-editor').then((monaco) => {
-      if (!editorRef.current) return;
-
-      setMonacoLoaded(true);
-
-      // Register the custom theme
-      monaco.editor.defineTheme('codeclash', codeClashTheme);
-
-      // Create the editor
-      const editor = monaco.editor.create(editorRef.current, {
-        value,
-        language,
-        theme: 'codeclash',
-        readOnly,
-        minimap: { enabled: false },
-        scrollBeyondLastLine: false,
-        wordWrap: 'on',
-        lineNumbers: 'on',
-        folding: true,
-        lineDecorationsWidth: 0,
-        lineNumbersMinChars: 0,
-        renderLineHighlight: 'line',
-        cursorStyle: 'line',
-        selectOnLineNumbers: true,
-        glyphMargin: false,
-        contextmenu: true,
-        mouseWheelZoom: true,
-        scrollbar: {
-          vertical: 'auto',
-          horizontal: 'auto',
-          verticalScrollbarSize: 8,
-          horizontalScrollbarSize: 8,
-        },
-        automaticLayout: true,
-      });
-
-      editorInstance = editor;
-      monacoEditorRef.current = editor;
-
-      // Handle content changes
-      if (onChange) {
-        editor.onDidChangeModelContent(() => {
-          const newValue = editor.getValue();
-          onChange(newValue);
-        });
-      }
-    }).catch((error) => {
-      console.error('Failed to load Monaco Editor:', error);
+    // Create the editor
+    const editor = monaco.editor.create(editorRef.current, {
+      value,
+      language,
+      theme: 'codeclash',
+      readOnly,
+      minimap: { enabled: false },
+      scrollBeyondLastLine: false,
+      wordWrap: 'on',
+      lineNumbers: 'on',
+      folding: true,
+      lineDecorationsWidth: 0,
+      lineNumbersMinChars: 0,
+      renderLineHighlight: 'line',
+      cursorStyle: 'line',
+      selectOnLineNumbers: true,
+      glyphMargin: false,
+      contextmenu: true,
+      mouseWheelZoom: true,
+      scrollbar: {
+        vertical: 'auto',
+        horizontal: 'auto',
+        verticalScrollbarSize: 8,
+        horizontalScrollbarSize: 8,
+      },
+      automaticLayout: true,
     });
+
+    monacoEditorRef.current = editor;
+
+    // Handle content changes
+    if (onChange) {
+      editor.onDidChangeModelContent(() => {
+        const newValue = editor.getValue();
+        onChange(newValue);
+      });
+    }
 
     // Cleanup function
     return () => {
-      if (editorInstance) {
-        editorInstance.dispose();
-      }
+      editor.dispose();
     };
-  }, [onChange]);
+  }, []);
 
   useEffect(() => {
     if (monacoEditorRef.current && monacoEditorRef.current.getValue() !== value) {
@@ -95,31 +81,16 @@ export function MonacoEditor({
   }, [value]);
 
   useEffect(() => {
-    if (!monacoEditorRef.current || !monacoLoaded) return;
+    if (!monacoEditorRef.current) return;
     
-    import('monaco-editor').then((monaco) => {
-      if (monacoEditorRef.current) {
-        monaco.editor.setModelLanguage(monacoEditorRef.current.getModel()!, language);
-      }
-    });
-  }, [language, monacoLoaded]);
+    monaco.editor.setModelLanguage(monacoEditorRef.current.getModel()!, language);
+  }, [language]);
 
   useEffect(() => {
     if (monacoEditorRef.current) {
       monacoEditorRef.current.updateOptions({ readOnly });
     }
   }, [readOnly]);
-
-  if (!monacoLoaded) {
-    return (
-      <div 
-        style={{ height }}
-        className={`border border-gray-600 rounded flex items-center justify-center ${className}`}
-      >
-        <div className="text-sm text-gray-500">Loading editor...</div>
-      </div>
-    );
-  }
 
   return (
     <div 

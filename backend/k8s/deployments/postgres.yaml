@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: codeclashers
+spec:
+  replicas: ${K8S_POSTGRES_REPLICAS}
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_PASSWORD
+        resources:
+          requests:
+            memory: ${K8S_POSTGRES_MEMORY_REQUEST}
+            cpu: ${K8S_POSTGRES_CPU_REQUEST}
+          limits:
+            memory: ${K8S_POSTGRES_MEMORY_LIMIT}
+            cpu: ${K8S_POSTGRES_CPU_LIMIT}
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - "${POSTGRES_USER}"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - "${POSTGRES_USER}"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+

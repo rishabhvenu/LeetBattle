@@ -425,6 +425,8 @@ export class MatchRoom extends Room {
         if (executionResult.allPassed && problem.timeComplexity) {
           try {
             console.log(`Analyzing time complexity for user ${userId}, expected: ${problem.timeComplexity}`);
+            // Dynamically import to avoid requiring OpenAI API key at startup
+            const { analyzeTimeComplexity } = await import('../lib/complexityAnalyzer');
             const complexityResult = await analyzeTimeComplexity(source_code, problem.timeComplexity);
             
             if (complexityResult.verdict === 'FAIL') {
@@ -983,26 +985,39 @@ export class MatchRoom extends Room {
     
     // Clean up bot states and notify bot service of match completion
     try {
-      const players = Object.keys(this.state.players);
-      for (const playerId of players) {
-        // Check if this player is a bot
-        const isBot = await this.redis.get(`bots:state:${playerId}`);
-        if (isBot) {
-          console.log(`Cleaning up bot state for ${playerId} after match completion`);
-          
-          // Remove bot from active matches set
-          await this.redis.srem(RedisKeys.botsActiveSet, playerId);
-          
-          // Clear bot state
-          await this.redis.del(RedisKeys.botStateKey(playerId));
-          
-          // Notify bot service that this bot completed a match
-          await this.redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
-            type: 'botMatchComplete',
-            botId: playerId
-          }));
-          
-          console.log(`Notified bot service that bot ${playerId} completed match`);
+      // Get player information from Redis instead of undefined state
+      const matchKey = RedisKeys.matchKey(this.matchId);
+      const matchRaw = await this.redis.get(matchKey);
+      
+      if (matchRaw) {
+        const matchData = JSON.parse(matchRaw);
+        const playersField = matchData.players;
+        const playerIds: string[] = Array.isArray(playersField)
+          ? playersField
+          : (playersField && typeof playersField === 'object')
+            ? Object.keys(playersField)
+            : [];
+
+        for (const playerId of playerIds) {
+          // Check if this player is a bot
+          const isBot = await this.redis.get(`bots:state:${playerId}`);
+          if (isBot) {
+            console.log(`Cleaning up bot state for ${playerId} after match completion`);
+            
+            // Remove bot from active matches set
+            await this.redis.srem(RedisKeys.botsActiveSet, playerId);
+            
+            // Clear bot state
+            await this.redis.del(RedisKeys.botStateKey(playerId));
+            
+            // Notify bot service that this bot completed a match
+            await this.redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
+              type: 'botMatchComplete',
+              botId: playerId
+            }));
+            
+            console.log(`Notified bot service that bot ${playerId} completed match`);
+          }
         }
       }
     } catch (error) {
@@ -1436,6 +1451,11 @@ export class MatchRoom extends Room {
     winnerUserId: string | null,
     isDraw: boolean
   ) {
+    // Ensure matchDuration is calculated if not already set
+    if (this.matchDuration === undefined || this.matchDuration === null) {
+      this.matchDuration = Date.now() - this.startTime;
+      console.log(`Calculated matchDuration in persistRatings: ${this.matchDuration}ms`);
+    }
     try {
       const mongoClient = await getMongoClient();
       const db = mongoClient.db(DB_NAME);
@@ -1530,7 +1550,7 @@ export class MatchRoom extends Room {
         const statUpdate: any = { 
           'stats.totalMatches': 1, 
           'stats.rating': change,
-          'stats.timeCoded': this.matchDuration // Add time coded in milliseconds
+          'stats.timeCoded': this.matchDuration || 0 // Add time coded in milliseconds, default to 0 if undefined
         };
         if (isDraw) {
           statUpdate['stats.draws'] = 1;
@@ -1597,7 +1617,7 @@ export class MatchRoom extends Room {
                   'stats.draws': isDraw ? 1 : 0, 
                   'stats.wins': (winnerUserId === playerId && !isDraw) ? 1 : 0, 
                   'stats.losses': (winnerUserId !== playerId && !isDraw) ? 1 : 0,
-                  'stats.timeCoded': this.matchDuration // Add time coded in milliseconds
+                  'stats.timeCoded': this.matchDuration || 0 // Add time coded in milliseconds, default to 0 if undefined
                 },
                 $set: { 'stats.rating': newRating, updatedAt: new Date() },
                 $push: { matchIds: new ObjectId(this.matchId) } as any

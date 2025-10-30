@@ -797,7 +797,7 @@ export default function MatchClient({
       id: sub.timestamp,
       status,
       errorType: errorType.type,
-      language: sub.language.charAt(0).toUpperCase() + sub.language.slice(1),
+      language: sub?.language ? (sub.language.charAt(0).toUpperCase() + sub.language.slice(1)) : 'Unknown',
       time: getRelativeTime(sub.timestamp),
       date: getRelativeTime(sub.timestamp),
       timestamp: sub.timestamp,

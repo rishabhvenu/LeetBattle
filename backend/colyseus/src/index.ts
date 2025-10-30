@@ -635,6 +635,7 @@ function generateRoomCode(): string {
   return code;
 }
 
+// FIXED PRIVATE ROOM CREATE - UNLOCK BEFORE CLIENT JOINS
 router.post('/private/create', async (ctx) => {
   const { userId, username } = ctx.request.body as { userId: string; username: string };
   if (!userId || !username) { 
@@ -662,6 +663,8 @@ router.post('/private/create', async (ctx) => {
     } while (await redis.exists(`private:room:${normalizedCode}`));
     
     console.log(`Creating new room with code: ${normalizedCode}`);
+    
+    // Create the Colyseus room
     const room = await matchMaker.create('private', { 
       roomCode: normalizedCode, 
       creatorId: userId, 
@@ -670,10 +673,10 @@ router.post('/private/create', async (ctx) => {
     
     console.log(`Successfully created room: ${room.room.roomId}`);
     
-    // Store room info in Redis now that we have the roomId
+    // CRITICAL: Store room info in Redis FIRST so it can be found
     await redis.setex(
       `private:room:${normalizedCode}`,
-      600, // 10 minute timeout
+      1800, // 30 minute timeout
       JSON.stringify({
         roomId: room.room.roomId,
         creatorId: userId,
@@ -681,12 +684,46 @@ router.post('/private/create', async (ctx) => {
       })
     );
     
-    ctx.body = { 
-      success: true,
-      roomId: room.room.roomId,
+    // Add creator to players set so HTTP state immediately reflects host presence
+    try {
+      const infoKey = `private:room:${normalizedCode}:info`;
+      const roomInfoBlob = {
+        roomCode: normalizedCode,
+        roomId: room.room.roomId,
+        creatorId: userId,
+        players: [{ userId, username }],
+        selectedProblemId: null,
+        status: 'waiting'
+      };
+      await redis.setex(infoKey, 1800, JSON.stringify(roomInfoBlob));
+    } catch (e) {
+      console.error('Failed writing creator room info blob:', e);
+    }
+    
+    console.log(`Stored room ${normalizedCode} in Redis with roomId: ${room.room.roomId}`);
+    
+    // CRITICAL: Wait for room to be fully initialized AND unlocked
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Give it time to initialize
+    
+    // Verify room is accessible
+    const roomState = room.room;
+    console.log(`Room ${normalizedCode} state - locked: ${roomState.locked}, maxClients: ${roomState.maxClients}`);
+    
+    console.log(`Room ${normalizedCode} is ready for connections (including creator)`);
+    
+    // Return full room info blob
+    const infoKey = `private:room:${normalizedCode}:info`;
+    const blobRaw = await redis.get(infoKey);
+    const blob = blobRaw ? JSON.parse(blobRaw) : {
       roomCode: normalizedCode,
-      isCreator: true
+      roomId: room.room.roomId,
+      creatorId: userId,
+      players: [{ userId, username }],
+      selectedProblemId: null,
+      status: 'waiting'
     };
+    
+    ctx.body = { success: true, ...blob, isCreator: true };
   } catch (error) {
     console.error('Error creating private room:', error);
     ctx.status = 500;
@@ -694,6 +731,7 @@ router.post('/private/create', async (ctx) => {
   }
 });
 
+// FIXED PRIVATE ROOM JOIN - RETURN ROOM INFO FOR WEBSOCKET CONNECTION
 router.post('/private/join', async (ctx) => {
   const { roomCode, userId, username } = ctx.request.body as { roomCode: string; userId: string; username: string };
   if (!roomCode || !userId || !username) { 
@@ -703,7 +741,6 @@ router.post('/private/join', async (ctx) => {
   }
   
   try {
-    const { matchMaker } = await import('colyseus');
     const redis = getRedis();
     const normalizedCode = roomCode.toUpperCase();
     
@@ -713,28 +750,113 @@ router.post('/private/join', async (ctx) => {
     const roomInfoRaw = await redis.get(`private:room:${normalizedCode}`);
     
     if (roomInfoRaw) {
-      // Room exists - return info for WebSocket connection
       const roomInfo = JSON.parse(roomInfoRaw);
       console.log(`Found existing room: ${roomInfo.roomId}`);
       
-      // Don't use matchMaker.join() - let the client connect via WebSocket with joinById
-      ctx.body = { 
-        success: true,
-        roomId: roomInfo.roomId,
+      // Special handling for creator joining their own room
+      if (roomInfo.creatorId === userId) {
+        console.log(`Creator ${username} joining their own room: ${normalizedCode}`);
+      } else {
+        console.log(`Player ${username} joining room created by ${roomInfo.creatorId}`);
+      }
+      
+      // Update full room info blob with this player
+      try {
+        const infoKey = `private:room:${normalizedCode}:info`;
+        const raw = await redis.get(infoKey);
+        let blob = raw ? JSON.parse(raw) : { roomCode: normalizedCode, roomId: roomInfo.roomId, creatorId: roomInfo.creatorId, players: [], selectedProblemId: null, status: 'waiting' };
+        const exists = Array.isArray(blob.players) && blob.players.some((p: any) => p.userId === userId);
+        if (!exists) {
+          blob.players = [...(blob.players || []), { userId, username }];
+        }
+        await redis.setex(infoKey, 1800, JSON.stringify(blob));
+      } catch (e) {
+        console.error('Failed to update joiner into room info blob:', e);
+      }
+      
+      // Return full room info blob for immediate UI render
+      const infoKey = `private:room:${normalizedCode}:info`;
+      const blobRaw = await redis.get(infoKey);
+      const blob = blobRaw ? JSON.parse(blobRaw) : {
         roomCode: normalizedCode,
-        isCreator: roomInfo.creatorId === userId
+        roomId: roomInfo.roomId,
+        creatorId: roomInfo.creatorId,
+        players: [{ userId, username }],
+        selectedProblemId: null,
+        status: 'waiting'
       };
+      ctx.body = { success: true, ...blob, isCreator: blob.creatorId === userId };
     } else {
-      // Room doesn't exist - return error instead of creating
       console.log(`Room ${normalizedCode} not found`);
       ctx.status = 404;
       ctx.body = { error: 'Room not found. Please check the room code.' };
     }
   } catch (error) {
     console.error('Error joining private room:', error);
-    console.error('Error details:', error instanceof Error ? error.message : String(error));
     ctx.status = 500;
     ctx.body = { error: 'Failed to join private room' };
+  }
+});
+
+// Private room: get current state (players, creator)
+router.get('/private/state', async (ctx) => {
+  try {
+    const { roomCode } = ctx.request.query as any;
+    if (!roomCode) { ctx.status = 400; ctx.body = { error: 'roomCode required' }; return; }
+    const redis = getRedis();
+    const normalizedCode = String(roomCode).toUpperCase();
+    
+    const infoKey = `private:room:${normalizedCode}:info`;
+    let blobRaw = await redis.get(infoKey);
+    if (!blobRaw) { ctx.status = 404; ctx.body = { error: 'Room not found' }; return; }
+    const blob = JSON.parse(blobRaw);
+    
+    // Hardening: ensure creatorId is present using base room key if missing
+    if (!blob.creatorId) {
+      const roomBaseRaw = await redis.get(`private:room:${normalizedCode}`);
+      if (roomBaseRaw) {
+        const roomBase = JSON.parse(roomBaseRaw);
+        if (roomBase.creatorId) {
+          blob.creatorId = roomBase.creatorId;
+          await redis.setex(infoKey, 1800, JSON.stringify(blob));
+          // refresh local blobRaw for consistency
+          blobRaw = JSON.stringify(blob);
+        }
+      }
+    }
+    ctx.body = { success: true, role: 'creator', ...blob };
+    ctx.body = { success: true, ...blob };
+  } catch (error) {
+    console.error('Error getting private room state:', error);
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to get private room state' };
+  }
+});
+
+// Private room: leave
+router.post('/private/leave', async (ctx) => {
+  try {
+    const { roomCode, userId } = ctx.request.body as { roomCode: string; userId: string };
+    if (!roomCode || !userId) { ctx.status = 400; ctx.body = { error: 'roomCode and userId required' }; return; }
+    const redis = getRedis();
+    const normalizedCode = roomCode.toUpperCase();
+    
+    // Remove the player from the Redis players set
+    const members = await redis.smembers(`private:room:${normalizedCode}:players`);
+    for (const m of members) {
+      try {
+        const obj = JSON.parse(m);
+        if (obj && obj.userId === userId) {
+          await redis.srem(`private:room:${normalizedCode}:players`, m);
+        }
+      } catch {}
+    }
+    
+    ctx.body = { success: true };
+  } catch (error) {
+    console.error('Error leaving private room:', error);
+    ctx.status = 500;
+    ctx.body = { error: 'Failed to leave private room' };
   }
 });
 
@@ -882,51 +1004,67 @@ router.post('/private/leave', rateLimitMiddleware(queueLimiter), async (ctx) => 
 
 // Admin endpoint with stricter rate limiting
 router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
-  console.log('Validation endpoint called with body:', JSON.stringify(ctx.request.body, null, 2));
+  console.log('Validation endpoint called');
   
-  const { signature, solutions, testCases } = ctx.request.body as {
-    signature: { functionName: string; parameters: Array<{ name: string; type: string }>; returnType: string };
-    solutions: { python?: string; cpp?: string; java?: string; js?: string };
-    testCases: Array<{ input: Record<string, unknown>; output: unknown }>;
-  };
-  
-  console.log('Parsed data:', {
-    signature: signature ? 'present' : 'missing',
-    solutions: solutions ? 'present' : 'missing',
-    testCases: testCases ? `present (${testCases.length} cases)` : 'missing'
-  });
-  
-  if (!signature || !solutions || !testCases) {
-    console.error('Missing required fields:', {
-      signature: !!signature,
-      solutions: !!solutions,
-      testCases: !!testCases
+  try {
+    // Check if request body exists and is valid
+    if (!ctx.request.body) {
+      console.error('No request body received');
+      ctx.status = 400;
+      ctx.body = { error: 'No request body received' };
+      return;
+    }
+    
+    console.log('Request body size:', JSON.stringify(ctx.request.body).length);
+    console.log('Request headers:', ctx.headers);
+    
+    const { signature, solutions, testCases } = ctx.request.body as {
+      signature: { functionName: string; parameters: Array<{ name: string; type: string }>; returnType: string };
+      solutions: { python?: string; cpp?: string; java?: string; js?: string };
+      testCases: Array<{ input: Record<string, unknown>; output: unknown }>;
+    };
+    
+    console.log('Parsed data:', {
+      signature: signature ? 'present' : 'missing',
+      solutions: solutions ? 'present' : 'missing',
+      testCases: testCases ? `present (${testCases.length} cases)` : 'missing'
     });
-    ctx.status = 400;
-    ctx.body = { 
-      error: 'signature, solutions, and testCases required',
-      received: {
+    
+    if (!signature || !solutions || !testCases) {
+      console.error('Missing required fields:', {
         signature: !!signature,
         solutions: !!solutions,
         testCases: !!testCases
-      }
-    };
-    return;
-  }
+      });
+      ctx.status = 400;
+      ctx.body = { 
+        error: 'signature, solutions, and testCases required',
+        received: {
+          signature: !!signature,
+          solutions: !!solutions,
+          testCases: !!testCases
+        }
+      };
+      return;
+    }
 
-  try {
-    const { executeAllTestCases } = await import('./lib/testExecutor');
-    const verificationErrors: string[] = [];
-    const verificationResults: Record<string, any> = {};
+    try {
+      const { executeAllTestCases } = await import('./lib/testExecutor');
+      const verificationErrors: string[] = [];
+      const verificationResults: Record<string, any> = {};
 
-    const languageMap: Record<string, 'python' | 'javascript' | 'java' | 'cpp'> = {
-      python: 'python',
-      js: 'javascript',
-      java: 'java',
-      cpp: 'cpp',
-    };
+      const languageMap: Record<string, 'python' | 'javascript' | 'java' | 'cpp'> = {
+        python: 'python',
+        js: 'javascript',
+        java: 'java',
+        cpp: 'cpp',
+      };
 
-    for (const [langKey, langValue] of Object.entries(languageMap)) {
+      console.log('Starting validation process...');
+      console.log('Test cases count:', testCases.length);
+      console.log('Solutions available:', Object.keys(solutions));
+
+      for (const [langKey, langValue] of Object.entries(languageMap)) {
       const solution = solutions[langKey as keyof typeof solutions];
       
       if (!solution) {
@@ -935,6 +1073,7 @@ router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
       }
 
       try {
+        console.log(`Starting verification for ${langKey}...`);
         const validationResult = await executeAllTestCases(
           langValue,
           solution,
@@ -967,9 +1106,11 @@ router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
             }
           });
         }
+        console.log(`Completed verification for ${langKey}`);
       } catch (error: any) {
-        verificationErrors.push(`${langKey} verification error: ${error.message}`);
         console.error(`Error verifying ${langKey}:`, error);
+        console.error(`Error stack:`, error.stack);
+        verificationErrors.push(`${langKey} verification error: ${error.message}`);
       }
     }
 
@@ -990,10 +1131,27 @@ router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
       message: 'All solutions verified successfully',
       results: verificationResults
     };
+    } catch (error: any) {
+      console.error('Validation process error:', error);
+      console.error('Error stack:', error.stack);
+      console.error('Error message:', error.message);
+      ctx.status = 500;
+      ctx.body = { 
+        error: 'Internal validation error', 
+        message: error.message,
+        stack: error.stack // Include stack trace for debugging
+      };
+    }
   } catch (error: any) {
     console.error('Validation endpoint error:', error);
+    console.error('Error stack:', error.stack);
+    console.error('Error message:', error.message);
     ctx.status = 500;
-    ctx.body = { error: 'Internal validation error', message: error.message };
+    ctx.body = { 
+      error: 'Request processing error', 
+      message: error.message,
+      stack: error.stack // Include stack trace for debugging
+    };
   }
 });
 

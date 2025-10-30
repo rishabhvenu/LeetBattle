@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: codeclashers
+spec:
+  serviceName: mongodb
+  replicas: ${K8S_MONGODB_REPLICAS}
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:7.0
+        ports:
+        - containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MONGODB_USERNAME
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MONGODB_PASSWORD
+        - name: MONGO_INITDB_DATABASE
+          value: "codeclashers"
+        volumeMounts:
+        - name: data
+          mountPath: /data/db
+        resources:
+          requests:
+            memory: ${K8S_MONGODB_MEMORY_REQUEST}
+            cpu: ${K8S_MONGODB_CPU_REQUEST}
+          limits:
+            memory: ${K8S_MONGODB_MEMORY_LIMIT}
+            cpu: ${K8S_MONGODB_CPU_LIMIT}
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "mongosh --eval 'db.adminCommand(\"ping\")' -u ${MONGO_INITDB_ROOT_USERNAME} -p ${MONGO_INITDB_ROOT_PASSWORD} --authenticationDatabase admin"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "mongosh --eval 'db.adminCommand(\"ping\")' -u ${MONGO_INITDB_ROOT_USERNAME} -p ${MONGO_INITDB_ROOT_PASSWORD} --authenticationDatabase admin"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: mongodb-data
+

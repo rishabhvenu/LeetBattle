@@ -11,7 +11,7 @@ export function middleware(request: NextRequest) {
   // Public routes that don't require authentication
   const publicRoutes = ['/landing', '/login', '/register'];
   const isPublicRoute = publicRoutes.includes(pathname);
-  const isAdminRoute = pathname.startsWith('/admin');
+  const isAdminRoute = pathname.startsWith('/admin') || pathname.startsWith('/problems');
   
   // Routes that allow guest access
   const guestRoutes = ['/match', '/queue'];

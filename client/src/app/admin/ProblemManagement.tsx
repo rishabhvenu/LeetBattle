@@ -37,6 +37,8 @@ type UnverifiedProblem = {
     functionName: string;
     parameters: Array<{ name: string; type: string }>;
     returnType: string;
+    comparisonMode?: 'strict' | 'unordered' | 'set' | 'custom';
+    customComparator?: string;
   };
   solutions?: {
     python?: string;
@@ -236,6 +238,7 @@ export default function ProblemManagement() {
       const result = await updateProblem(editingProblem._id, {
         testCases: editingProblem.testCases,
         solutions: editingSolutions,
+        signature: editingProblem.signature,
       });
       if (result.success) {
         toast.success('Problem updated successfully!');
@@ -581,6 +584,70 @@ export default function ProblemManagement() {
                 <h3 className="text-lg font-semibold text-black mb-2">Problem: {editingProblem.title}</h3>
                 <p className="text-black/70">{editingProblem.description}</p>
               </div>
+
+              {/* Comparison Configuration */}
+              {editingProblem.signature && (
+                <div className="space-y-4 border border-blue-200 rounded-lg p-4 bg-blue-50">
+                  <h3 className="text-lg font-semibold text-black">Output Comparison Settings</h3>
+                  
+                  <div className="space-y-2">
+                    <Label className="text-black/70">Comparison Mode</Label>
+                    <Select
+                      value={editingProblem.signature.comparisonMode || 'strict'}
+                      onValueChange={(value) => {
+                        setEditingProblem({
+                          ...editingProblem,
+                          signature: {
+                            ...editingProblem.signature,
+                            comparisonMode: value as 'strict' | 'unordered' | 'set' | 'custom',
+                            ...(value !== 'custom' ? { customComparator: undefined } : {})
+                          }
+                        });
+                      }}
+                    >
+                      <SelectTrigger className="bg-white border-blue-200 text-black">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="strict">Strict - Exact match</SelectItem>
+                        <SelectItem value="unordered">Unordered - Order-independent</SelectItem>
+                        <SelectItem value="set">Set - Ignore duplicates</SelectItem>
+                        <SelectItem value="custom">Custom - Use custom comparator</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-black/70">
+                      {editingProblem.signature.comparisonMode === 'strict' && 'Exact JSON equality - default behavior.'}
+                      {editingProblem.signature.comparisonMode === 'unordered' && 'Use this for problems like 3Sum where order of results doesn\'t matter.'}
+                      {editingProblem.signature.comparisonMode === 'set' && 'Treat output as a set, ignoring order and duplicates.'}
+                      {editingProblem.signature.comparisonMode === 'custom' && 'Provide a custom JavaScript function for comparison.'}
+                    </p>
+                  </div>
+
+                  {editingProblem.signature.comparisonMode === 'custom' && (
+                    <div className="space-y-2">
+                      <Label className="text-black/70">Custom Comparator Function</Label>
+                      <Textarea
+                        value={editingProblem.signature.customComparator || ''}
+                        onChange={(e) => {
+                          setEditingProblem({
+                            ...editingProblem,
+                            signature: {
+                              ...editingProblem.signature,
+                              customComparator: e.target.value
+                            }
+                          });
+                        }}
+                        placeholder="function compare(expected, actual) {&#10;  // Your comparison logic&#10;  return true/false;&#10;}"
+                        className="bg-white border-blue-200 text-black text-sm font-mono"
+                        rows={8}
+                      />
+                      <p className="text-xs text-black/70">
+                        Provide a JavaScript function that takes (expected, actual) and returns true if they match.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Edit Test Cases */}
               <div className="space-y-4">

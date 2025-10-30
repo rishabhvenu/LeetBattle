@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Users, X, Zap, Clock, Play } from "lucide-react";
+import { Loader2, Users, X, Zap, Clock } from "lucide-react";
 import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from "framer-motion";
 import { createGuestMatch } from '@/lib/guest-actions';
@@ -55,12 +55,25 @@ const GuestQueue: React.FC<GuestQueueProps> = ({ isAlreadyPlayed }) => {
         // Show 1-second fake queue animation
         setQueueStatus("waiting");
         
-        // Simulate queue stats
-        setQueueStats({
-          playersInQueue: Math.floor(Math.random() * 20) + 10,
-          ongoingMatches: Math.floor(Math.random() * 15) + 5,
-          averageWaitTime: 1, // 1 second for guests
-        });
+        // Fetch real queue stats; show constant 3s average wait for guests
+        try {
+          const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+          const [queueRes, statsRes] = await Promise.all([
+            fetch(`${base}/queue/size`),
+            fetch(`${base}/global/general-stats`)
+          ]);
+
+          const queueData = queueRes.ok ? await queueRes.json() : { size: 0 };
+          const statsData = statsRes.ok ? await statsRes.json() : { inProgressMatches: 0 };
+
+          setQueueStats({
+            playersInQueue: typeof queueData.size === 'number' ? queueData.size : 0,
+            ongoingMatches: typeof statsData.inProgressMatches === 'number' ? statsData.inProgressMatches : 0,
+            averageWaitTime: 3,
+          });
+        } catch {
+          setQueueStats({ playersInQueue: 0, ongoingMatches: 0, averageWaitTime: 3 });
+        }
         
         // Wait 1 second then redirect to match
         setTimeout(() => {
@@ -86,6 +99,33 @@ const GuestQueue: React.FC<GuestQueueProps> = ({ isAlreadyPlayed }) => {
 
     startGuestMatch();
   }, [isAlreadyPlayed, router, hasAttemptedMatch]);
+
+  // Handle page unload/close/navigation - ensure cleanup happens
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // For guests, we don't have a WebSocket connection to clean up,
+      // but we should prevent the match creation if it's still in progress
+      if (isStartingMatch) {
+        console.log('Guest match creation cancelled on page unload');
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && isStartingMatch) {
+        console.log('Guest match creation cancelled on page hidden');
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+    }
+  }, [isStartingMatch]);
 
   const handleCancelQueue = async () => {
     try {

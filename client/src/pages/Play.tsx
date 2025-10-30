@@ -110,9 +110,9 @@ export default function Play({ session, ongoingMatches }: { session: unknown; on
       const response = await fetch(`${base}/private/create`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          userId: session._id,
-          username: session.username || 'User'
+          body: JSON.stringify({ 
+          userId: (session as any)?.user?.id || (session as any)?._id,
+          username: (session as any)?.user?.username || (session as any)?.username || 'User'
         })
       });
       
@@ -145,10 +145,10 @@ export default function Play({ session, ongoingMatches }: { session: unknown; on
       const response = await fetch(`${base}/private/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+          body: JSON.stringify({ 
           roomCode: roomCode.toUpperCase(),
-          userId: session._id,
-          username: session.username || 'User'
+          userId: (session as any)?.user?.id || (session as any)?._id,
+          username: (session as any)?.user?.username || (session as any)?.username || 'User'
         })
       });
       

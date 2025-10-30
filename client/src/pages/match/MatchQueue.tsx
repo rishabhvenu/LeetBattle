@@ -50,17 +50,28 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
   const router = useRouter();
   const roomRef = useRef<Room | null>(null);
   const shouldCancelRef = useRef(true);
+  const statePollActiveRef = useRef(false);
+  const isCreatorLockedRef = useRef(false);
+  const joinPromiseRef = useRef<Promise<void> | null>(null); // Guard against duplicate joins
 
   useEffect(() => {
     let isMounted = true;
 
     if (isPrivate && roomCodeParam) {
-      // Private room logic - WebSocket-based approach
+      // Guard: Prevent duplicate joins from React Strict Mode
+      if (roomRef.current) {
+        console.log('Private room already connected, using existing connection');
+        return;
+      }
+      
+      // FIXED PRIVATE ROOM LOGIC - HTTP-first, WS for updates
       const joinPrivateRoom = async () => {
         try {
+          console.log('Starting private room join process...');
           const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
           
           // First, get room info from HTTP endpoint
+          console.log(`Fetching room info for code: ${roomCodeParam}`);
           const response = await fetch(`${base}/private/join`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -73,35 +84,166 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
           
           if (!response.ok) {
             const error = await response.json();
+            console.error('HTTP join request failed:', error);
             throw new Error(error.error || 'Failed to join room');
           }
           
           const roomInfo = await response.json();
+          console.log('Received room info:', roomInfo);
           if (!isMounted) return;
           
-          // Now connect to the specific WebSocket room using the roomId from the HTTP response
+          if (!roomInfo.roomId) {
+            throw new Error('Room ID not found in response');
+          }
+          
+          // Immediately honor isCreator/role from HTTP response and lock it
+          const initialIsCreator = roomInfo?.isCreator === true || roomInfo?.role === 'creator';
+          setIsCreator(initialIsCreator);
+          isCreatorLockedRef.current = true;
+
+          // Immediately reflect joined state in UI using HTTP state/blob response
+          try {
+            const stateRes = await fetch(`${base}/private/state?roomCode=${encodeURIComponent(roomCodeParam)}`);
+            if (stateRes.ok) {
+              const state = await stateRes.json();
+              if (!isMounted) return;
+              setPrivateRoomData({
+                roomCode: state.roomCode,
+                players: state.players || [{ userId, username }],
+                isCreator: initialIsCreator
+              });
+              // isCreator already set and locked from HTTP join
+            } else {
+              setPrivateRoomData({ roomCode: roomCodeParam, players: [{ userId, username }], isCreator: !!roomInfo.isCreator });
+              // isCreator already set and locked from HTTP join
+            }
+          } catch {
+            setPrivateRoomData({ roomCode: roomCodeParam, players: [{ userId, username }], isCreator: !!roomInfo.isCreator });
+            // isCreator already set and locked from HTTP join
+          }
+          // Prevent auto-leave on dev HMR while connecting
+          shouldCancelRef.current = false;
+          
+          // Fetch initial state via HTTP so UI doesn't depend on WS
+          try {
+            const stateRes = await fetch(`${base}/private/state?roomCode=${encodeURIComponent(roomCodeParam)}`);
+            if (stateRes.ok) {
+              const state = await stateRes.json();
+              if (state?.players) {
+                setPrivateRoomData({
+                  roomCode: roomCodeParam,
+                  players: state.players,
+                  isCreator: state.creatorId === userId
+                });
+                setIsCreator(state.creatorId === userId);
+              }
+            }
+          } catch {}
+          
+          // Poll HTTP state every 2s as a fallback to ensure UI updates even if WS is slow
+          statePollActiveRef.current = true;
+          const poll = async () => {
+            try {
+              const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+              const res = await fetch(`${base}/private/state?roomCode=${encodeURIComponent(roomCodeParam)}`);
+              if (res.ok) {
+                const data = await res.json();
+                if (!isMounted) return;
+                if (data?.players) {
+                  setPrivateRoomData({
+                    roomCode: roomCodeParam,
+                    players: data.players,
+                    isCreator: isCreatorLockedRef.current ? isCreator : (data.creatorId === userId)
+                  });
+                  if (!isCreatorLockedRef.current) setIsCreator(data.creatorId === userId);
+                }
+              }
+            } catch {}
+            if (isMounted && statePollActiveRef.current) {
+              setTimeout(poll, 2000);
+            }
+          };
+          poll();
+
+          // Now connect to the WebSocket room with retry logic and timeout
           const client = new Client(process.env.NEXT_PUBLIC_COLYSEUS_WS_URL!);
           
-          // Use join() instead of joinById to connect to existing room
-          const room = await client.join('private', { 
-            roomCode: roomCodeParam, 
-            userId, 
-            username 
+          // Create a timeout promise that will reject if connection takes too long
+          const connectionTimeoutMs = 10000; // 10 seconds total timeout
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              reject(new Error('Connection timeout: Room setup took too long. Please try again.'));
+            }, connectionTimeoutMs);
           });
+
+          // Retry logic with exponential backoff for "locked" errors
+          let room: Room | null = null;
+          let lastError: Error | null = null;
+          const maxRetries = 4;
+          const delays = [500, 1000, 2000, 3000]; // Exponential backoff in ms
+          
+          // Race the join attempt against the timeout
+          const joinAttempt = async (attempt: number): Promise<Room> => {
+            console.log(`Join attempt ${attempt + 1}/${maxRetries + 1}...`);
+            try {
+              const joinPromise = client.joinById(roomInfo.roomId, { 
+                roomCode: roomCodeParam, 
+                userId, 
+                username 
+              });
+              return await Promise.race([joinPromise, timeoutPromise]);
+            } catch (error) {
+              const err = error instanceof Error ? error : new Error(String(error));
+              const errorMessage = err.message.toLowerCase();
+              console.log(`Join attempt ${attempt + 1} failed:`, errorMessage);
+              
+              // Retry on "locked" errors or other room-related timing errors
+              const isRetryableError = errorMessage.includes('locked') || 
+                                      errorMessage.includes('room') ||
+                                      (errorMessage.includes('not found') && attempt < maxRetries);
+              
+              if (isRetryableError && attempt < maxRetries) {
+                console.log(`Retrying in ${delays[attempt]}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+                return joinAttempt(attempt + 1);
+              } else {
+                throw err;
+              }
+            }
+          };
+          
+          try {
+            room = await Promise.race([
+              joinAttempt(0),
+              timeoutPromise
+            ]);
+            console.log('Successfully connected to room:', room.id);
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            console.error('Failed to join room after all attempts:', lastError);
+            throw lastError;
+          }
+
+          if (!room) {
+            throw lastError || new Error('Failed to join room after retries');
+          }
           
           roomRef.current = room;
           setIsCreator(roomInfo.isCreator);
+          shouldCancelRef.current = false; // Don't auto-leave when component unmounts
+
+          // Immediately reflect joined state in UI to avoid "Setting up" hang
+          setPrivateRoomData({
+            roomCode: roomCodeParam,
+            players: [{ userId, username }],
+            isCreator: roomInfo.isCreator
+          });
           
-          // Listen for player updates
-          room.onMessage('players_updated', (data) => {
+          // Listen for unified room info updates
+          room.onMessage('room_info', (data) => {
             if (!isMounted) return;
-            
-            setPrivateRoomData({
-              roomCode: roomCodeParam,
-              players: data.players,
-              isCreator: data.creatorId === userId
-            });
-            setIsCreator(data.creatorId === userId);
+            setPrivateRoomData({ roomCode: data.roomCode, players: data.players || [], isCreator: data.creatorId === userId });
+            if (!isCreatorLockedRef.current) setIsCreator(data.creatorId === userId);
           });
           
           // Listen for problem selection
@@ -131,7 +273,7 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
             toast.error(data.message);
           });
           
-          console.log('Connected to private room via WebSocket');
+          console.log('Successfully connected to private room via WebSocket');
           
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to join room';
@@ -139,15 +281,25 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
           toast.error('Failed to join room: ' + message);
           setQueueStatus("error");
           setErrorMessage(message);
+        } finally {
+          joinPromiseRef.current = null; // Clear the promise ref
         }
       };
 
-      // Initial join
-      joinPrivateRoom();
+      // Initial join - wrap in promise ref to prevent duplicates
+      if (!joinPromiseRef.current) {
+        joinPromiseRef.current = joinPrivateRoom()
+          .catch(() => {})
+          .finally(() => {
+            joinPromiseRef.current = null;
+          });
+      }
       
-      return () => {
+          return () => {
         isMounted = false;
+            statePollActiveRef.current = false;
         if (roomRef.current && shouldCancelRef.current) {
+          console.log('Leaving private room due to component unmount');
           roomRef.current.leave();
         }
       };
@@ -200,11 +352,24 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
       };
 
       const fetchQueueStats = async () => {
-        setQueueStats({
-          playersInQueue: Math.floor(Math.random() * 100) + 50,
-          ongoingMatches: Math.floor(Math.random() * 50) + 20,
-          averageWaitTime: Math.floor(Math.random() * 30) + 15,
-        });
+        try {
+          const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+          const [queueRes, statsRes] = await Promise.all([
+            fetch(`${base}/queue/size`),
+            fetch(`${base}/global/general-stats`)
+          ]);
+
+          const queueData = queueRes.ok ? await queueRes.json() : { size: 0 };
+          const statsData = statsRes.ok ? await statsRes.json() : { inProgressMatches: 0 };
+
+          setQueueStats({
+            playersInQueue: typeof queueData.size === 'number' ? queueData.size : 0,
+            ongoingMatches: typeof statsData.inProgressMatches === 'number' ? statsData.inProgressMatches : 0,
+            averageWaitTime: 10,
+          });
+        } catch {
+          setQueueStats({ playersInQueue: 0, ongoingMatches: 0, averageWaitTime: 10 });
+        }
       };
 
       joinQueue();
@@ -223,6 +388,58 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
       };
     }
   }, [userId, username, rating, router, isPrivate, roomCodeParam, availableProblems]);
+
+  // Handle page unload/close/navigation - ensure cleanup happens
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (roomRef.current && shouldCancelRef.current) {
+        try {
+          roomRef.current.leave();
+          console.log('Left queue room on page unload');
+        } catch {
+          // Ignore errors on leave
+        }
+      }
+      
+      // For private rooms, also try to leave via HTTP endpoint
+      if (isPrivate && roomCodeParam && shouldCancelRef.current) {
+        try {
+          const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+          // Use sendBeacon for reliable delivery during page unload
+          if (navigator.sendBeacon) {
+            const data = JSON.stringify({ userId });
+            navigator.sendBeacon(`${base}/private/leave`, data);
+            console.log('Sent private room leave via sendBeacon');
+          }
+        } catch {
+          // Ignore errors on leave
+        }
+      }
+      
+      roomRef.current = null;
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && roomRef.current && shouldCancelRef.current) {
+        try {
+          roomRef.current.leave();
+          console.log('Left queue room on page hidden');
+        } catch {
+          // Ignore errors on leave
+        }
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      };
+    }
+  }, [isPrivate, roomCodeParam, userId]);
 
   // Fetch available problems when component mounts
   useEffect(() => {
@@ -252,7 +469,7 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
     return matchesDifficulty && matchesSearch;
   });
 
-  // Handle problem selection
+  // Handle problem selection - RESTORED WEBSOCKET APPROACH
   const handleSelectProblem = (problem: Problem) => {
     if (!isCreator || !roomRef.current) return;
     
@@ -262,7 +479,7 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
     });
   };
 
-  // Handle starting the match
+  // Handle starting the match - RESTORED WEBSOCKET APPROACH
   const handleStartMatch = () => {
     if (!isCreator || !roomRef.current || privateRoomData?.players.length !== 2) return;
     
@@ -276,17 +493,22 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
       setQueueStatus("cancelled");
       
       if (isPrivate && roomCodeParam) {
-        // Leave private room
-        const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
-        await fetch(`${base}/private/leave`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId })
-        });
-      } else {
-        // Leave queue room
+        // Leave private room via WebSocket
         if (roomRef.current) {
-          await roomRef.current.leave();
+          try {
+            await roomRef.current.leave();
+          } catch (error) {
+            console.warn('Failed to leave private room:', error);
+          }
+        }
+      } else {
+        // Leave public queue room
+        if (roomRef.current) {
+          try {
+            await roomRef.current.leave();
+          } catch (error) {
+            console.warn('Failed to leave queue room:', error);
+          }
         }
       }
       
@@ -400,7 +622,7 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
                   <motion.div variants={itemVariants}>
                     {queueStatus === "waiting" && (
                       <>
-                        {isPrivate && privateRoomData ? (
+                        {isPrivate ? (
                           <div className="space-y-6">
                             {/* Room Code Display */}
                             <div className="bg-blue-50 rounded-lg p-6 border-2 border-blue-200">
@@ -425,9 +647,9 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
 
                             {/* Players List */}
                             <div>
-                              <p className="text-lg font-semibold text-black mb-3">Players ({privateRoomData.players?.length || 0}/2)</p>
+                              <p className="text-lg font-semibold text-black mb-3">Players ({(privateRoomData?.players || [{ userId, username }]).length}/2)</p>
                               <div className="space-y-2">
-                                {privateRoomData.players?.map((player: PlayerInfo, idx: number) => (
+                                {(privateRoomData?.players || [{ userId, username }]).map((player: PlayerInfo, idx: number) => (
                                   <div
                                     key={idx}
                                     className="flex items-center justify-between bg-white rounded-lg p-3 border border-blue-200"
@@ -552,12 +774,12 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
                               <div className="flex justify-center">
                                 <Button
                                   className={`px-8 py-3 text-white font-semibold rounded-full transition-all duration-300 ${
-                                    privateRoomData.players.length === 2
+                                    (privateRoomData?.players || []).length === 2
                                       ? 'bg-green-500 hover:bg-green-600 transform hover:scale-105'
                                       : 'bg-gray-400 cursor-not-allowed'
                                   }`}
                                   onClick={handleStartMatch}
-                                  disabled={privateRoomData.players.length !== 2 || isStartingMatch}
+                                  disabled={(privateRoomData?.players || []).length !== 2 || isStartingMatch}
                                 >
                                   {isStartingMatch ? (
                                     <>
@@ -577,7 +799,7 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
                             {/* Status Message */}
                             {isCreator ? (
                               <p className="text-center text-black/60">
-                                {privateRoomData.players.length === 2 
+                                {(privateRoomData?.players || []).length === 2 
                                   ? "Ready to start the match!" 
                                   : "Waiting for another player to join..."
                                 }

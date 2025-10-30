@@ -74,14 +74,14 @@ export class QueueRoom extends Room {
     // Store client mapping
     this.userIdToClient.set(userId, client);
     
+    // Check if this is a bot user (used throughout the function)
+    const isBot = await isBotUser(userId);
+    
     // Check if player already has an active match
     const existingReservation = await this.redis.get(`queue:reservation:${userId}`);
     if (existingReservation) {
       const reservationData = JSON.parse(existingReservation);
       console.log(`Player ${userId} already has an active match: ${reservationData.matchId}`);
-      
-      // Check if this is a human player or bot
-      const isBot = await isBotUser(userId);
       
       if (isBot) {
         // For bots: don't let them queue, just disconnect them
@@ -113,6 +113,17 @@ export class QueueRoom extends Room {
       return;
     }
     
+    // Additional validation for bots: check if already in active match set
+    if (isBot) {
+      const isBotActive = await this.redis.sismember(RedisKeys.botsActiveSet, userId);
+      if (isBotActive) {
+        console.log(`Bot ${userId} is already in active match set, rejecting queue join`);
+        this.cleanupClient(userId);
+        client.leave();
+        return;
+      }
+    }
+    
     // Check if player is currently being processed
     if (this.processingUsers.has(userId)) {
       console.log(`Player ${userId} is currently being processed, ignoring duplicate join`);
@@ -132,7 +143,6 @@ export class QueueRoom extends Room {
     
     // Track human player for prioritization and bot service (only humans)
     // Check if this is NOT a bot user (i.e., it's a human player)
-    const isBot = await isBotUser(userId);
     if (!isBot) {
       await addHumanPlayer(this.redis, userId);
       await this.redis.sadd(RedisKeys.queuedPlayersSet, userId);
@@ -175,6 +185,11 @@ export class QueueRoom extends Room {
     if (userId) {
       console.log(`Player ${userId} left queue room`);
       this.cleanupClient(userId);
+      
+      // Remove from Redis queue and cleanup all related data
+      await this.redis.zrem(RedisKeys.eloQueue, userId);
+      await this.redis.del(RedisKeys.queueJoinedAtKey(userId));
+      console.log(`Removed player ${userId} from Redis queue`);
       
       // Check if this was a human player (not a bot)
       const wasHuman = !(await isBotUser(userId));

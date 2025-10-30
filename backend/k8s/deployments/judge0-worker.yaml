@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: judge0-worker
+  namespace: codeclashers
+spec:
+  replicas: ${K8S_JUDGE0_WORKER_REPLICAS}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: judge0-worker
+  template:
+    metadata:
+      labels:
+        app: judge0-worker
+    spec:
+      containers:
+      - name: judge0-worker
+        image: judge0/judge0:latest
+        command: ["./scripts/workers"]
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_DB
+        resources:
+          requests:
+            memory: ${K8S_JUDGE0_WORKER_MEMORY_REQUEST}
+            cpu: ${K8S_JUDGE0_WORKER_CPU_REQUEST}
+          limits:
+            memory: ${K8S_JUDGE0_WORKER_MEMORY_LIMIT}
+            cpu: ${K8S_JUDGE0_WORKER_CPU_LIMIT}
+        # Judge0 workers require privileged access for code execution
+        securityContext:
+          privileged: true
+        livenessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - workers
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - workers
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+

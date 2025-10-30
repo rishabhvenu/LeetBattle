@@ -1,4 +1,4 @@
-name: Deploy Backend to Oracle Cloud
+name: Deploy Backend to Oracle Cloud (Kubernetes)
 
 on:
   push:
@@ -21,50 +21,225 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup directory structure
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate image tag
+        id: meta
         run: |
-          sudo mkdir -p /opt/CodeClashers
-          sudo chown $USER:$USER /opt/CodeClashers
-          if [ ! -d "/opt/CodeClashers/.git" ]; then
-            git clone https://${{ secrets.GH_TOKEN }}@github.com/rishabhvenu/LeetBattle.git /opt/CodeClashers
+          export IMAGE_TAG=$(git rev-parse --short HEAD)
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+          echo "Image tag: $IMAGE_TAG"
+
+      - name: Build and push Colyseus image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/colyseus
+          push: true
+          tags: ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Bots image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/bots
+          push: true
+          tags: ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Stop docker-compose services (if running)
+        run: |
+          # Stop docker-compose services to avoid port conflicts
+          # This is safe - K8s will handle traffic
+          if [ -f "/opt/CodeClashers/backend/docker-compose.prod.yml" ]; then
+            echo "Stopping docker-compose services..."
+            cd /opt/CodeClashers/backend
+            docker-compose -f docker-compose.prod.yml down || true
+            echo "Docker compose services stopped"
+          else
+            echo "No docker-compose.prod.yml found, skipping"
           fi
 
-      - name: Deploy Backend
+      - name: Install k3s if not present
+        run: |
+          if ! command -v k3s &> /dev/null; then
+            echo "Installing k3s..."
+            chmod +x backend/k8s/install-k3s.sh
+            bash backend/k8s/install-k3s.sh
+          else
+            echo "k3s already installed"
+            k3s --version
+          fi
+          
+          # Ensure envsubst is installed (comes with gettext package)
+          if ! command -v envsubst &> /dev/null; then
+            echo "Installing gettext package for envsubst..."
+            sudo apt-get update && sudo apt-get install -y gettext-base
+          fi
+
+      - name: Create namespace if not exists
+        run: |
+          k3s kubectl create namespace codeclashers --dry-run=client -o yaml | k3s kubectl apply -f -
+
+      - name: Create or update secrets
+        run: |
+          k3s kubectl create secret generic app-secrets \
+            --namespace=codeclashers \
+            --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+            --from-literal=JUDGE0_POSTGRES_USER="${{ secrets.JUDGE0_POSTGRES_USER }}" \
+            --from-literal=JUDGE0_POSTGRES_PASSWORD="${{ secrets.JUDGE0_POSTGRES_PASSWORD }}" \
+            --from-literal=JUDGE0_POSTGRES_DB="${{ secrets.JUDGE0_POSTGRES_DB }}" \
+            --from-literal=MONGODB_USERNAME="${{ secrets.MONGODB_USERNAME }}" \
+            --from-literal=MONGODB_PASSWORD="${{ secrets.MONGODB_PASSWORD }}" \
+            --from-literal=MONGODB_URI_INTERNAL="mongodb://${{ secrets.MONGODB_USERNAME }}:${{ secrets.MONGODB_PASSWORD }}@mongodb:27017/codeclashers?authSource=admin" \
+            --from-literal=MONGODB_URI="${{ secrets.MONGODB_URI }}" \
+            --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+            --from-literal=INTERNAL_SERVICE_SECRET="${{ secrets.INTERNAL_SERVICE_SECRET }}" \
+            --from-literal=BOT_SERVICE_SECRET="${{ secrets.BOT_SERVICE_SECRET }}" \
+            --from-literal=COLYSEUS_RESERVATION_SECRET="${{ secrets.COLYSEUS_RESERVATION_SECRET }}" \
+            --from-literal=AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            --from-literal=AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            --from-literal=S3_BUCKET_NAME="${{ secrets.S3_BUCKET_NAME }}" \
+            --from-literal=AWS_REGION="${{ secrets.AWS_REGION }}" \
+            --dry-run=client -o yaml | k3s kubectl apply -f -
+
+      - name: Deploy to Kubernetes
         env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          REDIS_PORT: ${{ secrets.REDIS_PORT }}
-          COLYSEUS_PORT: ${{ secrets.COLYSEUS_PORT }}
-          JUDGE0_POSTGRES_USER: ${{ secrets.JUDGE0_POSTGRES_USER }}
-          JUDGE0_POSTGRES_PASSWORD: ${{ secrets.JUDGE0_POSTGRES_PASSWORD }}
-          JUDGE0_POSTGRES_DB: ${{ secrets.JUDGE0_POSTGRES_DB }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
-          BOT_SERVICE_SECRET: ${{ secrets.BOT_SERVICE_SECRET }}
-          COLYSEUS_RESERVATION_SECRET: ${{ secrets.COLYSEUS_RESERVATION_SECRET }}
-          BOTS_ENABLED: ${{ secrets.BOTS_ENABLED }}
-          BOT_FILL_DELAY_MS: ${{ secrets.BOT_FILL_DELAY_MS }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          # MongoDB resources
+          K8S_MONGODB_REPLICAS: ${{ secrets.K8S_MONGODB_REPLICAS || '1' }}
+          K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '2Gi' }}
+          K8S_MONGODB_MEMORY_LIMIT: ${{ secrets.K8S_MONGODB_MEMORY_LIMIT || '4Gi' }}
+          K8S_MONGODB_CPU_REQUEST: ${{ secrets.K8S_MONGODB_CPU_REQUEST || '500m' }}
+          K8S_MONGODB_CPU_LIMIT: ${{ secrets.K8S_MONGODB_CPU_LIMIT || '1000m' }}
+          # Redis resources
+          K8S_REDIS_REPLICAS: ${{ secrets.K8S_REDIS_REPLICAS || '1' }}
+          K8S_REDIS_MEMORY_REQUEST: ${{ secrets.K8S_REDIS_MEMORY_REQUEST || '512Mi' }}
+          K8S_REDIS_MEMORY_LIMIT: ${{ secrets.K8S_REDIS_MEMORY_LIMIT || '1Gi' }}
+          K8S_REDIS_CPU_REQUEST: ${{ secrets.K8S_REDIS_CPU_REQUEST || '250m' }}
+          K8S_REDIS_CPU_LIMIT: ${{ secrets.K8S_REDIS_CPU_LIMIT || '500m' }}
+          # PostgreSQL resources
+          K8S_POSTGRES_REPLICAS: ${{ secrets.K8S_POSTGRES_REPLICAS || '1' }}
+          K8S_POSTGRES_MEMORY_REQUEST: ${{ secrets.K8S_POSTGRES_MEMORY_REQUEST || '256Mi' }}
+          K8S_POSTGRES_MEMORY_LIMIT: ${{ secrets.K8S_POSTGRES_MEMORY_LIMIT || '512Mi' }}
+          K8S_POSTGRES_CPU_REQUEST: ${{ secrets.K8S_POSTGRES_CPU_REQUEST || '250m' }}
+          K8S_POSTGRES_CPU_LIMIT: ${{ secrets.K8S_POSTGRES_CPU_LIMIT || '500m' }}
+          # Colyseus resources
+          K8S_COLYSEUS_REPLICAS: ${{ secrets.K8S_COLYSEUS_REPLICAS || '2' }}
+          K8S_COLYSEUS_MEMORY_REQUEST: ${{ secrets.K8S_COLYSEUS_MEMORY_REQUEST || '512Mi' }}
+          K8S_COLYSEUS_MEMORY_LIMIT: ${{ secrets.K8S_COLYSEUS_MEMORY_LIMIT || '1Gi' }}
+          K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '500m' }}
+          K8S_COLYSEUS_CPU_LIMIT: ${{ secrets.K8S_COLYSEUS_CPU_LIMIT || '1000m' }}
+          # Judge0 Server resources
+          K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '2' }}
+          K8S_JUDGE0_SERVER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_REQUEST || '512Mi' }}
+          K8S_JUDGE0_SERVER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_LIMIT || '1Gi' }}
+          K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '500m' }}
+          K8S_JUDGE0_SERVER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_CPU_LIMIT || '1000m' }}
+          # Judge0 Worker resources
+          K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '2' }}
+          K8S_JUDGE0_WORKER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_REQUEST || '1Gi' }}
+          K8S_JUDGE0_WORKER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_LIMIT || '2Gi' }}
+          K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '1000m' }}
+          K8S_JUDGE0_WORKER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_CPU_LIMIT || '2000m' }}
+          # Bots resources
+          K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '2' }}
+          K8S_BOTS_MEMORY_REQUEST: ${{ secrets.K8S_BOTS_MEMORY_REQUEST || '256Mi' }}
+          K8S_BOTS_MEMORY_LIMIT: ${{ secrets.K8S_BOTS_MEMORY_LIMIT || '512Mi' }}
+          K8S_BOTS_CPU_REQUEST: ${{ secrets.K8S_BOTS_CPU_REQUEST || '250m' }}
+          K8S_BOTS_CPU_LIMIT: ${{ secrets.K8S_BOTS_CPU_LIMIT || '500m' }}
         run: |
           set -e
-          cd /opt/CodeClashers
-          git pull origin main
           
-          cd backend
+          # Apply manifests in order with environment substitution
+          cd backend/k8s
           
-          # Use production docker-compose
-          docker-compose -f docker-compose.prod.yml down || true
+          # Apply namespace
+          k3s kubectl apply -f namespaces/
           
-          # Rebuild containers in case code changed
-          docker-compose -f docker-compose.prod.yml build --no-cache
+          # Apply ConfigMap
+          k3s kubectl apply -f configmaps/
           
-          # Start services
-          docker-compose -f docker-compose.prod.yml up -d
+          # Apply storage
+          k3s kubectl apply -f storage/
           
-          # Show status
-          docker-compose -f docker-compose.prod.yml ps
+          # Wait for PVCs to be ready
+          k3s kubectl wait --for=condition=bound pvc -n codeclashers --timeout=60s || true
           
-          echo "Deployment complete!"
+          # Apply services
+          k3s kubectl apply -f services/
+          
+          # Apply statefulsets with env substitution
+          for file in statefulsets/*.yaml; do
+            envsubst < "$file" | k3s kubectl apply -f -
+          done
+          
+          # Apply deployments with env substitution
+          for file in deployments/*.yaml; do
+            envsubst < "$file" | k3s kubectl apply -f -
+          done
+          
+          # Apply PodDisruptionBudgets
+          k3s kubectl apply -f pdbs/
+          
+          echo "All resources applied successfully"
+
+      - name: Wait for rollouts to complete
+        run: |
+          echo "Waiting for Colyseus deployment..."
+          k3s kubectl rollout status deployment/colyseus -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/colyseus -n codeclashers && exit 1)
+          
+          echo "Waiting for Bots deployment..."
+          k3s kubectl rollout status deployment/bots -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/bots -n codeclashers && exit 1)
+          
+          echo "Waiting for Judge0 Server deployment..."
+          k3s kubectl rollout status deployment/judge0-server -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/judge0-server -n codeclashers && exit 1)
+          
+          echo "Waiting for Judge0 Worker deployment..."
+          k3s kubectl rollout status deployment/judge0-worker -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/judge0-worker -n codeclashers && exit 1)
+
+      - name: Verify deployments
+        run: |
+          echo "=== Deployment Status ==="
+          k3s kubectl get pods -n codeclashers
+          echo ""
+          echo "=== Services ==="
+          k3s kubectl get svc -n codeclashers
+          
+      - name: Health check
+        run: |
+          echo "Performing health checks..."
+          
+          # Wait for Colyseus to be ready
+          for i in {1..30}; do
+            if k3s kubectl exec -n codeclashers deployment/colyseus -- sh -c "nc -z localhost 2567" 2>/dev/null; then
+              echo "✓ Colyseus is healthy"
+              break
+            fi
+            sleep 2
+          done
+          
+          # Wait for Judge0 to be ready
+          for i in {1..30}; do
+            if k3s kubectl exec -n codeclashers deployment/judge0-server -- curl -f http://localhost:2358 >/dev/null 2>&1; then
+              echo "✓ Judge0 Server is healthy"
+              break
+            fi
+            sleep 2
+          done
+          
+          echo "✓ Health checks passed"
+          
+      - name: Deployment complete
+        run: |
+          echo "🚀 Deployment complete!"
+          echo "Image tag: $IMAGE_TAG"

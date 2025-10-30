@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: codeclashers
+data:
+  PORT: "2567"
+  REDIS_PORT: "6379"
+  POSTGRES_PORT: "5432"
+  MONGODB_HOST: "mongodb"
+  MONGODB_PORT: "27017"
+  REDIS_HOST: "redis"
+  POSTGRES_HOST: "postgres"
+  JUDGE0_HOST: "judge0-server"
+  JUDGE0_PORT: "2358"
+  NODE_ENV: "production"
+  BOTS_ENABLED: "true"
+  BOT_FILL_DELAY_MS: "15000"
+  BOT_TIME_DIST: "lognormal"
+  BOT_TIME_PARAMS_EASY: '{"muMinutes":30,"sigma":0.35}'
+  BOT_TIME_PARAMS_MEDIUM: '{"muMinutes":35,"sigma":0.35}'
+  BOT_TIME_PARAMS_HARD: '{"muMinutes":40,"sigma":0.35}'
+

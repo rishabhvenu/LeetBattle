@@ -75,26 +75,51 @@ async function initializeRotationQueue() {
     const allBots = await getAllBots();
     console.log(`Found ${allBots.length} total bots`);
     
-    // Clear existing rotation queue and bot states
-    await redis.del('bots:rotation:queue');
-    await redis.del('bots:active'); // Clear active bots set
-    await redis.del('bots:deployed'); // Clear deployed bots set
+    // CHECK Redis state - don't clear, preserve existing state
+    const existingDeployed = await redis.smembers('bots:deployed');
+    const existingActive = await redis.smembers('bots:active');
     
-    // Clear all bot states and reservations
+    console.log(`Found ${existingDeployed.length} bots already marked as deployed in Redis`);
+    console.log(`Found ${existingActive.length} bots already marked as active in Redis`);
+    
+    // Check each bot to see if they're actually in a match/reservation
+    const botsInMatches = new Set();
     for (const bot of allBots) {
       const botId = bot._id.toString();
-      await redis.del(`bots:state:${botId}`);
-      await redis.del(`queue:reservation:${botId}`); // Clear stale match reservations
+      
+      // Check if bot has an active reservation (in a match)
+      const reservation = await redis.get(`queue:reservation:${botId}`);
+      const isActive = await redis.sismember('bots:active', botId);
+      
+      if (reservation || isActive) {
+        // Bot is already in a match - preserve its state, don't try to deploy it
+        botsInMatches.add(botId);
+        console.log(`Bot ${botId} is already in a match (reservation: ${!!reservation}, active: ${isActive}) - skipping`);
+        
+        // Ensure it's marked as deployed so we don't try to redeploy
+        if (!existingDeployed.includes(botId)) {
+          await redis.sadd('bots:deployed', botId);
+          console.log(`Marked bot ${botId} as deployed (already in match)`);
+        }
+      }
     }
     
-    console.log('Cleared all bot states and reservations');
+    console.log(`Found ${botsInMatches.size} bots already in matches - will not redeploy them`);
     
-    // Get deployed bot IDs from Redis
-    const deployedBotIds = await redis.smembers('bots:deployed');
-    const deployedBots = allBots.filter(bot => deployedBotIds.includes(bot._id.toString()));
-    const undeployedBots = allBots.filter(bot => !deployedBotIds.includes(bot._id.toString()));
+    // Clear rotation queue (we'll rebuild it)
+    await redis.del('bots:rotation:queue');
     
-    console.log(`Found ${deployedBots.length} deployed bots, ${undeployedBots.length} undeployed bots`);
+    // Separate bots into deployed (already in matches or already deployed) and undeployed
+    const deployedBots = allBots.filter(bot => {
+      const botId = bot._id.toString();
+      return existingDeployed.includes(botId) || botsInMatches.has(botId);
+    });
+    const undeployedBots = allBots.filter(bot => {
+      const botId = bot._id.toString();
+      return !existingDeployed.includes(botId) && !botsInMatches.has(botId);
+    });
+    
+    console.log(`After checking Redis: ${deployedBots.length} deployed bots, ${undeployedBots.length} undeployed bots`);
     
     // Initialize rotation config if not exists
     const configExists = await redis.exists('bots:rotation:config');
@@ -126,11 +151,9 @@ async function initializeRotationQueue() {
         const bot = undeployedBots[i];
         const botId = bot._id.toString();
         
-        // Add to deployed set
-        await redis.sadd('bots:deployed', botId);
+        // Actually deploy and queue the bot
+        await deployBot(botId);
         deployedBots.push(bot);
-        
-        console.log(`Deployed bot ${botId} (${bot.fullName})`);
       }
       
       // Add remaining undeployed bots to rotation queue
@@ -192,40 +215,80 @@ async function fetchJson(method, url, body) {
 }
 
 
-async function rotateBot(completedBotId) {
+// Check how many bots are needed based on queue and minimum
+async function getRequiredBotCount() {
+  const config = await redis.hgetall('bots:rotation:config');
+  const minDeployed = parseInt(config.maxDeployed || '5');
+  const queuedPlayersCount = await redis.scard('queue:humans');
+  const deployedBots = await redis.smembers('bots:deployed');
+  const activeBots = await redis.smembers('bots:active');
+  
+  // Count bots that are deployed but not in matches (available for queue)
+  const availableBots = deployedBots.filter(botId => !activeBots.includes(botId)).length;
+  
+  // Need: minimum bots + queued players - bots already available
+  // But ensure we don't go below minimum
+  const neededForQueue = Math.max(0, queuedPlayersCount - availableBots);
+  const required = Math.max(minDeployed, minDeployed + neededForQueue);
+  
+  return { required, minDeployed, queuedPlayersCount, availableBots };
+}
+
+// Check and manage bot deployment based on current needs
+async function checkAndManageBotDeployment() {
   try {
-    console.log(`Rotating bot ${completedBotId} after match completion`);
-    
-    // Remove bot from deployed set
-    await redis.srem('bots:deployed', completedBotId);
-    
-    // Add bot to end of rotation queue
-    await redis.rpush('bots:rotation:queue', completedBotId);
-    
-    console.log(`Bot ${completedBotId} added to rotation queue`);
-    
-    // Check if we need to maintain minimum deployed count
-    const config = await redis.hgetall('bots:rotation:config');
-    const maxDeployed = parseInt(config.maxDeployed || '5');
-    const queuedPlayersCount = await redis.scard('queue:humans'); // Use correct key for human players
+    const { required, minDeployed, queuedPlayersCount, availableBots } = await getRequiredBotCount();
     const currentDeployed = await redis.scard('bots:deployed');
     
-    // Calculate target: maxDeployed (minimum) + queued players
-    const targetDeployed = maxDeployed + queuedPlayersCount;
+    console.log(`Bot deployment check: required=${required}, current=${currentDeployed}, min=${minDeployed}, queuedPlayers=${queuedPlayersCount}, availableBots=${availableBots}`);
     
-    console.log(`Rotation check: current=${currentDeployed}, target=${targetDeployed}, maxDeployed=${maxDeployed}, queuedHumans=${queuedPlayersCount}`);
-    
-    if (currentDeployed < targetDeployed) {
-      const nextBotId = await redis.lpop('bots:rotation:queue');
-      if (nextBotId) {
-        console.log(`Deploying bot ${nextBotId} to maintain deployed count (${currentDeployed} -> ${currentDeployed + 1})`);
-        await deployBot(nextBotId);
-      } else {
-        console.log(`No bots available in rotation queue to maintain deployed count`);
+    if (currentDeployed < required) {
+      // Need more bots
+      const needed = required - currentDeployed;
+      console.log(`Need ${needed} more bots, deploying from rotation queue`);
+      
+      for (let i = 0; i < needed; i++) {
+        const nextBotId = await redis.lpop('bots:rotation:queue');
+        if (nextBotId) {
+          await deployBot(nextBotId);
+        } else {
+          console.log(`No more bots available in rotation queue`);
+          break;
+        }
       }
-    } else {
-      console.log(`Deployed count sufficient (${currentDeployed}/${targetDeployed})`);
+    } else if (currentDeployed > required) {
+      // Have too many bots - undeploy excess
+      const excess = currentDeployed - required;
+      console.log(`Have ${excess} excess bots, undeploying`);
+      
+      const deployedBots = await redis.smembers('bots:deployed');
+      const activeBots = await redis.smembers('bots:active');
+      
+      // Find bots that are not active (not in matches)
+      const idleBots = deployedBots.filter(botId => !activeBots.includes(botId));
+      
+      for (let i = 0; i < Math.min(excess, idleBots.length); i++) {
+        await undeployBot(idleBots[i]);
+      }
     }
+  } catch (error) {
+    console.error('Error checking bot deployment:', error);
+  }
+}
+
+async function rotateBot(completedBotId) {
+  try {
+    console.log(`Bot ${completedBotId} match completed, evaluating deployment`);
+    // Always undeploy the completed bot after one match
+    const isCurrentlyDeployed = await redis.sismember('bots:deployed', completedBotId);
+    if (isCurrentlyDeployed) {
+      await redis.srem('bots:deployed', completedBotId);
+      await redis.rpush('bots:rotation:queue', completedBotId);
+      console.log(`Bot ${completedBotId} undeployed and added back to rotation queue`);
+    }
+
+    // Decide whether to deploy another bot (based on queue and minimum)
+    await checkAndManageBotDeployment();
   } catch (error) {
     console.error(`Error rotating bot ${completedBotId}:`, error);
   }
@@ -240,33 +303,36 @@ async function deployBot(botId) {
       return;
     }
     
-    // Validate deployment limits
-    const config = await redis.hgetall('bots:rotation:config');
-    const maxDeployed = parseInt(config.maxDeployed || '5');
-    const currentDeployed = await redis.scard('bots:deployed');
-    const queuedPlayersCount = await redis.scard('queue:humans'); // Use correct key for human players
-    const targetDeployed = maxDeployed + queuedPlayersCount;
+    // CRITICAL: Check Redis to see if bot is already in a match or queue
+    const [reservation, isActive, isInQueue] = await Promise.all([
+      redis.get(`queue:reservation:${botId}`),
+      redis.sismember('bots:active', botId),
+      redis.zscore('queue:elo', botId)
+    ]);
     
-    if (currentDeployed >= targetDeployed) {
-      console.log(`Cannot deploy bot ${botId}: already at target deployed count (${currentDeployed}/${targetDeployed})`);
+    if (reservation || isActive || isInQueue) {
+      console.log(`Bot ${botId} is already in a match/queue (reservation: ${!!reservation}, active: ${isActive}, inQueue: ${!!isInQueue}) - marking as deployed but not re-queueing`);
+      // Mark as deployed but don't queue - it's already handled
+      await redis.sadd('bots:deployed', botId);
       return;
     }
     
     // Add to deployed set
     await redis.sadd('bots:deployed', botId);
     
-    // Get bot data and start cycle
+    // Get bot data and queue it
     const client = await getMongoClient();
     const db = client.db('codeclashers');
     const bots = db.collection('bots');
     const bot = await bots.findOne({ _id: new ObjectId(botId) });
+    
     if (bot && !activeBotCycles.has(botId)) {
-      console.log(`Starting bot cycle for ${bot.fullName} (${botId})`);
-      const cyclePromise = cycleBot(bot);
-      activeBotCycles.set(botId, cyclePromise);
+      console.log(`Deploying bot ${bot.fullName} (${botId})`);
+      const queuePromise = queueBot(bot);
+      activeBotCycles.set(botId, queuePromise);
       
-      // Handle cycle completion
-      cyclePromise.finally(() => {
+      // Handle completion
+      queuePromise.finally(() => {
         activeBotCycles.delete(botId);
       });
     }
@@ -306,32 +372,8 @@ async function handlePlayerQueue(playerId) {
   try {
     console.log(`Player ${playerId} queued, checking if additional bot needed`);
     
-    // NOTE: QueueRoom already manages queue:humans and queue:players sets
-    // We should NOT modify them here to avoid double-counting
-    
-    // Get current counts
-    const config = await redis.hgetall('bots:rotation:config');
-    const maxDeployed = parseInt(config.maxDeployed || '5');
-    const currentDeployed = await redis.scard('bots:deployed');
-    const queuedPlayersCount = await redis.scard('queue:humans'); // Use human players count
-    
-    // Calculate target deployed count: maxDeployed + queued players
-    const targetDeployed = maxDeployed + queuedPlayersCount;
-    
-    console.log(`Deployment check: current=${currentDeployed}, target=${targetDeployed}, maxDeployed=${maxDeployed}, queuedPlayers=${queuedPlayersCount}`);
-    
-    if (currentDeployed < targetDeployed) {
-      // Need to deploy additional bot
-    const nextBotId = await redis.lpop('bots:rotation:queue');
-    if (nextBotId) {
-      await deployBot(nextBotId);
-        console.log(`Deployed bot ${nextBotId} from rotation queue for player ${playerId} (${currentDeployed} -> ${currentDeployed + 1})`);
-      } else {
-        console.log(`No bots available in rotation queue for player ${playerId}`);
-      }
-    } else {
-      console.log(`No additional bot needed for player ${playerId} (already at target: ${currentDeployed}/${targetDeployed})`);
-    }
+    // Check if we need more bots based on current queue
+    await checkAndManageBotDeployment();
   } catch (error) {
     console.error(`Error handling player queue for ${playerId}:`, error);
   }
@@ -341,35 +383,8 @@ async function handlePlayerDequeue(playerId) {
   try {
     console.log(`Player ${playerId} left queue, checking if we should reduce deployed bots`);
     
-    // NOTE: QueueRoom already manages queue:humans and queue:players sets
-    // We should NOT modify them here to avoid race conditions
-    
-    // Get current counts
-    const config = await redis.hgetall('bots:rotation:config');
-    const maxDeployed = parseInt(config.maxDeployed || '5');
-    const currentDeployed = await redis.scard('bots:deployed');
-    const queuedPlayersCount = await redis.scard('queue:humans'); // Use human players count
-    
-    // Calculate target deployed count: maxDeployed + queued players
-    const targetDeployed = maxDeployed + queuedPlayersCount;
-    
-    console.log(`Dequeue check: current=${currentDeployed}, target=${targetDeployed}, maxDeployed=${maxDeployed}, queuedPlayers=${queuedPlayersCount}`);
-    
-    if (currentDeployed > targetDeployed) {
-      // We have too many bots deployed, undeploy one
-      const deployedBots = await redis.smembers('bots:deployed');
-      const activeBots = await redis.smembers('bots:active');
-      
-      // Find a deployed bot that's not currently in a match
-      const idleBot = deployedBots.find(botId => !activeBots.includes(botId));
-      
-      if (idleBot) {
-        await undeployBot(idleBot);
-        console.log(`Undeployed bot ${idleBot} due to player ${playerId} leaving queue`);
-      }
-    } else {
-      console.log(`Bot count is appropriate (${currentDeployed}/${targetDeployed})`);
-    }
+    // Check if we have too many bots now
+    await checkAndManageBotDeployment();
   } catch (error) {
     console.error(`Error handling player dequeue for ${playerId}:`, error);
   }
@@ -410,169 +425,129 @@ async function handleRotationConfigChange(newMaxDeployed) {
   }
 }
 
-async function cycleBot(bot) {
+// Simple function to queue a bot once - no continuous loop
+async function queueBot(bot) {
   const botId = bot._id.toString();
   const rating = bot.stats.rating;
   const client = new Colyseus.Client(COLYSEUS_URL);
   
-  console.log(`Starting bot cycle for ${bot.fullName} (${botId}) with rating ${rating}`);
+  console.log(`Queueing bot ${bot.fullName} (${botId}) with rating ${rating}`);
   
-  // Continuous loop: enqueue, wait for match, join, complete, rotate
-  while (true) {
-    try {
-      console.log(`Bot ${botId} cycle iteration starting`);
-      
-      // Check if bot is still deployed
-      const isDeployed = await redis.sismember('bots:deployed', botId);
-      if (!isDeployed) {
-        console.log(`Bot ${botId} is no longer deployed, stopping cycle`);
-        break;
-      }
-      
-      // Check if bot already has an active match/reservation
-      const existingReservation = await redis.get(`queue:reservation:${botId}`);
-      if (existingReservation) {
-        const reservationData = JSON.parse(existingReservation);
-        console.log(`Bot ${botId} already has an active match: ${reservationData.matchId || 'unknown'}`);
-        
-        // Clean up the reservation and wait before retrying
-        await redis.del(`queue:reservation:${botId}`);
-        console.log(`Cleaned up stale reservation for bot ${botId}`);
-        await new Promise(r => setTimeout(r, 10000)); // Wait 10 seconds before retry
-        continue;
-      }
-      
-      // Check bot state to prevent duplicate queueing
-      const currentState = await redis.get(`bots:state:${botId}`);
-      console.log(`Bot ${botId} current state: ${currentState}`);
-      if (currentState && currentState !== 'idle') {
-        console.log(`Bot ${botId} is in state ${currentState}, not idle, skipping enqueue`);
-        await new Promise(r => setTimeout(r, 5000));
-        continue;
-      }
-      
-      // Set bot state to idle
-      await redis.setex(`bots:state:${botId}`, 3600, 'idle');
-      
-      // Connect to queue room and enqueue
-      console.log(`Bot ${botId} connecting to queue room and enqueuing with rating ${rating}`);
-      const queueRoom = await client.joinOrCreate('queue', { userId: botId, rating });
-      
-      // Set bot state to queued only after successful connection
-      await redis.setex(`bots:state:${botId}`, 3600, 'queued');
-      console.log(`Bot ${botId} state set to queued - now waiting in queue like a player`);
-      
-      // Set up match notification handler
-      let matchFound = false;
-      let matchData = null;
-      
-      queueRoom.onMessage('match_found', (message) => {
-        console.log(`Bot ${botId} received match notification:`, message);
-        matchFound = true;
-        matchData = message;
-      });
-      
-      queueRoom.onMessage('queued', (message) => {
-        console.log(`Bot ${botId} queued successfully, position: ${message.position} - waiting for matchmaking`);
-      });
-      
-      
-      queueRoom.onLeave(async () => {
-        console.log(`Bot ${botId} left queue room`);
-        // Clean up bot state when leaving queue room
-        redis.del(`bots:state:${botId}`).catch(err => 
-          console.warn(`Failed to clear bot state for ${botId}:`, err)
-        );
-        
-        // If bot was disconnected due to already having a match, clean up and retry
-        try {
-          const currentState = await redis.get(`bots:state:${botId}`);
-          if (currentState === 'queued') {
-            console.log(`Bot ${botId} was disconnected while queued, likely due to existing match - cleaning up and retrying`);
-            redis.del(`queue:reservation:${botId}`).catch(err => 
-              console.warn(`Failed to clear reservation for ${botId}:`, err)
-            );
-          }
-        } catch (err) {
-          console.warn(`Error checking bot state on leave for ${botId}:`, err);
-        }
-      });
-      
-      queueRoom.onError((error) => {
-        console.error(`Bot ${botId} error in queue room:`, error);
-      });
-      
-      // Wait for match notification (bots wait in queue just like players)
-      console.log(`Bot ${botId} waiting in queue for matchmaking...`);
-      const matchTimeout = 300000; // 5 minutes (bots can wait longer)
-      const startTime = Date.now();
-      
-      while (!matchFound && (Date.now() - startTime) < matchTimeout) {
-        // Check if bot is still deployed
-        const isStillDeployed = await redis.sismember('bots:deployed', botId);
-        if (!isStillDeployed) {
-          console.log(`Bot ${botId} no longer deployed, stopping wait`);
-          break;
-        }
-        
-        // Check if bot is still in queue (might have been matched by another process)
-        const isInQueue = await redis.zscore('queue:elo', botId);
-        if (!isInQueue) {
-          console.log(`Bot ${botId} no longer in queue, might have been matched`);
-          break;
-        }
-        
-        await new Promise(r => setTimeout(r, 2000)); // Check every 2 seconds
-      }
-      
-      // Leave queue room
-      queueRoom.leave();
-      
-      if (matchFound && matchData) {
-        // Bot was matched, set state to matched
-        await redis.setex(`bots:state:${botId}`, 3600, 'matched');
-        
-        // Join the match room
-        console.log(`Bot ${botId} joining match room ${matchData.roomId}`);
-        const matchRoom = await client.joinById(matchData.roomId, { userId: botId });
-        
-        // Set bot state to playing
-        await redis.setex(`bots:state:${botId}`, 3600, 'playing');
-        
-        // Set up room event handlers
-        matchRoom.onMessage('*', () => {});
-        matchRoom.onLeave(() => {
-          console.log(`Bot ${botId} left match room`);
-        });
-        matchRoom.onError((error) => {
-          console.error(`Bot ${botId} error in match room:`, error);
-        });
-        
-        // Wait for match to complete (room will disconnect when match ends)
-        await new Promise((resolve) => {
-          matchRoom.onLeave(() => resolve());
-        });
-        
-        console.log(`Bot ${botId} match completed, exiting cycle for rotation`);
-        
-        // Clear bot state
-        await redis.del(`bots:state:${botId}`);
-        
-        // Exit the cycle - rotation will be handled by the match completion event
-        break;
-      } else {
-        // No match found, wait before retrying
-        console.log(`Bot ${botId} no match found, waiting before retry`);
-        await new Promise(r => setTimeout(r, 10000)); // Wait 10 seconds before retry
-      }
-    } catch (e) {
-      console.error(`Error in bot cycle for ${botId}:`, e);
-      console.error(`Error stack:`, e.stack);
-      await new Promise(r => setTimeout(r, 5000));
+  try {
+    // Check if bot is still deployed
+    const isDeployed = await redis.sismember('bots:deployed', botId);
+    if (!isDeployed) {
+      console.log(`Bot ${botId} is no longer deployed, not queueing`);
+      return;
     }
+    
+    // Check if bot already has a match, is active, or is already in queue
+    const [reservation, isActive, isInQueue] = await Promise.all([
+      redis.get(`queue:reservation:${botId}`),
+      redis.sismember('bots:active', botId),
+      redis.zscore('queue:elo', botId)
+    ]);
+
+    if (reservation || isActive || isInQueue) {
+      console.log(`Bot ${botId} already has match/queue (reservation: ${!!reservation}, active: ${isActive}, inQueue: ${!!isInQueue}), skipping queue`);
+      return;
+    }
+    
+    // Connect to queue room and enqueue
+    console.log(`Bot ${botId} connecting to queue room`);
+    const queueRoom = await client.joinOrCreate('queue', { userId: botId, rating });
+    await redis.setex(`bots:state:${botId}`, 3600, 'queued');
+    console.log(`Bot ${botId} queued successfully`);
+    
+    // Set up match notification handler
+    let matchFound = false;
+    let matchData = null;
+    
+    queueRoom.onMessage('match_found', (message) => {
+      console.log(`Bot ${botId} received match notification`);
+      matchFound = true;
+      matchData = message;
+    });
+    
+    queueRoom.onLeave(async () => {
+      console.log(`Bot ${botId} left queue room`);
+      await redis.del(`bots:state:${botId}`).catch(() => {});
+    });
+    
+    queueRoom.onError((error) => {
+      console.error(`Bot ${botId} error in queue room:`, error);
+    });
+    
+    // Wait for match notification (or timeout)
+    const matchTimeout = 300000; // 5 minutes
+    const startTime = Date.now();
+    
+    while (!matchFound && (Date.now() - startTime) < matchTimeout) {
+      const isStillDeployed = await redis.sismember('bots:deployed', botId);
+      if (!isStillDeployed) {
+        console.log(`Bot ${botId} no longer deployed, leaving queue`);
+        break;
+      }
+      
+      const isInQueue = await redis.zscore('queue:elo', botId);
+      if (!isInQueue) {
+        console.log(`Bot ${botId} no longer in queue`);
+        break;
+      }
+      
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    
+    queueRoom.leave();
+    
+    if (matchFound && matchData) {
+      // Bot was matched - join match room
+      console.log(`Bot ${botId} joining match room ${matchData.roomId}`);
+      await redis.setex(`bots:state:${botId}`, 3600, 'matched');
+      
+      const matchRoom = await client.joinById(matchData.roomId, { userId: botId });
+      await redis.setex(`bots:state:${botId}`, 3600, 'playing');
+      
+      matchRoom.onLeave(() => {
+        console.log(`Bot ${botId} left match room`);
+      });
+      
+      matchRoom.onError((error) => {
+        console.error(`Bot ${botId} error in match room:`, error);
+      });
+      
+      // Wait for match to complete
+      await new Promise((resolve) => {
+        matchRoom.onLeave(() => resolve());
+      });
+      
+      console.log(`Bot ${botId} match completed`);
+      
+      // Clean up bot state and active set
+      await redis.del(`bots:state:${botId}`);
+      await redis.srem('bots:active', botId);
+      await redis.del(`queue:reservation:${botId}`);
+      
+      // Notify that match completed - rotation handler will decide what to do
+      await redis.publish('bots:commands', JSON.stringify({
+        type: 'botMatchComplete',
+        botId: botId
+      }));
+    } else {
+      // No match found - undeploy bot and check if we need to deploy another
+      console.log(`Bot ${botId} no match found, undeploying`);
+      await redis.del(`bots:state:${botId}`);
+      await redis.srem('bots:active', botId);
+      await redis.del(`queue:reservation:${botId}`);
+      await undeployBot(botId);
+      
+      // Check if we still need bots (in case players are waiting)
+      await checkAndManageBotDeployment();
+    }
+  } catch (e) {
+    console.error(`Error queueing bot ${botId}:`, e);
+    await redis.del(`bots:state:${botId}`).catch(() => {});
   }
-  
-  console.log(`Bot cycle ended for ${botId}`);
 }
 
 // Bot management state
@@ -581,28 +556,15 @@ let isRunning = false;
 
 async function startBotCycles() {
   try {
-    // Initialize rotation queue and get deployed bots
-    const { deployedBots } = await initializeRotationQueue();
-    console.log(`Found ${deployedBots.length} deployed bots`);
+    // Initialize rotation queue
+    await initializeRotationQueue();
     
-    // Start cycles for all deployed bots
-    for (const bot of deployedBots) {
-      const botId = bot._id.toString();
-      if (!activeBotCycles.has(botId)) {
-        console.log(`Starting bot cycle for ${bot.fullName} (${botId})`);
-        const cyclePromise = cycleBot(bot);
-        activeBotCycles.set(botId, cyclePromise);
-        
-        // Handle cycle completion
-        cyclePromise.finally(() => {
-          activeBotCycles.delete(botId);
-        });
-      }
-    }
+    // Deploy minimum number of bots
+    await checkAndManageBotDeployment();
     
-    console.log(`Started ${deployedBots.length} bot cycles`);
+    console.log(`Bot deployment initialized`);
   } catch (error) {
-    console.error('Error starting bot cycles:', error);
+    console.error('Error starting bot deployment:', error);
   }
 }
 
@@ -665,37 +627,6 @@ async function setupCommandListener() {
   });
 }
 
-// Function to maintain minimum deployed count
-async function maintainDeployedCount() {
-  try {
-    const config = await redis.hgetall('bots:rotation:config');
-    const maxDeployed = parseInt(config.maxDeployed || '5');
-    const queuedPlayersCount = await redis.scard('queue:humans');
-    const currentDeployed = await redis.scard('bots:deployed');
-    
-    // Calculate target: maxDeployed (minimum) + queued players
-    const targetDeployed = maxDeployed + queuedPlayersCount;
-    
-    if (currentDeployed < targetDeployed) {
-      const needed = targetDeployed - currentDeployed;
-      console.log(`Maintaining deployed count: need ${needed} more bots (${currentDeployed}/${targetDeployed})`);
-      
-      for (let i = 0; i < needed; i++) {
-        const nextBotId = await redis.lpop('bots:rotation:queue');
-        if (nextBotId) {
-          await deployBot(nextBotId);
-          console.log(`Deployed bot ${nextBotId} to maintain count`);
-        } else {
-          console.log(`No more bots available in rotation queue`);
-          break;
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Error maintaining deployed count:', error);
-  }
-}
-
 async function main() {
   console.log(`[bots] starting bot service -> ${COLYSEUS_URL}`);
   
@@ -708,25 +639,11 @@ async function main() {
     await setupCommandListener();
     console.log('Bot command listener started');
     
-    // Start with initially deployed bots
+    // Start with initially deployed bots (minimum count)
     isRunning = true;
     await startBotCycles();
     
-    // Periodically refresh bot cycles (in case of manual database changes)
-    setInterval(async () => {
-      if (isRunning) {
-        await startBotCycles();
-      }
-    }, 30000); // Check every 30 seconds
-    
-    // Start periodic maintenance check every 30 seconds
-    setInterval(async () => {
-      if (isRunning) {
-        await maintainDeployedCount();
-      }
-    }, 30000);
-    
-    console.log('Bot service started successfully');
+    console.log('Bot service started successfully (event-driven, no periodic timers)');
     
   } catch (error) {
     console.error('[bots] fatal error:', error);

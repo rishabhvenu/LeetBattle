@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bots
+  namespace: codeclashers
+spec:
+  replicas: ${K8S_BOTS_REPLICAS}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: bots
+  template:
+    metadata:
+      labels:
+        app: bots
+    spec:
+      containers:
+      - name: bots
+        image: ghcr.io/rishabhvenu/codeclashers-bots:${IMAGE_TAG}
+        ports:
+        - containerPort: 3000
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        - name: BOT_SERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: BOT_SERVICE_SECRET
+        - name: COLYSEUS_URL
+          value: "ws://colyseus:2567"
+        resources:
+          requests:
+            memory: ${K8S_BOTS_MEMORY_REQUEST}
+            cpu: ${K8S_BOTS_CPU_REQUEST}
+          limits:
+            memory: ${K8S_BOTS_MEMORY_LIMIT}
+            cpu: ${K8S_BOTS_CPU_LIMIT}
+        livenessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - node.*index.js
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - node.*index.js
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sh
+              - -c
+              - "sleep 15"
+      terminationGracePeriodSeconds: 30
+

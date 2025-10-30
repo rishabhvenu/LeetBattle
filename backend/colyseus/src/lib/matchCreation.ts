@@ -130,6 +130,9 @@ export async function createMatch(
   
   console.log(`Creating ${isPrivate ? 'private' : 'public'} match ${matchId} between ${player1.userId} (${player1.rating}) vs ${player2.userId} (${player2.rating}), difficulty: ${difficulty}`);
   
+  // Note: Reservation checks are handled by the caller (QueueRoom) before calling createMatch
+  // This function assumes players are already validated and reserved
+  
   // Select a problem from MongoDB
   const problemId = await chooseProblemId(difficulty);
   console.log(`Selected problem ${problemId} (${difficulty}) for match ${matchId}`);
