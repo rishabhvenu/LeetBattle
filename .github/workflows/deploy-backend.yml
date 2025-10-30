@@ -13,6 +13,10 @@ concurrency:
   group: backend-deployment
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   deploy:
     runs-on: self-hosted  # Runs on your Oracle VM runner
