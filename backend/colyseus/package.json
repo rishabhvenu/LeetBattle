@@ -18,7 +18,8 @@
     "openai": "^6.3.0",
     "rate-limiter-flexible": "^8.1.0",
     "tslib": "^2.6.3",
-    "aws-sdk": "^2.1490.0"
+    "aws-sdk": "^2.1490.0",
+    "vm2": "^3.9.19"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.6",
