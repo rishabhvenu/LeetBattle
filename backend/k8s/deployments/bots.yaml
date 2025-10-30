@@ -18,6 +18,8 @@ spec:
       labels:
         app: bots
     spec:
+      imagePullSecrets:
+      - name: ghcr-secret
       containers:
       - name: bots
         image: ghcr.io/rishabhvenu/codeclashers-bots:${IMAGE_TAG}

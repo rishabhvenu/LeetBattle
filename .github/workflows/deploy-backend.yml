@@ -104,6 +104,17 @@ jobs:
         run: |
           k3s kubectl create namespace codeclashers --dry-run=client -o yaml | k3s kubectl apply -f -
 
+      - name: Create registry secret for image pulls
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | k3s kubectl create secret docker-registry ghcr-secret \
+            --namespace=codeclashers \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password="${{ secrets.GITHUB_TOKEN }}" \
+            --dry-run=client -o yaml | k3s kubectl apply -f -
+
       - name: Create or update secrets
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
@@ -134,46 +145,46 @@ jobs:
           KUBECONFIG: /home/ubuntu/.kube/config
           # MongoDB resources
           K8S_MONGODB_REPLICAS: ${{ secrets.K8S_MONGODB_REPLICAS || '1' }}
-          K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '2Gi' }}
-          K8S_MONGODB_MEMORY_LIMIT: ${{ secrets.K8S_MONGODB_MEMORY_LIMIT || '4Gi' }}
-          K8S_MONGODB_CPU_REQUEST: ${{ secrets.K8S_MONGODB_CPU_REQUEST || '500m' }}
-          K8S_MONGODB_CPU_LIMIT: ${{ secrets.K8S_MONGODB_CPU_LIMIT || '1000m' }}
+          K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '512Mi' }}
+          K8S_MONGODB_MEMORY_LIMIT: ${{ secrets.K8S_MONGODB_MEMORY_LIMIT || '1Gi' }}
+          K8S_MONGODB_CPU_REQUEST: ${{ secrets.K8S_MONGODB_CPU_REQUEST || '100m' }}
+          K8S_MONGODB_CPU_LIMIT: ${{ secrets.K8S_MONGODB_CPU_LIMIT || '200m' }}
           # Redis resources
           K8S_REDIS_REPLICAS: ${{ secrets.K8S_REDIS_REPLICAS || '1' }}
-          K8S_REDIS_MEMORY_REQUEST: ${{ secrets.K8S_REDIS_MEMORY_REQUEST || '512Mi' }}
-          K8S_REDIS_MEMORY_LIMIT: ${{ secrets.K8S_REDIS_MEMORY_LIMIT || '1Gi' }}
-          K8S_REDIS_CPU_REQUEST: ${{ secrets.K8S_REDIS_CPU_REQUEST || '250m' }}
-          K8S_REDIS_CPU_LIMIT: ${{ secrets.K8S_REDIS_CPU_LIMIT || '500m' }}
+          K8S_REDIS_MEMORY_REQUEST: ${{ secrets.K8S_REDIS_MEMORY_REQUEST || '256Mi' }}
+          K8S_REDIS_MEMORY_LIMIT: ${{ secrets.K8S_REDIS_MEMORY_LIMIT || '512Mi' }}
+          K8S_REDIS_CPU_REQUEST: ${{ secrets.K8S_REDIS_CPU_REQUEST || '100m' }}
+          K8S_REDIS_CPU_LIMIT: ${{ secrets.K8S_REDIS_CPU_LIMIT || '200m' }}
           # PostgreSQL resources
           K8S_POSTGRES_REPLICAS: ${{ secrets.K8S_POSTGRES_REPLICAS || '1' }}
-          K8S_POSTGRES_MEMORY_REQUEST: ${{ secrets.K8S_POSTGRES_MEMORY_REQUEST || '256Mi' }}
-          K8S_POSTGRES_MEMORY_LIMIT: ${{ secrets.K8S_POSTGRES_MEMORY_LIMIT || '512Mi' }}
-          K8S_POSTGRES_CPU_REQUEST: ${{ secrets.K8S_POSTGRES_CPU_REQUEST || '250m' }}
-          K8S_POSTGRES_CPU_LIMIT: ${{ secrets.K8S_POSTGRES_CPU_LIMIT || '500m' }}
+          K8S_POSTGRES_MEMORY_REQUEST: ${{ secrets.K8S_POSTGRES_MEMORY_REQUEST || '128Mi' }}
+          K8S_POSTGRES_MEMORY_LIMIT: ${{ secrets.K8S_POSTGRES_MEMORY_LIMIT || '256Mi' }}
+          K8S_POSTGRES_CPU_REQUEST: ${{ secrets.K8S_POSTGRES_CPU_REQUEST || '100m' }}
+          K8S_POSTGRES_CPU_LIMIT: ${{ secrets.K8S_POSTGRES_CPU_LIMIT || '200m' }}
           # Colyseus resources
-          K8S_COLYSEUS_REPLICAS: ${{ secrets.K8S_COLYSEUS_REPLICAS || '2' }}
-          K8S_COLYSEUS_MEMORY_REQUEST: ${{ secrets.K8S_COLYSEUS_MEMORY_REQUEST || '512Mi' }}
-          K8S_COLYSEUS_MEMORY_LIMIT: ${{ secrets.K8S_COLYSEUS_MEMORY_LIMIT || '1Gi' }}
-          K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '500m' }}
-          K8S_COLYSEUS_CPU_LIMIT: ${{ secrets.K8S_COLYSEUS_CPU_LIMIT || '1000m' }}
+          K8S_COLYSEUS_REPLICAS: ${{ secrets.K8S_COLYSEUS_REPLICAS || '1' }}
+          K8S_COLYSEUS_MEMORY_REQUEST: ${{ secrets.K8S_COLYSEUS_MEMORY_REQUEST || '256Mi' }}
+          K8S_COLYSEUS_MEMORY_LIMIT: ${{ secrets.K8S_COLYSEUS_MEMORY_LIMIT || '512Mi' }}
+          K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '100m' }}
+          K8S_COLYSEUS_CPU_LIMIT: ${{ secrets.K8S_COLYSEUS_CPU_LIMIT || '200m' }}
           # Judge0 Server resources
-          K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '2' }}
-          K8S_JUDGE0_SERVER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_REQUEST || '512Mi' }}
-          K8S_JUDGE0_SERVER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_LIMIT || '1Gi' }}
-          K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '500m' }}
-          K8S_JUDGE0_SERVER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_CPU_LIMIT || '1000m' }}
+          K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '1' }}
+          K8S_JUDGE0_SERVER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_REQUEST || '256Mi' }}
+          K8S_JUDGE0_SERVER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_LIMIT || '512Mi' }}
+          K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '100m' }}
+          K8S_JUDGE0_SERVER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_CPU_LIMIT || '200m' }}
           # Judge0 Worker resources
-          K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '2' }}
-          K8S_JUDGE0_WORKER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_REQUEST || '1Gi' }}
-          K8S_JUDGE0_WORKER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_LIMIT || '2Gi' }}
-          K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '1000m' }}
-          K8S_JUDGE0_WORKER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_CPU_LIMIT || '2000m' }}
+          K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '1' }}
+          K8S_JUDGE0_WORKER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_REQUEST || '512Mi' }}
+          K8S_JUDGE0_WORKER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_LIMIT || '1Gi' }}
+          K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '200m' }}
+          K8S_JUDGE0_WORKER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_CPU_LIMIT || '400m' }}
           # Bots resources
-          K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '2' }}
-          K8S_BOTS_MEMORY_REQUEST: ${{ secrets.K8S_BOTS_MEMORY_REQUEST || '256Mi' }}
-          K8S_BOTS_MEMORY_LIMIT: ${{ secrets.K8S_BOTS_MEMORY_LIMIT || '512Mi' }}
-          K8S_BOTS_CPU_REQUEST: ${{ secrets.K8S_BOTS_CPU_REQUEST || '250m' }}
-          K8S_BOTS_CPU_LIMIT: ${{ secrets.K8S_BOTS_CPU_LIMIT || '500m' }}
+          K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '1' }}
+          K8S_BOTS_MEMORY_REQUEST: ${{ secrets.K8S_BOTS_MEMORY_REQUEST || '128Mi' }}
+          K8S_BOTS_MEMORY_LIMIT: ${{ secrets.K8S_BOTS_MEMORY_LIMIT || '256Mi' }}
+          K8S_BOTS_CPU_REQUEST: ${{ secrets.K8S_BOTS_CPU_REQUEST || '100m' }}
+          K8S_BOTS_CPU_LIMIT: ${{ secrets.K8S_BOTS_CPU_LIMIT || '200m' }}
         run: |
           set -e
           

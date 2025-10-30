@@ -18,6 +18,8 @@ spec:
       labels:
         app: colyseus
     spec:
+      imagePullSecrets:
+      - name: ghcr-secret
       containers:
       - name: colyseus
         image: ghcr.io/rishabhvenu/codeclashers-colyseus:${IMAGE_TAG}
