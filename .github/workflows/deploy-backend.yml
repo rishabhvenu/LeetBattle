@@ -200,13 +200,23 @@ jobs:
             envsubst < "$file" | k3s kubectl apply -f -
           done
           
+          # Wait for StatefulSets to have at least 1 ready pod
+          echo "Waiting for MongoDB to be ready..."
+          k3s kubectl wait --for=condition=ready pod -l app=mongodb -n codeclashers --timeout=120s || true
+          
+          echo "Waiting for Redis to be ready..."
+          k3s kubectl wait --for=condition=ready pod -l app=redis -n codeclashers --timeout=120s || true
+          
+          # Apply PodDisruptionBudgets before deployments
+          k3s kubectl apply -f pdbs/
+          
           # Apply deployments with env substitution
           for file in deployments/*.yaml; do
             envsubst < "$file" | k3s kubectl apply -f -
           done
           
-          # Apply PodDisruptionBudgets
-          k3s kubectl apply -f pdbs/
+          # Wait briefly for PostgreSQL and Judge0 to start
+          sleep 10
           
           echo "All resources applied successfully"
 
