@@ -82,6 +82,14 @@ jobs:
           else
             echo "k3s already installed"
             k3s --version
+            
+            # Fix permissions if kubeconfig is not readable
+            if [ ! -r ~/.kube/config ]; then
+              echo "Fixing kubeconfig permissions..."
+              sudo mkdir -p ~/.kube
+              sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+              sudo chown -R $USER:$USER ~/.kube
+            fi
           fi
           
           # Ensure envsubst is installed (comes with gettext package)
