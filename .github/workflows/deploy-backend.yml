@@ -147,43 +147,43 @@ jobs:
           K8S_MONGODB_REPLICAS: ${{ secrets.K8S_MONGODB_REPLICAS || '1' }}
           K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '512Mi' }}
           K8S_MONGODB_MEMORY_LIMIT: ${{ secrets.K8S_MONGODB_MEMORY_LIMIT || '1Gi' }}
-          K8S_MONGODB_CPU_REQUEST: ${{ secrets.K8S_MONGODB_CPU_REQUEST || '100m' }}
+          K8S_MONGODB_CPU_REQUEST: ${{ secrets.K8S_MONGODB_CPU_REQUEST || '50m' }}
           K8S_MONGODB_CPU_LIMIT: ${{ secrets.K8S_MONGODB_CPU_LIMIT || '200m' }}
           # Redis resources
           K8S_REDIS_REPLICAS: ${{ secrets.K8S_REDIS_REPLICAS || '1' }}
           K8S_REDIS_MEMORY_REQUEST: ${{ secrets.K8S_REDIS_MEMORY_REQUEST || '256Mi' }}
           K8S_REDIS_MEMORY_LIMIT: ${{ secrets.K8S_REDIS_MEMORY_LIMIT || '512Mi' }}
-          K8S_REDIS_CPU_REQUEST: ${{ secrets.K8S_REDIS_CPU_REQUEST || '100m' }}
+          K8S_REDIS_CPU_REQUEST: ${{ secrets.K8S_REDIS_CPU_REQUEST || '50m' }}
           K8S_REDIS_CPU_LIMIT: ${{ secrets.K8S_REDIS_CPU_LIMIT || '200m' }}
           # PostgreSQL resources
           K8S_POSTGRES_REPLICAS: ${{ secrets.K8S_POSTGRES_REPLICAS || '1' }}
           K8S_POSTGRES_MEMORY_REQUEST: ${{ secrets.K8S_POSTGRES_MEMORY_REQUEST || '128Mi' }}
           K8S_POSTGRES_MEMORY_LIMIT: ${{ secrets.K8S_POSTGRES_MEMORY_LIMIT || '256Mi' }}
-          K8S_POSTGRES_CPU_REQUEST: ${{ secrets.K8S_POSTGRES_CPU_REQUEST || '100m' }}
+          K8S_POSTGRES_CPU_REQUEST: ${{ secrets.K8S_POSTGRES_CPU_REQUEST || '50m' }}
           K8S_POSTGRES_CPU_LIMIT: ${{ secrets.K8S_POSTGRES_CPU_LIMIT || '200m' }}
           # Colyseus resources
           K8S_COLYSEUS_REPLICAS: ${{ secrets.K8S_COLYSEUS_REPLICAS || '1' }}
           K8S_COLYSEUS_MEMORY_REQUEST: ${{ secrets.K8S_COLYSEUS_MEMORY_REQUEST || '256Mi' }}
           K8S_COLYSEUS_MEMORY_LIMIT: ${{ secrets.K8S_COLYSEUS_MEMORY_LIMIT || '512Mi' }}
-          K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '100m' }}
+          K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '50m' }}
           K8S_COLYSEUS_CPU_LIMIT: ${{ secrets.K8S_COLYSEUS_CPU_LIMIT || '200m' }}
           # Judge0 Server resources
           K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '1' }}
           K8S_JUDGE0_SERVER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_REQUEST || '256Mi' }}
           K8S_JUDGE0_SERVER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_LIMIT || '512Mi' }}
-          K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '100m' }}
+          K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '50m' }}
           K8S_JUDGE0_SERVER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_CPU_LIMIT || '200m' }}
           # Judge0 Worker resources
           K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '1' }}
           K8S_JUDGE0_WORKER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_REQUEST || '512Mi' }}
           K8S_JUDGE0_WORKER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_LIMIT || '1Gi' }}
-          K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '200m' }}
+          K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '50m' }}
           K8S_JUDGE0_WORKER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_CPU_LIMIT || '400m' }}
           # Bots resources
           K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '1' }}
           K8S_BOTS_MEMORY_REQUEST: ${{ secrets.K8S_BOTS_MEMORY_REQUEST || '128Mi' }}
           K8S_BOTS_MEMORY_LIMIT: ${{ secrets.K8S_BOTS_MEMORY_LIMIT || '256Mi' }}
-          K8S_BOTS_CPU_REQUEST: ${{ secrets.K8S_BOTS_CPU_REQUEST || '100m' }}
+          K8S_BOTS_CPU_REQUEST: ${{ secrets.K8S_BOTS_CPU_REQUEST || '50m' }}
           K8S_BOTS_CPU_LIMIT: ${{ secrets.K8S_BOTS_CPU_LIMIT || '200m' }}
         run: |
           set -e
@@ -201,7 +201,7 @@ jobs:
           k3s kubectl apply -f storage/
           
           # Wait for PVCs to be ready
-          k3s kubectl wait --for=condition=bound pvc -n codeclashers --timeout=60s || true
+          k3s kubectl wait --for=condition=bound pvc/mongodb-data pvc/redis-data -n codeclashers --timeout=60s || true
           
           # Apply services
           k3s kubectl apply -f services/
