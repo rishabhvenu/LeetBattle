@@ -202,10 +202,10 @@ jobs:
           
           # Wait for StatefulSets to have at least 1 ready pod
           echo "Waiting for MongoDB to be ready..."
-          k3s kubectl wait --for=condition=ready pod -l app=mongodb -n codeclashers --timeout=120s || true
+          k3s kubectl wait --for=condition=ready pod -l app=mongodb -n codeclashers --timeout=60s || true
           
           echo "Waiting for Redis to be ready..."
-          k3s kubectl wait --for=condition=ready pod -l app=redis -n codeclashers --timeout=120s || true
+          k3s kubectl wait --for=condition=ready pod -l app=redis -n codeclashers --timeout=60s || true
           
           # Apply PodDisruptionBudgets before deployments
           k3s kubectl apply -f pdbs/
@@ -216,7 +216,7 @@ jobs:
           done
           
           # Wait briefly for PostgreSQL and Judge0 to start
-          sleep 10
+          sleep 5
           
           echo "All resources applied successfully"
 
@@ -235,16 +235,16 @@ jobs:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           echo "Waiting for Colyseus deployment..."
-          k3s kubectl rollout status deployment/colyseus -n codeclashers --timeout=5m || (echo "Colyseus rollout failed, checking logs..." && k3s kubectl logs deployment/colyseus -n codeclashers --tail=50 && k3s kubectl rollout undo deployment/colyseus -n codeclashers && exit 1)
+          k3s kubectl rollout status deployment/colyseus -n codeclashers --timeout=2m || (echo "Colyseus rollout failed, checking logs..." && k3s kubectl logs deployment/colyseus -n codeclashers --tail=50 && k3s kubectl rollout undo deployment/colyseus -n codeclashers && exit 1)
           
           echo "Waiting for Bots deployment..."
-          k3s kubectl rollout status deployment/bots -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/bots -n codeclashers && exit 1)
+          k3s kubectl rollout status deployment/bots -n codeclashers --timeout=2m || (k3s kubectl rollout undo deployment/bots -n codeclashers && exit 1)
           
           echo "Waiting for Judge0 Server deployment..."
-          k3s kubectl rollout status deployment/judge0-server -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/judge0-server -n codeclashers && exit 1)
+          k3s kubectl rollout status deployment/judge0-server -n codeclashers --timeout=2m || (k3s kubectl rollout undo deployment/judge0-server -n codeclashers && exit 1)
           
           echo "Waiting for Judge0 Worker deployment..."
-          k3s kubectl rollout status deployment/judge0-worker -n codeclashers --timeout=5m || (k3s kubectl rollout undo deployment/judge0-worker -n codeclashers && exit 1)
+          k3s kubectl rollout status deployment/judge0-worker -n codeclashers --timeout=2m || (k3s kubectl rollout undo deployment/judge0-worker -n codeclashers && exit 1)
 
       - name: Verify deployments
         env:
