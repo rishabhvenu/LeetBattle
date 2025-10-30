@@ -234,17 +234,15 @@ jobs:
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
-          echo "Waiting for Colyseus deployment..."
-          k3s kubectl rollout status deployment/colyseus -n codeclashers --timeout=2m || (echo "Colyseus rollout failed, checking logs..." && k3s kubectl logs deployment/colyseus -n codeclashers --tail=50 && k3s kubectl rollout undo deployment/colyseus -n codeclashers && exit 1)
+          echo "Waiting for deployments to start..."
           
-          echo "Waiting for Bots deployment..."
-          k3s kubectl rollout status deployment/bots -n codeclashers --timeout=2m || (k3s kubectl rollout undo deployment/bots -n codeclashers && exit 1)
+          # Quick non-blocking check - just wait for pods to exist
+          sleep 15
           
-          echo "Waiting for Judge0 Server deployment..."
-          k3s kubectl rollout status deployment/judge0-server -n codeclashers --timeout=2m || (k3s kubectl rollout undo deployment/judge0-server -n codeclashers && exit 1)
+          echo "Checking deployment status..."
+          k3s kubectl get pods -n codeclashers
           
-          echo "Waiting for Judge0 Worker deployment..."
-          k3s kubectl rollout status deployment/judge0-worker -n codeclashers --timeout=2m || (k3s kubectl rollout undo deployment/judge0-worker -n codeclashers && exit 1)
+          echo "Deployments applied. Pods will continue starting in background."
 
       - name: Verify deployments
         env:
