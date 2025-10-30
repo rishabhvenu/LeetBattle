@@ -19,20 +19,20 @@ echo "Installing k3s..."
 # Install k3s with the following configuration:
 # - Disable Traefik (we'll use standard Services)
 # - Enable privileged containers (required for Judge0 workers)
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --secrets-encryption" sh -
+# - Write kubeconfig with proper permissions (readable by runner user)
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --secrets-encryption --write-kubeconfig-mode 644" sh -
 
 # Wait for k3s to be ready
 echo "Waiting for k3s to be ready..."
-sleep 10
+sleep 15
 
-# Create kubeconfig for non-root user
+# Create kubeconfig for runner user
 sudo mkdir -p ~/.kube
 sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
 sudo chown -R $USER:$USER ~/.kube
 
 # Add kubectl alias for k3s
 echo 'alias kubectl="k3s kubectl"' >> ~/.bashrc
-export kubectl="k3s kubectl"
 
 # Verify installation
 echo "Verifying k3s installation..."
