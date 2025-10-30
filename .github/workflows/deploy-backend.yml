@@ -225,6 +225,13 @@ jobs:
           echo ""
           echo "=== Pod Events (last 20) ==="
           k3s kubectl get events -n codeclashers --sort-by='.lastTimestamp' | tail -20
+          echo ""
+          echo "=== Node Status ==="
+          k3s kubectl describe nodes | grep -A 5 "Allocatable:"
+          echo ""
+          echo "=== Unscheduleable Pods (if any) ==="
+          k3s kubectl get pods -n codeclashers -o wide --field-selector=status.phase=Pending
+          k3s kubectl describe pod -n codeclashers mongodb-0 | grep -A 5 Events || true
 
       - name: Wait for rollouts to complete
         env:
