@@ -67,8 +67,8 @@ jobs:
         run: |
           echo "Building Judge0 for ARM64..."
           
-          # Create buildx builder for ARM64 if not exists
-          docker buildx create --name arm64-builder --use --bootstrap || docker buildx use arm64-builder
+          # Use existing builder or create one if missing
+          docker buildx use arm64-builder || docker buildx create --name arm64-builder --use --bootstrap
           
           # Clone Judge0 repository if not exists
           if [ ! -d "judge0-build" ]; then
@@ -81,12 +81,19 @@ jobs:
           
           cd judge0-build
           
-          # 🔧 PATCH: Replace deprecated base image with Ubuntu 22.04
           echo "Patching Dockerfile for ARM64 compatibility..."
-          sed -i '1s|.*|FROM ubuntu:22.04|' Dockerfile
+          
+          # Replace ALL base stages with Ubuntu 22.04
+          sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
+          sed -i 's|^FROM production.*|FROM ubuntu:22.04 AS development|' Dockerfile
           
           echo "Patched Dockerfile:"
-          head -1 Dockerfile
+          grep "^FROM" Dockerfile
+          
+          # Optional: limit languages for ARM64
+          if command -v jq >/dev/null 2>&1; then
+            jq 'del(.languages[] | select(.name | test("Swift|Pascal|Mono|C#|Go|Kotlin|PHP|Perl|Ruby"; "i")))' config.json > tmp.json && mv tmp.json config.json
+          fi
           
           # Build for ARM64 architecture using buildx
           docker buildx build \
@@ -101,7 +108,7 @@ jobs:
             --push .
           
           cd ..
-          echo "Judge0 ARM64 image built and pushed successfully"
+          echo "✅ Judge0 ARM64 image built and pushed successfully"
 
       - name: Stop docker-compose services (if running)
         run: |
