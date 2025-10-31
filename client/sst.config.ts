@@ -55,7 +55,7 @@
         colyseusRecord = new sst.aws.dns.Record("colyseus", {
           zone: zone.zoneId,
           type: "A",
-          name: process.env.COLYSEUS_DOMAIN,
+          name: "matchmaker",
           values: [process.env.COLYSEUS_HOST_IP],
           ttl: 300,
         });
