@@ -67,9 +67,12 @@ jobs:
         run: |
           echo "Building Judge0 for ARM64..."
           
-          # Clone Judge0 API repository if not exists
+          # Create buildx builder for ARM64 if not exists
+          docker buildx create --name arm64-builder --use --bootstrap || docker buildx use arm64-builder
+          
+          # Clone Judge0 repository if not exists
           if [ ! -d "judge0-build" ]; then
-            git clone --depth 1 https://github.com/judge0/api.git judge0-build
+            git clone --depth 1 https://github.com/judge0/judge0.git judge0-build
           else
             cd judge0-build
             git pull
@@ -78,17 +81,17 @@ jobs:
           
           cd judge0-build
           
-          # Build for ARM64 architecture
-          docker build -t ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
-            --platform linux/arm64 .
-          
-          # Push to GHCR
-          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
+          # Build for ARM64 architecture using buildx
+          docker buildx build \
+            --platform linux/arm64 \
+            --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
+            --push .
           
           # Also tag as latest
-          docker tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
-            ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
-          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
+          docker buildx build \
+            --platform linux/arm64 \
+            --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest \
+            --push .
           
           cd ..
           echo "Judge0 ARM64 image built and pushed successfully"
