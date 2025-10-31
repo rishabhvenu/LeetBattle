@@ -200,9 +200,6 @@ jobs:
           # Apply storage
           k3s kubectl apply -f storage/
           
-          # Wait for PVCs to be ready
-          k3s kubectl wait --for=condition=bound pvc/mongodb-data pvc/redis-data -n codeclashers --timeout=60s || true
-          
           # Apply services
           k3s kubectl apply -f services/
           
