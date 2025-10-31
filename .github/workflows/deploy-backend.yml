@@ -63,35 +63,35 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
 
-      - name: Enable QEMU for multi-arch support
+      - name: Build and push Judge0 ARM64 image
         run: |
-          echo "Setting up QEMU for AMD64 emulation on ARM64..."
+          echo "Building Judge0 for ARM64..."
           
-          # Install QEMU if not present
-          if ! command -v qemu-x86_64-static &> /dev/null; then
-            echo "Installing QEMU for multi-arch support..."
-            sudo apt-get update
-            sudo apt-get install -y qemu-user-static binfmt-support
-          fi
-          
-          # Manually register QEMU binfmt handlers (more reliable than docker run)
-          echo "Registering QEMU binfmt handlers..."
-          if [ ! -e /proc/sys/fs/binfmt_misc/register ]; then
-            sudo mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
-          fi
-          
-          # Register x86_64 handler (ignore if already exists)
-          echo ":qemu-x86_64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00:\xff\xff\xff\xff\xff\xfe\xfe\xff\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-x86_64-static:F" | sudo tee /proc/sys/fs/binfmt_misc/register 2>/dev/null || true
-          
-          # Verify binfmt registration
-          echo "Checking binfmt status..."
-          if [ -f /proc/sys/fs/binfmt_misc/qemu-x86_64 ]; then
-            cat /proc/sys/fs/binfmt_misc/qemu-x86_64
+          # Clone Judge0 API repository if not exists
+          if [ ! -d "judge0-build" ]; then
+            git clone --depth 1 https://github.com/judge0/api.git judge0-build
           else
-            echo "binfmt not configured yet"
+            cd judge0-build
+            git pull
+            cd ..
           fi
           
-          echo "QEMU setup complete"
+          cd judge0-build
+          
+          # Build for ARM64 architecture
+          docker build -t ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
+            --platform linux/arm64 .
+          
+          # Push to GHCR
+          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
+          
+          # Also tag as latest
+          docker tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
+            ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
+          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
+          
+          cd ..
+          echo "Judge0 ARM64 image built and pushed successfully"
 
       - name: Stop docker-compose services (if running)
         run: |
