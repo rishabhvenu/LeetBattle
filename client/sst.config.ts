@@ -41,6 +41,8 @@
           REDIS_PASSWORD: process.env.REDIS_PASSWORD!,
           INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET!,
           OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
+          COLYSEUS_DOMAIN: process.env.COLYSEUS_DOMAIN || "",
+          COLYSEUS_HOST_IP: process.env.COLYSEUS_HOST_IP || "",
         },
       });
 
