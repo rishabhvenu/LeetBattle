@@ -60,6 +60,36 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
 
+      - name: Build and push Judge0 ARM64 image
+        run: |
+          echo "Building Judge0 for ARM64..."
+          
+          # Clone Judge0 repository if not exists
+          if [ ! -d "judge0-build" ]; then
+            git clone --depth 1 https://github.com/judge0/judge0.git judge0-build
+          else
+            cd judge0-build
+            git pull
+            cd ..
+          fi
+          
+          cd judge0-build
+          
+          # Build for ARM64 architecture
+          docker build -t ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
+            --platform linux/arm64 .
+          
+          # Push to GHCR
+          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
+          
+          # Also tag as latest
+          docker tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
+            ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
+          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
+          
+          cd ..
+          echo "Judge0 ARM64 image built and pushed successfully"
+
       - name: Stop docker-compose services (if running)
         run: |
           # Stop docker-compose services to avoid port conflicts

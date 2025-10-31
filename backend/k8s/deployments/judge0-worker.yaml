@@ -18,9 +18,11 @@ spec:
       labels:
         app: judge0-worker
     spec:
+      imagePullSecrets:
+      - name: ghcr-secret
       containers:
       - name: judge0-worker
-        image: judge0/judge0:latest
+        image: ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
         command: ["./scripts/workers"]
         env:
         - name: REDIS_HOST
