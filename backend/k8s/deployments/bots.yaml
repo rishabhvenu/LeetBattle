@@ -48,6 +48,11 @@ spec:
               key: BOT_SERVICE_SECRET
         - name: COLYSEUS_URL
           value: "ws://colyseus:2567"
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MONGODB_URI_INTERNAL
         resources:
           requests:
             memory: ${K8S_BOTS_MEMORY_REQUEST}
