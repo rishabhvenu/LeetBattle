@@ -22,22 +22,6 @@
         ],
       });
 
-      // Create A record for Colyseus backend if domain is configured
-      let colyseusRecord;
-      if (process.env.COLYSEUS_DOMAIN && process.env.COLYSEUS_HOST_IP) {
-        const zone = await sst.aws.dns.HostedZone.lookup({
-          domain: process.env.COLYSEUS_DOMAIN.split('.').slice(-2).join('.'),
-        });
-        
-        colyseusRecord = new sst.aws.dns.Record("colyseus", {
-          zone: zone.zoneId,
-          type: "A",
-          name: process.env.COLYSEUS_DOMAIN,
-          values: [process.env.COLYSEUS_HOST_IP],
-          ttl: 300,
-        });
-      }
-
       const site = new sst.aws.Nextjs("site", {
         domain: {
           name: "leetbattle.net",
@@ -59,6 +43,23 @@
           OPENAI_API_KEY: process.env.OPENAI_API_KEY!,
         },
       });
+
+      // Create A record for Colyseus backend if domain is configured
+      // Must be after site is created so hosted zone exists
+      let colyseusRecord;
+      if (process.env.COLYSEUS_DOMAIN && process.env.COLYSEUS_HOST_IP) {
+        const zone = await sst.aws.dns.HostedZone.lookup({
+          domain: process.env.COLYSEUS_DOMAIN.split('.').slice(-2).join('.'),
+        });
+        
+        colyseusRecord = new sst.aws.dns.Record("colyseus", {
+          zone: zone.zoneId,
+          type: "A",
+          name: process.env.COLYSEUS_DOMAIN,
+          values: [process.env.COLYSEUS_HOST_IP],
+          ttl: 300,
+        });
+      }
 
       return {
         siteUrl: site.url,
