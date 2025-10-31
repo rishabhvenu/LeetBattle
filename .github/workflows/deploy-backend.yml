@@ -280,6 +280,33 @@ jobs:
           echo "=== Services ==="
           k3s kubectl get svc -n codeclashers
           
+      - name: Debug failed pods
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
+        run: |
+          echo "=== Debugging failed pods ==="
+          
+          # Check Judge0 server logs if it exists
+          if k3s kubectl get deployment judge0-server -n codeclashers 2>/dev/null | grep -q judge0-server; then
+            echo ""
+            echo "--- Judge0 Server Logs ---"
+            k3s kubectl logs -n codeclashers deployment/judge0-server --tail=50 || echo "No logs available yet"
+          fi
+          
+          # Check Judge0 worker logs if it exists
+          if k3s kubectl get deployment judge0-worker -n codeclashers 2>/dev/null | grep -q judge0-worker; then
+            echo ""
+            echo "--- Judge0 Worker Logs ---"
+            k3s kubectl logs -n codeclashers deployment/judge0-worker --tail=50 || echo "No logs available yet"
+          fi
+          
+          # Check MongoDB logs if it's having issues
+          if k3s kubectl get pod mongodb-0 -n codeclashers 2>/dev/null | grep -v "1/1.*Running"; then
+            echo ""
+            echo "--- MongoDB Logs ---"
+            k3s kubectl logs -n codeclashers mongodb-0 --tail=50 || echo "No logs available yet"
+          fi
+          
       - name: Health check
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
