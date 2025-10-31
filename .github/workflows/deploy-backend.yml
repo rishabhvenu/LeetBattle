@@ -139,6 +139,23 @@ jobs:
             --from-literal=AWS_REGION="${{ secrets.AWS_REGION }}" \
             --dry-run=client -o yaml | k3s kubectl apply -f -
 
+      - name: Clean up old failing pods before deployment
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
+        run: |
+          echo "Cleaning up old CrashLoopBackOff pods..."
+          # Delete failed pods (includes CrashLoopBackOff and Error states)
+          k3s kubectl delete pod -n codeclashers --field-selector=status.phase=Failed --grace-period=0 --force || true
+          # Also delete any pods in CrashLoopBackOff or Error states
+          k3s kubectl get pods -n codeclashers -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | while read pod; do
+            status=$(k3s kubectl get pod -n codeclashers "$pod" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}')
+            if [[ "$status" == "CrashLoopBackOff" ]] || [[ "$status" == "Error" ]]; then
+              echo "Deleting pod in $status state: $pod"
+              k3s kubectl delete pod -n codeclashers "$pod" --grace-period=0 --force || true
+            fi
+          done
+          sleep 5
+
       - name: Deploy to Kubernetes
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
