@@ -61,6 +61,8 @@ jobs:
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          COLYSEUS_DOMAIN: ${{ secrets.COLYSEUS_DOMAIN }}
+          COLYSEUS_HOST_IP: ${{ secrets.COLYSEUS_HOST_IP }}
         run: npx sst deploy --stage production
 
       - name: Output deployment URL
