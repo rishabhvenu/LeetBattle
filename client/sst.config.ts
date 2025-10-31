@@ -60,14 +60,6 @@
         },
       });
 
-      // Grant site Lambda functions access to bucket
-      site.attachPermissions([
-        {
-          actions: ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-          resources: [avatarBucket.arn, `${avatarBucket.arn}/*`],
-        },
-      ]);
-
       return {
         siteUrl: site.url,
         bucketName: avatarBucket.name,
