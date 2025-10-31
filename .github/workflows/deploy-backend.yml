@@ -71,7 +71,7 @@ jobs:
           if ! command -v qemu-x86_64-static &> /dev/null; then
             echo "Installing QEMU for multi-arch support..."
             sudo apt-get update
-            sudo apt-get install -y qemu binfmt-support qemu-user-static
+            sudo apt-get install -y qemu-user-static binfmt-support
           fi
           
           # Register QEMU static binaries
