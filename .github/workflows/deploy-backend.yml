@@ -295,15 +295,6 @@ jobs:
             sleep 2
           done
           
-          # Wait for Judge0 to be ready
-          for i in {1..30}; do
-            if k3s kubectl exec -n codeclashers deployment/judge0-server -- curl -f http://localhost:2358 >/dev/null 2>&1; then
-              echo "✓ Judge0 Server is healthy"
-              break
-            fi
-            sleep 2
-          done
-          
           echo "✓ Health checks passed"
           
       - name: Deployment complete
