@@ -49,7 +49,7 @@
       let colyseusRecord;
       if (process.env.COLYSEUS_DOMAIN && process.env.COLYSEUS_HOST_IP) {
         const zone = await sst.aws.dns.HostedZone.lookup({
-          domain: process.env.COLYSEUS_DOMAIN.split('.').slice(-2).join('.'),
+          domain: "leetbattle.net",
         });
         
         colyseusRecord = new sst.aws.dns.Record("colyseus", {
