@@ -74,7 +74,7 @@ spec:
             - pgrep
             - -f
             - workers
-          initialDelaySeconds: 40
+          initialDelaySeconds: 80
           periodSeconds: 15
           timeoutSeconds: 5
         readinessProbe:
@@ -83,7 +83,7 @@ spec:
             - pgrep
             - -f
             - workers
-          initialDelaySeconds: 20
+          initialDelaySeconds: 60
           periodSeconds: 10
           timeoutSeconds: 3
 
