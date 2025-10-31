@@ -81,6 +81,13 @@ jobs:
           
           cd judge0-build
           
+          # 🔧 PATCH: Replace deprecated base image with Ubuntu 22.04
+          echo "Patching Dockerfile for ARM64 compatibility..."
+          sed -i '1s|.*|FROM ubuntu:22.04|' Dockerfile
+          
+          echo "Patched Dockerfile:"
+          head -1 Dockerfile
+          
           # Build for ARM64 architecture using buildx
           docker buildx build \
             --platform linux/arm64 \
