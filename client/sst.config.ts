@@ -48,17 +48,23 @@
       // Must be after site is created so hosted zone exists
       let colyseusRecord;
       if (process.env.COLYSEUS_DOMAIN && process.env.COLYSEUS_HOST_IP) {
+        console.log(`Creating A record for ${process.env.COLYSEUS_DOMAIN} -> ${process.env.COLYSEUS_HOST_IP}`);
+        
         const zone = await sst.aws.dns.HostedZone.lookup({
           domain: "leetbattle.net",
         });
         
+        console.log(`Found hosted zone: ${zone.zoneId}`);
+        
         colyseusRecord = new sst.aws.dns.Record("colyseus", {
           zone: zone.zoneId,
           type: "A",
-          name: "matchmaker",
+          name: process.env.COLYSEUS_DOMAIN,
           values: [process.env.COLYSEUS_HOST_IP],
           ttl: 300,
         });
+        
+        console.log(`Created A record: ${colyseusRecord.url}`);
       }
 
       return {
