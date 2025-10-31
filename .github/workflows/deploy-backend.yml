@@ -184,20 +184,20 @@ jobs:
           K8S_COLYSEUS_MEMORY_LIMIT: ${{ secrets.K8S_COLYSEUS_MEMORY_LIMIT || '512Mi' }}
           K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '50m' }}
           K8S_COLYSEUS_CPU_LIMIT: ${{ secrets.K8S_COLYSEUS_CPU_LIMIT || '200m' }}
-          # Judge0 Server resources
-          K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '1' }}
+          # Judge0 Server resources (scaled down to free CPU; raise later when DB is ready)
+          K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '0' }}
           K8S_JUDGE0_SERVER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_REQUEST || '256Mi' }}
           K8S_JUDGE0_SERVER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_LIMIT || '512Mi' }}
           K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '50m' }}
           K8S_JUDGE0_SERVER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_CPU_LIMIT || '200m' }}
-          # Judge0 Worker resources
-          K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '1' }}
+          # Judge0 Worker resources (scaled down to free CPU; raise later when DB is ready)
+          K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '0' }}
           K8S_JUDGE0_WORKER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_REQUEST || '512Mi' }}
           K8S_JUDGE0_WORKER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_LIMIT || '1Gi' }}
           K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '50m' }}
           K8S_JUDGE0_WORKER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_CPU_LIMIT || '400m' }}
-          # Bots resources
-          K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '1' }}
+          # Bots resources (scaled down to free CPU; raise later when DB is ready)
+          K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '0' }}
           K8S_BOTS_MEMORY_REQUEST: ${{ secrets.K8S_BOTS_MEMORY_REQUEST || '128Mi' }}
           K8S_BOTS_MEMORY_LIMIT: ${{ secrets.K8S_BOTS_MEMORY_LIMIT || '256Mi' }}
           K8S_BOTS_CPU_REQUEST: ${{ secrets.K8S_BOTS_CPU_REQUEST || '50m' }}
