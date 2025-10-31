@@ -63,35 +63,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
 
-      - name: Build and push Judge0 ARM64 image
+      - name: Enable QEMU for multi-arch support
         run: |
-          echo "Building Judge0 for ARM64..."
+          echo "Setting up QEMU for AMD64 emulation on ARM64..."
           
-          # Clone Judge0 repository if not exists
-          if [ ! -d "judge0-build" ]; then
-            git clone --depth 1 https://github.com/judge0/api.git judge0-build
-          else
-            cd judge0-build
-            git pull
-            cd ..
+          # Install QEMU if not present
+          if ! command -v qemu-x86_64-static &> /dev/null; then
+            echo "Installing QEMU for multi-arch support..."
+            sudo apt-get update
+            sudo apt-get install -y qemu binfmt-support qemu-user-static
           fi
           
-          cd judge0-build
+          # Register QEMU static binaries
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes || true
           
-          # Build for ARM64 architecture
-          docker build -t ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
-            --platform linux/arm64 .
-          
-          # Push to GHCR
-          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
-          
-          # Also tag as latest
-          docker tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
-            ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
-          docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
-          
-          cd ..
-          echo "Judge0 ARM64 image built and pushed successfully"
+          echo "QEMU setup complete"
 
       - name: Stop docker-compose services (if running)
         run: |

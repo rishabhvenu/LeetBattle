@@ -18,11 +18,9 @@ spec:
       labels:
         app: judge0-server
     spec:
-      imagePullSecrets:
-      - name: ghcr-secret
       containers:
       - name: judge0-server
-        image: ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
+        image: judge0/judge0:latest
         ports:
         - containerPort: 2358
         env:
