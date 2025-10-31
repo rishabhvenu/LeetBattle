@@ -80,12 +80,16 @@ jobs:
             sudo mount binfmt_misc -t binfmt_misc /proc/sys/fs/binfmt_misc
           fi
           
-          # Register x86_64 handler
-          echo ":qemu-x86_64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00:\xff\xff\xff\xff\xff\xfe\xfe\xff\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-x86_64-static:F" | sudo tee /proc/sys/fs/binfmt_misc/register
+          # Register x86_64 handler (ignore if already exists)
+          echo ":qemu-x86_64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00:\xff\xff\xff\xff\xff\xfe\xfe\xff\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/bin/qemu-x86_64-static:F" | sudo tee /proc/sys/fs/binfmt_misc/register 2>/dev/null || true
           
           # Verify binfmt registration
           echo "Checking binfmt status..."
-          cat /proc/sys/fs/binfmt_misc/qemu-x86_64 || echo "binfmt not configured yet"
+          if [ -f /proc/sys/fs/binfmt_misc/qemu-x86_64 ]; then
+            cat /proc/sys/fs/binfmt_misc/qemu-x86_64
+          else
+            echo "binfmt not configured yet"
+          fi
           
           echo "QEMU setup complete"
 
