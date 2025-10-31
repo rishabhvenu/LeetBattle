@@ -44,6 +44,14 @@ jobs:
         working-directory: ./client
         run: npx sst unlock --stage production || true
 
+      - name: Debug environment variables
+        run: |
+          echo "COLYSEUS_DOMAIN=${COLYSEUS_DOMAIN}"
+          echo "COLYSEUS_HOST_IP=${COLYSEUS_HOST_IP}"
+        env:
+          COLYSEUS_DOMAIN: ${{ secrets.COLYSEUS_DOMAIN }}
+          COLYSEUS_HOST_IP: ${{ secrets.COLYSEUS_HOST_IP }}
+
       - name: Deploy with SST
         working-directory: ./client
         env:
