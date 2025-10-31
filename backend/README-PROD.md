@@ -279,6 +279,26 @@ Judge0 workers require privileged access. Ensure k3s is installed with the corre
 k3s --version
 ```
 
+### Judge0 troubleshooting
+
+If Judge0 server/worker are crashing:
+```bash
+# Check pod logs
+k3s kubectl logs -n codeclashers deployment/judge0-server --tail=50
+k3s kubectl logs -n codeclashers deployment/judge0-worker --tail=50
+
+# Check if PostgreSQL is accessible
+k3s kubectl exec -n codeclashers deployment/postgres -- pg_isready
+
+# Verify secrets are set correctly
+k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data}' | jq -r 'keys[]'
+```
+
+Common issues:
+- **PostgreSQL connection timeout**: Wait for postgres to be fully ready before starting Judge0
+- **Privileged container issues**: Ensure k3s allows privileged containers (default on k3s)
+- **Missing environment variables**: Verify JUDGE0_POSTGRES_* secrets are set in GitHub
+
 ### Rollback on deployment failure
 
 The workflow automatically rolls back on health check failure. Manual rollback:
