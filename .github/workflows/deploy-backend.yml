@@ -74,8 +74,13 @@ jobs:
             sudo apt-get install -y qemu-user-static binfmt-support
           fi
           
-          # Register QEMU static binaries
+          # Register QEMU static binaries with binfmt_misc
+          echo "Registering QEMU binfmt handlers..."
           docker run --rm --privileged multiarch/qemu-user-static --reset -p yes || true
+          
+          # Verify binfmt registration
+          echo "Checking binfmt status..."
+          cat /proc/sys/fs/binfmt_misc/qemu-x86_64 || echo "binfmt not configured yet"
           
           echo "QEMU setup complete"
 
@@ -116,6 +121,25 @@ jobs:
             echo "Installing gettext package for envsubst..."
             sudo apt-get update && sudo apt-get install -y gettext-base
           fi
+
+      - name: Re-register QEMU after k3s installation
+        run: |
+          echo "Re-registering QEMU for k3s/containerd..."
+          # Re-register QEMU binfmt handlers for k3s to pick up
+          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes || true
+          
+          # Restart k3s to pick up QEMU changes
+          echo "Restarting k3s service..."
+          sudo systemctl restart k3s
+          
+          # Wait for k3s to be ready
+          echo "Waiting for k3s to be ready..."
+          sleep 10
+          
+          # Verify k3s is running
+          k3s kubectl get nodes
+          
+          echo "QEMU re-registration complete"
 
       - name: Create namespace if not exists
         env:
