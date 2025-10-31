@@ -125,9 +125,7 @@ jobs:
             --from-literal=JUDGE0_POSTGRES_USER="${{ secrets.JUDGE0_POSTGRES_USER }}" \
             --from-literal=JUDGE0_POSTGRES_PASSWORD="${{ secrets.JUDGE0_POSTGRES_PASSWORD }}" \
             --from-literal=JUDGE0_POSTGRES_DB="${{ secrets.JUDGE0_POSTGRES_DB }}" \
-            --from-literal=MONGODB_USERNAME="${{ secrets.MONGODB_USERNAME }}" \
-            --from-literal=MONGODB_PASSWORD="${{ secrets.MONGODB_PASSWORD }}" \
-            --from-literal=MONGODB_URI_INTERNAL="mongodb://${{ secrets.MONGODB_USERNAME }}:${{ secrets.MONGODB_PASSWORD }}@mongodb:27017/codeclashers?authSource=admin" \
+            --from-literal=MONGODB_URI_INTERNAL="mongodb://mongodb:27017/codeclashers" \
             --from-literal=MONGODB_URI="${{ secrets.MONGODB_URI }}" \
             --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
             --from-literal=INTERNAL_SERVICE_SECRET="${{ secrets.INTERNAL_SERVICE_SECRET }}" \
