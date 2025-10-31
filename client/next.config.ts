@@ -5,7 +5,9 @@ const nextConfig: NextConfig = {
   /* config options here */
   experimental: {
     serverActions: {
-      allowedOrigins: ['localhost:3000'],
+      allowedOrigins: process.env.NODE_ENV === 'production' 
+        ? ['leetbattle.net', 'www.leetbattle.net'] 
+        : ['localhost:3000'],
     },
   },
   eslint: {
