@@ -45,18 +45,18 @@ spec:
         livenessProbe:
           exec:
             command:
-            - sh
-            - -c
-            - "mongosh --eval 'db.adminCommand(\"ping\")' -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin"
+            - mongosh
+            - --eval
+            - "db.adminCommand(\"ping\")"
           initialDelaySeconds: 15
           periodSeconds: 10
           timeoutSeconds: 5
         readinessProbe:
           exec:
             command:
-            - sh
-            - -c
-            - "mongosh --eval 'db.adminCommand(\"ping\")' -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin"
+            - mongosh
+            - --eval
+            - "db.adminCommand(\"ping\")"
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3
