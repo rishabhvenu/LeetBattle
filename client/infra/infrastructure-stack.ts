@@ -93,6 +93,14 @@ export class InfrastructureStack extends cdk.Stack {
       }
     }
 
+    // Check for edge runtime routes (not supported in Lambda)
+    const edgeRuntimePath = join(nextBuildDir, 'server', 'edge-runtime');
+    if (existsSync(edgeRuntimePath)) {
+      console.warn('⚠️  WARNING: Next.js edge runtime routes detected!');
+      console.warn('   Edge routes (export const runtime = "edge") are not supported in AWS Lambda.');
+      console.warn('   These routes will fail at runtime. Consider using Node.js runtime instead.');
+    }
+
     // S3 bucket for Next.js static assets
     const staticAssetsBucket = new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
       bucketName: process.env.NEXTJS_STATIC_BUCKET_NAME || `codeclashers-static-${accountId}`,
@@ -101,16 +109,7 @@ export class InfrastructureStack extends cdk.Stack {
       autoDeleteObjects: false,
     });
 
-    // Upload static assets from .next/static to S3
-    const staticAssetsPath = join(nextBuildDir, 'static');
-    if (existsSync(staticAssetsPath)) {
-      new s3deploy.BucketDeployment(this, 'DeployNextJsStaticAssets', {
-        sources: [s3deploy.Source.asset(staticAssetsPath)],
-        destinationBucket: staticAssetsBucket,
-        destinationKeyPrefix: '_next/static',
-        prune: true,
-      });
-    }
+    // Static assets deployment will be created after distribution to enable cache invalidation
 
     // Create Lambda function for Next.js server (SSR + API routes)
     const nextjsLambda = new lambdaNodejs.NodejsFunction(this, 'NextJsLambda', {
@@ -133,13 +132,31 @@ export class InfrastructureStack extends cdk.Stack {
           beforeBundling(inputDir: string, outputDir: string): string[] {
             const standalonePath = join(clientDir, '.next', 'standalone');
             if (existsSync(standalonePath)) {
-              // Copy contents of standalone directory to outputDir (Lambda package root)
+              // Copy ALL contents of standalone directory including hidden files/directories
+              // Use rsync or cp with proper flags to include .next/ and other hidden dirs
               // This ensures server.js, .next/, node_modules/, public/ are all at /var/task/
               return [
                 `echo "Copying Next.js standalone build from ${standalonePath} to ${outputDir}"`,
-                `cp -r ${standalonePath}/* ${outputDir}/ || cp -r ${standalonePath}/. ${outputDir}/`,
-                `echo "Verifying server.js exists:"`,
+                `echo "Contents of standalone directory:"`,
+                `ls -la ${standalonePath} || echo "Failed to list standalone directory"`,
+                // Use tar to preserve all files including hidden directories like .next
+                `cd ${standalonePath} && tar -cf - . | (cd ${outputDir} && tar -xf -) || {`,
+                `  echo "Tar failed, trying rsync..."`,
+                `  if command -v rsync &> /dev/null; then`,
+                `    rsync -av --exclude='.git' ${standalonePath}/ ${outputDir}/ || exit 1`,
+                `  else`,
+                `    echo "Neither tar nor rsync available, using cp..."`,
+                `    shopt -s dotglob || true`,
+                `    cp -r ${standalonePath}/* ${outputDir}/ 2>/dev/null || true`,
+                `    cp -r ${standalonePath}/.[!.]* ${outputDir}/ 2>/dev/null || true`,
+                `  fi`,
+                `}`,
+                `echo "Verifying files after copy:"`,
                 `ls -la ${outputDir}/server.js || echo "ERROR: server.js not found!"`,
+                `ls -d ${outputDir}/.next 2>/dev/null && echo "✓ .next directory copied" || echo "✗ .next directory missing"`,
+                `ls -d ${outputDir}/node_modules 2>/dev/null && echo "✓ node_modules copied" || echo "✗ node_modules missing"`,
+                `echo "All files in output directory:"`,
+                `ls -la ${outputDir} | head -20 || true`,
               ];
             } else {
               return [
@@ -162,8 +179,8 @@ export class InfrastructureStack extends cdk.Stack {
           },
         },
       },
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 1024,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 2048,
       environment: {
         NODE_ENV: 'production',
         NEXT_PUBLIC_PFP_BUCKET_URL: `https://${avatarBucket.bucketName}.s3.${region}.amazonaws.com/`,
@@ -258,7 +275,7 @@ export class InfrastructureStack extends cdk.Stack {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // No cache for SSR
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
       },
       comment: 'Next.js serverless deployment',
       additionalBehaviors: {
@@ -281,6 +298,7 @@ export class InfrastructureStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
         },
         // Server actions endpoint - no cache
         '/_next/data/*': {
@@ -288,6 +306,7 @@ export class InfrastructureStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
         },
       },
       certificate: certificate,
@@ -295,6 +314,19 @@ export class InfrastructureStack extends cdk.Stack {
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       defaultRootObject: 'index.html',
     });
+
+    // Upload static assets from .next/static to S3 with CloudFront cache invalidation
+    const staticAssetsPath = join(nextBuildDir, 'static');
+    if (existsSync(staticAssetsPath)) {
+      new s3deploy.BucketDeployment(this, 'DeployNextJsStaticAssets', {
+        sources: [s3deploy.Source.asset(staticAssetsPath)],
+        destinationBucket: staticAssetsBucket,
+        destinationKeyPrefix: '_next/static',
+        prune: true,
+        distribution: distribution,
+        distributionPaths: ['/*'],
+      });
+    }
 
     // Route53 A records for all domain aliases (aliasing to CloudFront)
     if (hostedZone && domainNames.length > 0) {
@@ -361,5 +393,15 @@ export class InfrastructureStack extends cdk.Stack {
       value: avatarBucket.urlForObject(),
       description: 'URL for accessing avatars',
     });
+
+    // Print deployment summary
+    console.log('\n✅ Next.js deployment configured:');
+    console.log(`   CloudFront URL: https://${distribution.distributionDomainName}`);
+    if (domainNames.length > 0) {
+      console.log(`   Custom Domains: ${domainNames.join(', ')}`);
+    }
+    console.log(`   Lambda Function: ${nextjsLambda.functionName}`);
+    console.log(`   Static Assets: s3://${staticAssetsBucket.bucketName}/_next/static`);
+    console.log(`   Lambda Function URL: ${lambdaFunctionUrl.url}`);
   }
 }
