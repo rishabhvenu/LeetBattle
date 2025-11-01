@@ -490,6 +490,29 @@ export const handler = async (
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyResultV2> => {
   try {
+    // Ensure we're in the right working directory for module resolution
+    // Lambda's working directory should be /var/task where all files are
+    const originalCwd = process.cwd();
+    console.log('Current working directory:', originalCwd);
+    console.log('NODE_PATH:', process.env.NODE_PATH);
+    
+    // Ensure server.js can find node_modules by checking paths
+    const path = await import('path');
+    const serverPath = path.resolve(process.cwd(), NEXT_SERVER_PATH);
+    console.log('Server.js path:', serverPath);
+    console.log('Node modules path:', path.join(process.cwd(), 'node_modules'));
+    const fs = await import('fs/promises');
+    try {
+      const nodeModulesExists = await fs.access(path.join(process.cwd(), 'node_modules')).then(() => true).catch(() => false);
+      console.log('node_modules exists:', nodeModulesExists);
+      if (nodeModulesExists) {
+        const nextExists = await fs.access(path.join(process.cwd(), 'node_modules', 'next')).then(() => true).catch(() => false);
+        console.log('node_modules/next exists:', nextExists);
+      }
+    } catch (checkError) {
+      console.warn('Could not verify node_modules:', checkError);
+    }
+    
     const server = await getNextServer();
     
     // Build request URL
