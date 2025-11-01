@@ -196,16 +196,44 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: npx cdk bootstrap aws://$AWS_ACCOUNT_ID/us-east-1 || echo "Bootstrap already done"
 
+      - name: Fetch hosted zone name (if ID provided)
+        id: hosted-zone
+        if: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
+        run: |
+          if [ -z "${{ vars.ROUTE53_HOSTED_ZONE_NAME }}" ] && [ -n "${{ secrets.ROUTE53_HOSTED_ZONE_ID }}" ]; then
+            echo "Fetching hosted zone name from ID..."
+            ZONE_NAME=$(aws route53 get-hosted-zone --id "${{ secrets.ROUTE53_HOSTED_ZONE_ID }}" --query 'HostedZone.Name' --output text 2>/dev/null | sed 's/\.$//' || echo "")
+            if [ -n "$ZONE_NAME" ]; then
+              echo "name=$ZONE_NAME" >> $GITHUB_OUTPUT
+              echo "✅ Found hosted zone name: $ZONE_NAME"
+            else
+              echo "⚠️  Could not fetch hosted zone name, will use default 'leetbattle.net'"
+              echo "name=leetbattle.net" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "name=${{ vars.ROUTE53_HOSTED_ZONE_NAME }}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Debug domain configuration
         run: |
           echo "=== Domain Configuration Debug ==="
-          echo "ROUTE53_HOSTED_ZONE_NAME: ${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
-          echo "NEXTJS_DOMAIN_NAME: ${{ vars.NEXTJS_DOMAIN_NAME }}"
+          ROUTE53_HOSTED_ZONE_NAME="${{ steps.hosted-zone.outputs.name || vars.ROUTE53_HOSTED_ZONE_NAME || 'leetbattle.net' }}"
+          NEXTJS_DOMAIN_NAME="${{ vars.NEXTJS_DOMAIN_NAME }}"
+          echo "ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}"
+          echo "ROUTE53_HOSTED_ZONE_NAME: $ROUTE53_HOSTED_ZONE_NAME"
+          echo "NEXTJS_DOMAIN_NAME: ${NEXTJS_DOMAIN_NAME:-'(not set)'}"
           echo ""
-          echo "Expected CloudFront CNAMEs will be:"
-          if [ -n "${{ vars.NEXTJS_DOMAIN_NAME }}" ]; then
-            DOMAIN="${{ vars.NEXTJS_DOMAIN_NAME }}"
-            HOSTED_ZONE="${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
+          if [ -z "${{ secrets.ROUTE53_HOSTED_ZONE_ID }}" ]; then
+            echo "ℹ️  No ROUTE53_HOSTED_ZONE_ID set - CloudFront will deploy WITHOUT custom domains"
+            echo "   CloudFront will use the default distribution domain (*.cloudfront.net)"
+          elif [ -z "$NEXTJS_DOMAIN_NAME" ]; then
+            echo "ℹ️  No NEXTJS_DOMAIN_NAME set - CloudFront will deploy WITHOUT custom domains"
+            echo "   CloudFront will use the default distribution domain (*.cloudfront.net)"
+            echo "   To enable custom domains, set NEXTJS_DOMAIN_NAME (e.g., 'www' or 'app')"
+          else
+            echo "Expected CloudFront CNAMEs will be:"
+            DOMAIN="$NEXTJS_DOMAIN_NAME"
+            HOSTED_ZONE="$ROUTE53_HOSTED_ZONE_NAME"
             # Logic matches infrastructure-stack.ts
             if [[ "$DOMAIN" == *".$HOSTED_ZONE" ]]; then
               ROOT_DOMAIN="${DOMAIN%.$HOSTED_ZONE}"
@@ -221,12 +249,9 @@ jobs:
             if [ "$ROOT_DOMAIN_FULL" != "www.$HOSTED_ZONE" ]; then
               echo "  2. www.$HOSTED_ZONE"
             fi
-          else
-            echo "  1. ${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
-            echo "  2. www.${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
+            echo ""
+            echo "⚠️  If deployment fails with 'CNAME already associated', check existing CloudFront distributions for these domains"
           fi
-          echo ""
-          echo "⚠️  If deployment fails with 'CNAME already associated', check existing CloudFront distributions for these domains"
 
       - name: Deploy infrastructure with CDK
         working-directory: ./client/infra
@@ -237,7 +262,7 @@ jobs:
           AWS_REGION: us-east-1
           S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME }}
           ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
-          ROUTE53_HOSTED_ZONE_NAME: ${{ vars.ROUTE53_HOSTED_ZONE_NAME }}
+          ROUTE53_HOSTED_ZONE_NAME: ${{ steps.hosted-zone.outputs.name || vars.ROUTE53_HOSTED_ZONE_NAME || '' }}
           NEXTJS_DOMAIN_NAME: ${{ vars.NEXTJS_DOMAIN_NAME }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
