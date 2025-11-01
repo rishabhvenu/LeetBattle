@@ -30,6 +30,15 @@ jobs:
         working-directory: ./client
         run: npm ci
 
+      - name: Build Next.js (standalone mode)
+        working-directory: ./client
+        env:
+          NODE_ENV: production
+          # Add required env vars for build (these may be needed during build)
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+        run: npm run build
+
       - name: Install CDK dependencies
         working-directory: ./client/infra
         run: npm install
