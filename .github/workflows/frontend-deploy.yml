@@ -272,7 +272,7 @@ jobs:
           NEXTJS_DOMAIN_NAME: ${{ vars.NEXTJS_DOMAIN_NAME }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           REDIS_HOST: ${{ vars.REDIS_HOST }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
@@ -280,10 +280,10 @@ jobs:
           NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
           OPENNEXT_CACHE_BUCKET: ${{ vars.OPENNEXT_CACHE_BUCKET }}
           OPENNEXT_CACHE_REGION: us-east-1
-          IMPORT_EXISTING_CACHE_BUCKET: 'true'
+          IMPORT_EXISTING_CACHE_BUCKET: ${{ vars.IMPORT_EXISTING_CACHE_BUCKET || 'false' }}
           NEXTJS_STATIC_BUCKET_NAME: ${{ vars.NEXTJS_STATIC_BUCKET_NAME }}
-          IMPORT_EXISTING_STATIC_BUCKET: 'true'
-          IMPORT_EXISTING_AVATAR_BUCKET: 'true'
+          IMPORT_EXISTING_STATIC_BUCKET: ${{ vars.IMPORT_EXISTING_STATIC_BUCKET || 'false' }}
+          IMPORT_EXISTING_AVATAR_BUCKET: ${{ vars.IMPORT_EXISTING_AVATAR_BUCKET || 'false' }}
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
         run: |
