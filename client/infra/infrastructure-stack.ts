@@ -367,7 +367,51 @@ export class InfrastructureStack extends cdk.Stack {
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         },
-        'static/*': {
+        // Public folder assets - explicit paths (CloudFront doesn't support wildcard extensions)
+        // These will be served from S3 if deployed, otherwise Lambda will serve them
+        '/logo.png': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/sword-left.svg': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/sword-right.svg': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/placeholder_avatar.png': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/favicon.ico': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/messagereceived.wav': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/messagesent.wav': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        '/sword-clash.mp3': {
           origin: staticOrigin,
           allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
@@ -406,6 +450,31 @@ export class InfrastructureStack extends cdk.Stack {
         prune: true,
         distribution: distribution,
         distributionPaths: ['/*'],
+      });
+    }
+
+    // Upload public folder assets to S3 (logo.png, SVG files, etc.)
+    // Next.js serves public folder files at root path (e.g., /logo.png)
+    const publicAssetsPath = join(clientDir, 'public');
+    if (existsSync(publicAssetsPath)) {
+      new s3deploy.BucketDeployment(this, 'DeployPublicAssets', {
+        sources: [s3deploy.Source.asset(publicAssetsPath)],
+        destinationBucket: staticAssetsBucket,
+        destinationKeyPrefix: '', // Deploy to root of bucket
+        prune: true,
+        distribution: distribution,
+        distributionPaths: [
+          '/*.png',
+          '/*.svg',
+          '/*.jpg',
+          '/*.jpeg',
+          '/*.gif',
+          '/*.ico',
+          '/*.wav',
+          '/*.mp3',
+          '/*.woff',
+          '/*.woff2',
+        ],
       });
     }
 
