@@ -67,48 +67,63 @@ jobs:
         run: |
           echo "Building Judge0 for ARM64..."
           
-          # Use existing builder or create one if missing
-          docker buildx use arm64-builder || docker buildx create --name arm64-builder --use --bootstrap
+          # Login to GHCR to check if image exists
+          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           
-          # Clone Judge0 repository if not exists
-          if [ ! -d "judge0-build" ]; then
-            git clone --depth 1 https://github.com/judge0/judge0.git judge0-build
+          # Check if the latest image already exists
+          if docker manifest inspect ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest &>/dev/null; then
+            echo "✅ Judge0 ARM64 image already exists in registry, skipping build"
+            # Tag the existing image with the current commit
+            docker pull ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest || true
+            docker tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
+            docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
+            echo "✅ Tagged and pushed existing image with tag ${{ env.IMAGE_TAG }}"
           else
+            echo "🔄 Judge0 ARM64 image not found, building from source..."
+            
+            # Use existing builder or create one if missing
+            docker buildx use arm64-builder || docker buildx create --name arm64-builder --use --bootstrap
+            
+            # Clone Judge0 repository if not exists
+            if [ ! -d "judge0-build" ]; then
+              git clone --depth 1 https://github.com/judge0/judge0.git judge0-build
+            else
+              cd judge0-build
+              git pull
+              cd ..
+            fi
+            
             cd judge0-build
-            git pull
+            
+            echo "Patching Dockerfile for ARM64 compatibility..."
+            
+            # Replace ALL base stages with Ubuntu 22.04
+            sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
+            sed -i 's|^FROM production.*|FROM ubuntu:22.04 AS development|' Dockerfile
+            
+            echo "Patched Dockerfile:"
+            grep "^FROM" Dockerfile
+            
+            # Optional: limit languages for ARM64
+            if command -v jq >/dev/null 2>&1; then
+              jq 'del(.languages[] | select(.name | test("Swift|Pascal|Mono|C#|Go|Kotlin|PHP|Perl|Ruby"; "i")))' config.json > tmp.json && mv tmp.json config.json
+            fi
+            
+            # Build for ARM64 architecture using buildx
+            docker buildx build \
+              --platform linux/arm64 \
+              --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
+              --push .
+            
+            # Also tag as latest
+            docker buildx build \
+              --platform linux/arm64 \
+              --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest \
+              --push .
+            
             cd ..
+            echo "✅ Judge0 ARM64 image built and pushed successfully"
           fi
-          
-          cd judge0-build
-          
-          echo "Patching Dockerfile for ARM64 compatibility..."
-          
-          # Replace ALL base stages with Ubuntu 22.04
-          sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
-          sed -i 's|^FROM production.*|FROM ubuntu:22.04 AS development|' Dockerfile
-          
-          echo "Patched Dockerfile:"
-          grep "^FROM" Dockerfile
-          
-          # Optional: limit languages for ARM64
-          if command -v jq >/dev/null 2>&1; then
-            jq 'del(.languages[] | select(.name | test("Swift|Pascal|Mono|C#|Go|Kotlin|PHP|Perl|Ruby"; "i")))' config.json > tmp.json && mv tmp.json config.json
-          fi
-          
-          # Build for ARM64 architecture using buildx
-          docker buildx build \
-            --platform linux/arm64 \
-            --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
-            --push .
-          
-          # Also tag as latest
-          docker buildx build \
-            --platform linux/arm64 \
-            --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest \
-            --push .
-          
-          cd ..
-          echo "✅ Judge0 ARM64 image built and pushed successfully"
 
       - name: Stop docker-compose services (if running)
         run: |
