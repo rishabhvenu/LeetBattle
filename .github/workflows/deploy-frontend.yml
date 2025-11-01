@@ -52,52 +52,8 @@ jobs:
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
 
-      - name: Setup AWS infrastructure (S3 bucket and Route53 record)
+      - name: Setup Route53 A record for Colyseus
         run: |
-          echo "Creating S3 bucket for avatars..."
-          # Check if bucket exists, create if not
-          if ! aws s3 ls "s3://${S3_BUCKET_NAME}" 2>/dev/null; then
-            echo "Bucket doesn't exist, creating..."
-            aws s3 mb "s3://${S3_BUCKET_NAME}" --region us-east-1 || echo "Bucket creation failed or already exists"
-            
-            # Enable CORS for the bucket
-            echo "Setting CORS configuration..."
-            cat > /tmp/cors-config.json <<EOF
-          {
-            "CORSRules": [
-              {
-                "AllowedHeaders": ["*"],
-                "AllowedMethods": ["GET", "PUT", "POST", "DELETE", "HEAD"],
-                "AllowedOrigins": ["*"],
-                "ExposeHeaders": ["ETag"],
-                "MaxAgeSeconds": 86400
-              }
-            ]
-          }
-          EOF
-            aws s3api put-bucket-cors --bucket "${S3_BUCKET_NAME}" --cors-configuration file:///tmp/cors-config.json || echo "CORS config failed"
-            
-            # Enable public read access
-            echo "Setting public read policy..."
-            cat > /tmp/bucket-policy.json <<EOF
-          {
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Sid": "PublicReadGetObject",
-                "Effect": "Allow",
-                "Principal": "*",
-                "Action": "s3:GetObject",
-                "Resource": "arn:aws:s3:::${S3_BUCKET_NAME}/*"
-              }
-            ]
-          }
-          EOF
-            aws s3api put-bucket-policy --bucket "${S3_BUCKET_NAME}" --policy file:///tmp/bucket-policy.json || echo "Policy update failed"
-          else
-            echo "Bucket already exists, skipping creation"
-          fi
-          
           # Create Route53 A record for Colyseus if configured
           if [ -n "${COLYSEUS_DOMAIN}" ] && [ -n "${COLYSEUS_HOST_IP}" ] && [ -n "${ROUTE53_HOSTED_ZONE_ID}" ]; then
             echo "Creating A record for ${COLYSEUS_DOMAIN}.leetbattle.net -> ${COLYSEUS_HOST_IP}"
@@ -149,7 +105,6 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: us-east-1
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
           ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}

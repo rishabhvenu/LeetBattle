@@ -46,7 +46,7 @@
         },
       });
 
-      // Note: S3 bucket and Route53 A record are created outside SST via AWS CLI in GitHub Actions
+      // Note: Route53 A record for Colyseus is created outside SST via AWS CLI in GitHub Actions
       
       return {
         siteUrl: site.url,
