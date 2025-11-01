@@ -40,10 +40,56 @@ async function getNextServer() {
         throw new Error(`Module resolution failed: ${nextError}`);
       }
       
-      // Strategy 1: Require server.js with timeout
-      // Note: require() is synchronous, but we can wrap it to detect hangs
-      console.log('[INIT] Strategy 1: Requiring server.js...');
+      // Strategy 1: Use Next.js programmatically (more reliable)
+      console.log('[INIT] Strategy 1: Programmatic Next.js...');
       try {
+        const nextModule = cjsRequire('next');
+        console.log('[INIT] Next module loaded, keys:', Object.keys(nextModule));
+        
+        // Try different ways to access Next.js constructor
+        let nextConstructor: any = null;
+        
+        if (nextModule.default && typeof nextModule.default === 'function') {
+          nextConstructor = nextModule.default;
+        } else if (typeof nextModule === 'function') {
+          nextConstructor = nextModule;
+        } else {
+          for (const key of Object.keys(nextModule)) {
+            if (typeof nextModule[key] === 'function') {
+              nextConstructor = nextModule[key];
+              break;
+            }
+          }
+        }
+        
+        if (!nextConstructor || typeof nextConstructor !== 'function') {
+          throw new Error(`Next.js constructor not found`);
+        }
+        
+        console.log('[INIT] Creating Next.js app...');
+        const nextApp = nextConstructor({ dev: false, dir: process.cwd() });
+        
+        if (!nextApp || typeof nextApp.getRequestHandler !== 'function') {
+          throw new Error(`Next.js app invalid`);
+        }
+        
+        console.log('[INIT] Preparing Next.js app...');
+        await Promise.race([
+          nextApp.prepare(),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('prepare timeout')), 15000)
+          ),
+        ]);
+        
+        nextServer = nextApp.getRequestHandler();
+        console.log('[INIT] ✓ Handler via programmatic Next.js');
+        return nextServer;
+      } catch (progError) {
+        console.error('[INIT] Strategy 1 failed:', progError);
+        console.log('[INIT] Strategy 2: Requiring server.js...');
+        
+        // Strategy 2: Require server.js with timeout
+        try {
         const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
         console.log('[INIT] Path:', absoluteServerPath);
         
@@ -172,84 +218,9 @@ async function getNextServer() {
           const allKeys = handler ? Object.keys(handler) : [];
           throw new Error(`server.js exports unusable handler. Type: ${typeof handler}, keys: ${allKeys.join(', ')}`);
         }
-      } catch (requireError) {
-        console.error('[INIT] Strategy 1 failed:', requireError);
-        console.log('[INIT] Strategy 2: Programmatic Next.js...');
-        
-        // Strategy 2: Use Next.js programmatically (skip server.js)
-        try {
-          const nextModule = cjsRequire('next');
-          console.log('[INIT] Next module type:', typeof nextModule);
-          console.log('[INIT] Next module keys:', Object.keys(nextModule));
-          console.log('[INIT] nextModule.default type:', typeof nextModule.default);
-          console.log('[INIT] nextModule.default keys:', nextModule.default ? Object.keys(nextModule.default) : 'N/A');
-          
-          // Try different ways to access Next.js constructor
-          let nextConstructor: any = null;
-          
-          // Pattern 1: nextModule.default (ESM default export)
-          if (nextModule.default && typeof nextModule.default === 'function') {
-            nextConstructor = nextModule.default;
-            console.log('[INIT] Using nextModule.default');
-          }
-          // Pattern 2: nextModule itself (CommonJS)
-          else if (typeof nextModule === 'function') {
-            nextConstructor = nextModule;
-            console.log('[INIT] Using nextModule directly');
-          }
-          // Pattern 3: Check for named exports
-          else if (nextModule.next && typeof nextModule.next === 'function') {
-            nextConstructor = nextModule.next;
-            console.log('[INIT] Using nextModule.next');
-          }
-          else {
-            // Try to find any function export
-            for (const key of Object.keys(nextModule)) {
-              if (typeof nextModule[key] === 'function') {
-                nextConstructor = nextModule[key];
-                console.log(`[INIT] Using nextModule.${key}`);
-                break;
-              }
-            }
-          }
-          
-          if (!nextConstructor || typeof nextConstructor !== 'function') {
-            throw new Error(`Next.js constructor not found. Module keys: ${Object.keys(nextModule).join(', ')}`);
-          }
-          
-          console.log('[INIT] Creating Next.js app with dir:', process.cwd());
-          const nextApp = nextConstructor({ dev: false, dir: process.cwd() });
-          
-          if (!nextApp || typeof nextApp.getRequestHandler !== 'function') {
-            throw new Error(`Next.js app creation failed. nextApp type: ${typeof nextApp}, keys: ${nextApp ? Object.keys(nextApp) : 'null'}`);
-          }
-          
-          console.log('[INIT] Preparing Next.js app...');
-          const prepareWithTimeout = Promise.race([
-            nextApp.prepare(),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('prepare timeout')), 15000)
-            ),
-          ]);
-          
-          await prepareWithTimeout;
-          
-          console.log('[INIT] Getting request handler...');
-          nextServer = nextApp.getRequestHandler();
-          
-          if (typeof nextServer !== 'function') {
-            throw new Error(`getRequestHandler() did not return a function. Type: ${typeof nextServer}`);
-          }
-          
-          console.log('[INIT] ✓ Handler via programmatic Next.js');
-          return nextServer;
-        } catch (progError) {
-          console.error('[INIT] Strategy 2 failed:', progError);
-          console.error('[INIT] Strategy 2 error details:', {
-            message: progError instanceof Error ? progError.message : String(progError),
-            stack: progError instanceof Error ? progError.stack : undefined,
-          });
-          throw new Error(`Both strategies failed. require error: ${requireError}, programmatic error: ${progError}`);
+        } catch (requireError) {
+          console.error('[INIT] Strategy 2 failed:', requireError);
+          throw new Error(`Both strategies failed. programmatic error: ${progError}, require error: ${requireError}`);
         }
       }
     } catch (error) {
