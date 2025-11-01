@@ -39,13 +39,23 @@ jobs:
           cache: npm
           cache-dependency-path: client/infra/package-lock.json
 
+      - name: Debug artifact info
+        if: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          echo "Workflow Run ID: ${{ github.event.workflow_run.id }}"
+          echo "Head SHA: ${{ github.event.workflow_run.head_sha }}"
+          echo "Current SHA: ${{ github.sha }}"
+          echo "Expected artifact name: open-next-artifacts-${{ github.event.workflow_run.head_sha }}"
+
       - name: Download OpenNext build artifacts (from workflow_run)
         if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
         uses: actions/download-artifact@v4
         with:
-          name: open-next-artifacts-${{ github.event.workflow_run.head_sha }}
+          pattern: open-next-artifacts-*
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
           path: client/.open-next
+          merge-multiple: false
 
       - name: Download artifact (manual dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_name != '' }}
