@@ -49,8 +49,34 @@ async function getNextServer() {
         const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
         console.log(`Attempting to require server.js from: ${absoluteServerPath}`);
         
+        // Test if 'next' can be required before requiring server.js
+        // This ensures module resolution is working
+        console.log('Testing module resolution by requiring "next"...');
+        try {
+          const { createRequire } = await import('module');
+          const testRequire = createRequire(import.meta.url || __filename);
+          const nextModule = testRequire('next');
+          console.log('✓ Successfully required "next" module, module resolution is working');
+          console.log('Next module keys:', Object.keys(nextModule).slice(0, 10));
+        } catch (nextError) {
+          console.error('✗ Failed to require "next" module:', nextError);
+          console.error('This means server.js will also fail. Checking NODE_PATH and paths...');
+          console.error('NODE_PATH:', process.env.NODE_PATH);
+          console.error('process.cwd():', process.cwd());
+          const fs = await import('fs/promises');
+          const nodeModulesPath = pathModule.join(process.cwd(), 'node_modules', 'next');
+          try {
+            await fs.access(nodeModulesPath);
+            console.error('node_modules/next exists at:', nodeModulesPath);
+            throw new Error('Module resolution failed even though next exists. Check NODE_PATH or module resolution.');
+          } catch (accessError) {
+            throw new Error(`Cannot find next module and node_modules/next doesn't exist at ${nodeModulesPath}`);
+          }
+        }
+        
         const { createRequire } = await import('module');
         const cjsRequire = createRequire(import.meta.url || __filename);
+        console.log('Requiring server.js (this may take a moment if it initializes Next.js)...');
         serverModule = cjsRequire(absoluteServerPath);
         console.log('Next.js server module loaded successfully (CommonJS)');
         console.log('CJS module keys:', Object.keys(serverModule));
