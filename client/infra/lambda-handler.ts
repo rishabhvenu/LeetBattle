@@ -47,26 +47,48 @@ async function getNextServer() {
         console.log('[INIT] Next module loaded, keys:', Object.keys(nextModule));
         
         // Try different ways to access Next.js constructor
+        // Next.js can export as: default function, named export, or direct function
         let nextConstructor: any = null;
         
-        if (nextModule.default && typeof nextModule.default === 'function') {
-          nextConstructor = nextModule.default;
+        console.log('[INIT] Checking nextModule.default:', typeof nextModule.default, nextModule.default ? Object.keys(nextModule.default).slice(0, 5) : 'null');
+        
+        // Check if default is the constructor or has a constructor inside
+        if (nextModule.default) {
+          if (typeof nextModule.default === 'function') {
+            nextConstructor = nextModule.default;
+            console.log('[INIT] Using nextModule.default (function)');
+          } else if (nextModule.default.default && typeof nextModule.default.default === 'function') {
+            // Sometimes default is an object with default property
+            nextConstructor = nextModule.default.default;
+            console.log('[INIT] Using nextModule.default.default (function)');
+          } else if (typeof nextModule === 'function') {
+            // Maybe the module itself is the constructor
+            nextConstructor = nextModule;
+            console.log('[INIT] Using nextModule directly (function)');
+          }
         } else if (typeof nextModule === 'function') {
           nextConstructor = nextModule;
-        } else {
+          console.log('[INIT] Using nextModule directly (function)');
+        }
+        
+        // If still not found, search all exports
+        if (!nextConstructor) {
           for (const key of Object.keys(nextModule)) {
-            if (typeof nextModule[key] === 'function') {
-              nextConstructor = nextModule[key];
+            const value = nextModule[key];
+            console.log(`[INIT] Checking ${key}:`, typeof value);
+            if (typeof value === 'function') {
+              nextConstructor = value;
+              console.log(`[INIT] Using nextModule.${key}`);
               break;
             }
           }
         }
         
         if (!nextConstructor || typeof nextConstructor !== 'function') {
-          throw new Error(`Next.js constructor not found`);
+          throw new Error(`Next.js constructor not found. Module keys: ${Object.keys(nextModule).join(', ')}`);
         }
         
-        console.log('[INIT] Creating Next.js app...');
+        console.log('[INIT] Creating Next.js app with dir:', process.cwd());
         const nextApp = nextConstructor({ dev: false, dir: process.cwd() });
         
         if (!nextApp || typeof nextApp.getRequestHandler !== 'function') {
