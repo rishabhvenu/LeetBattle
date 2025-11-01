@@ -49,8 +49,8 @@ jobs:
           echo "COLYSEUS_DOMAIN=${COLYSEUS_DOMAIN}"
           echo "COLYSEUS_HOST_IP=${COLYSEUS_HOST_IP}"
         env:
-          COLYSEUS_DOMAIN: ${{ secrets.COLYSEUS_DOMAIN }}
-          COLYSEUS_HOST_IP: ${{ secrets.COLYSEUS_HOST_IP }}
+          COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
+          COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
 
       - name: Deploy with SST
         working-directory: ./client
@@ -63,14 +63,14 @@ jobs:
           S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
-          REDIS_HOST: ${{ secrets.REDIS_HOST }}
-          REDIS_PORT: ${{ secrets.REDIS_PORT }}
+          AWS_REGION: ${{vars.AWS_REGION}}
+          REDIS_HOST: ${{ vars.REDIS_HOST }}
+          REDIS_PORT: ${{ vars.REDIS_PORT }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          COLYSEUS_DOMAIN: ${{ secrets.COLYSEUS_DOMAIN }}
-          COLYSEUS_HOST_IP: ${{ secrets.COLYSEUS_HOST_IP }}
+          COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
+          COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
         run: npx sst deploy --stage production
 
       - name: Output deployment URL
