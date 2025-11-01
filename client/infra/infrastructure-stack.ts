@@ -1,28 +1,65 @@
+// Modernized OpenNext + AWS CDK stack
+// Uses open-next.config.json to dynamically deploy Next.js serverless components
+// NOTE: Before deploying, run: npx open-next build
+
 import * as cdk from 'aws-cdk-lib';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
-import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cloudfrontOrigins from 'aws-cdk-lib/aws-cloudfront-origins';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import { Construct } from 'constructs';
-import { execSync } from 'child_process';
 import { join } from 'path';
 import { existsSync, readFileSync } from 'fs';
+
+interface OpenNextConfig {
+  default?: {
+    override?: {
+      wrapper?: string;
+      converter?: string;
+      incrementalCache?: {
+        kind?: string;
+        s3BucketName?: string;
+        s3Region?: string;
+      };
+      tagCache?: {
+        kind?: string;
+        s3Region?: string;
+      };
+    };
+    minifyHandlers?: boolean;
+  };
+  functions?: Record<string, {
+    runtime?: string;
+    memory?: number;
+    timeout?: number;
+  }>;
+  imageOptimization?: {
+    runtime?: string;
+    memory?: number;
+    timeout?: number;
+  };
+}
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    // S3 bucket for avatars
     const accountId = props?.env?.account || this.account || 'unknown';
     const region = props?.env?.region || this.region || 'us-east-1';
+
+    // Edge functions MUST be deployed in us-east-1
+    // This will be checked before creating EdgeFunction
+
+    // ===== S3 Buckets =====
+
+    // S3 bucket for avatars with public read access via bucket policy
     const avatarBucket = new s3.Bucket(this, 'AvatarsBucket', {
-      bucketName: process.env.S3_BUCKET_NAME || `codeclashers-avatars-${accountId}`,
+      bucketName: process.env.S3_BUCKET_NAME || `codeclashers-avatars-${accountId}-${region}`,
       cors: [
         {
           allowedHeaders: ['*'],
@@ -32,10 +69,10 @@ export class InfrastructureStack extends cdk.Stack {
           maxAge: 86400,
         },
       ],
-      // Block ACLs but allow bucket policies for public access
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ACLS_ONLY, // ✅ correct constant
-      publicReadAccess: false, // ✅ disables ACL-based public access
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      publicReadAccess: false,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
     });
 
     // Grant public read access via bucket policy (more secure than ACLs)
@@ -49,7 +86,36 @@ export class InfrastructureStack extends cdk.Stack {
       })
     );
 
-    // Get hosted zone for the domain
+    // S3 bucket for Next.js static assets (OpenNext assets)
+    const staticAssetsBucket = new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
+      bucketName: process.env.NEXTJS_STATIC_BUCKET_NAME || `codeclashers-static-${accountId}-${region}`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
+    });
+
+    // S3 bucket for OpenNext incremental cache
+    const cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
+      bucketName: process.env.OPENNEXT_CACHE_BUCKET || `codeclashers-cache-${accountId}-${region}`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
+    });
+
+    // S3 bucket for CloudFront logs
+    const cloudFrontLogsBucket = new s3.Bucket(this, 'CloudFrontLogs', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      lifecycleRules: [
+        {
+          expiration: cdk.Duration.days(90),
+        },
+      ],
+    });
+
+    // ===== Route53 Configuration =====
+
     const route53HostedZoneId = process.env.ROUTE53_HOSTED_ZONE_ID;
     const hostedZoneName = process.env.ROUTE53_HOSTED_ZONE_NAME || 'leetbattle.net';
     const hostedZone = route53HostedZoneId
@@ -69,198 +135,127 @@ export class InfrastructureStack extends cdk.Stack {
       });
     }
 
-    // ===== Next.js Serverless Deployment =====
-    
-    // Build Next.js in standalone mode (if not already built)
-    // Use import.meta.url for ESM or __dirname for CommonJS
-    const currentDir = typeof __dirname !== 'undefined' ? __dirname : new URL('.', import.meta.url).pathname;
+    // ===== OpenNext Integration =====
+
+    const currentDir = __dirname;
     const clientDir = join(currentDir, '..');
-    const nextBuildDir = join(clientDir, '.next');
-    const standaloneDir = join(nextBuildDir, 'standalone');
-    
-    // Only build if standalone output doesn't exist (to speed up CDK synth during development)
-    // In CI/CD, Next.js should be built before CDK deployment
-    if (!existsSync(standaloneDir)) {
-      console.log('Building Next.js in standalone mode...');
+    const openNextDir = join(clientDir, '.open-next');
+
+    // Verify OpenNext build exists
+    if (!existsSync(openNextDir)) {
+      throw new Error(
+        `OpenNext build not found at ${openNextDir}. ` +
+        `Please run 'npx open-next build' before deploying.`
+      );
+    }
+
+    // Parse OpenNext config if it exists
+    let openNextConfig: OpenNextConfig | null = null;
+    const configPath = join(openNextDir, 'open-next.config.json');
+    if (existsSync(configPath)) {
       try {
-        execSync('npm run build', { 
-          cwd: clientDir, 
-          stdio: 'inherit',
-          env: { ...process.env, NODE_ENV: 'production' }
-        });
+        const configContent = readFileSync(configPath, 'utf-8');
+        openNextConfig = JSON.parse(configContent) as OpenNextConfig;
       } catch (error) {
-        console.warn('Next.js build failed or skipped. Ensure Next.js is built before CDK deployment.');
+        // Config file exists but couldn't parse - use defaults
       }
     }
 
-    // Detect Edge runtime (middleware and edge routes)
-    const middlewareManifestPath = join(nextBuildDir, 'server', 'middleware-manifest.json');
-    const edgeRuntimePath = join(nextBuildDir, 'server', 'edge-runtime');
-    let hasEdgeRuntime = false;
-    let edgeFunction: cloudfront.experimental.EdgeFunction | undefined;
+    // OpenNext output paths
+    const serverFunctionPath = join(openNextDir, 'server-function');
+    const imageOptimizationPath = join(openNextDir, 'image-optimization-function');
+    const middlewarePath = join(openNextDir, 'middleware-function');
+    const assetsPath = join(openNextDir, 'assets');
 
-    if (existsSync(middlewareManifestPath)) {
-      try {
-        const manifestContent = readFileSync(middlewareManifestPath, 'utf-8');
-        const manifest = JSON.parse(manifestContent);
-        
-        // Check if middleware exists
-        if (manifest.middleware && Object.keys(manifest.middleware).length > 0) {
-          hasEdgeRuntime = true;
-          console.log('✓ Next.js middleware detected in manifest');
-        }
-        
-        // Check if any functions use edge runtime
-        if (manifest.functions && typeof manifest.functions === 'object') {
-          for (const [key, value] of Object.entries(manifest.functions)) {
-            if (value && typeof value === 'object' && (value as any).runtime === 'edge') {
-              hasEdgeRuntime = true;
-              console.log(`✓ Edge runtime function detected: ${key}`);
-              break;
-            }
-          }
-        }
-      } catch (error) {
-        console.warn('Failed to parse middleware-manifest.json:', error);
-      }
+    // Verify server function exists
+    if (!existsSync(serverFunctionPath)) {
+      throw new Error(
+        `OpenNext server function not found at ${serverFunctionPath}. ` +
+        `Please run 'npx open-next build' before deploying.`
+      );
     }
 
-    // Create Lambda@Edge function if edge runtime is detected
-    if (hasEdgeRuntime && existsSync(edgeRuntimePath)) {
-      console.log('🚀 Detected Next.js edge runtime — deploying Lambda@Edge middleware');
-      
-      edgeFunction = new cloudfront.experimental.EdgeFunction(this, 'NextEdgeFunction', {
-        runtime: lambda.Runtime.NODEJS_20_X,
-        // Next.js edge runtime bundles middleware into edge-runtime directory
-        // Handler entry point depends on Next.js build output structure
-        handler: 'middleware.handler',
-        code: lambda.Code.fromAsset(edgeRuntimePath),
-        memorySize: 128,
-        description: 'Next.js middleware and edge runtime routes',
-      });
-      
-      console.log('✓ Lambda@Edge function created');
-    } else {
-      console.log('ℹ️  No edge runtime detected — deploying Node Lambda only');
-    }
+    // ===== Lambda Functions =====
 
-    // S3 bucket for Next.js static assets
-    const staticAssetsBucket = new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
-      bucketName: process.env.NEXTJS_STATIC_BUCKET_NAME || `codeclashers-static-${accountId}`,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      autoDeleteObjects: false,
-    });
-
-    // Static assets deployment will be created after distribution to enable cache invalidation
-
-    // Create Lambda function for Next.js server (SSR + API routes)
-    const nextjsLambda = new lambdaNodejs.NodejsFunction(this, 'NextJsLambda', {
+    // Main server function (required)
+    const nextjsLambda = new lambda.Function(this, 'NextJsLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'handler',
-      entry: join(currentDir, 'lambda-handler.ts'),
-        bundling: {
-        // Bundle the Lambda handler but don't bundle Next.js dependencies
-        // Next.js standalone build will be copied alongside the handler
-        externalModules: [
-          // Exclude Next.js and its dependencies from bundling - they're in standalone build
-          'next',
-          '@next/env',
-          '@swc/helpers',
-        ],
-        // Don't bundle server.js - it will be available at runtime from standalone build
-        nodeModules: [],
-        minify: true,
-        sourceMap: true,
-        // Copy the entire Next.js standalone build to the Lambda package
-        commandHooks: {
-          beforeBundling(inputDir: string, outputDir: string): string[] {
-            const standalonePath = join(clientDir, '.next', 'standalone');
-            if (existsSync(standalonePath)) {
-              // Copy ALL contents of standalone directory including hidden files/directories
-              // Use tar, rsync, or cp with proper flags to include .next/ and other hidden dirs
-              // This ensures server.js, .next/, node_modules/, public/ are all at /var/task/
-              // Combine the entire copy operation into a single bash command to avoid syntax errors
-              const copyCommand = `(cd ${standalonePath} && tar -cf - . | (cd ${outputDir} && tar -xf -)) || (if command -v rsync >/dev/null 2>&1; then rsync -av --exclude='.git' ${standalonePath}/ ${outputDir}/; else echo "Using cp fallback..."; shopt -s dotglob 2>/dev/null || true; cp -r ${standalonePath}/* ${outputDir}/ 2>/dev/null || true; cp -r ${standalonePath}/.[!.]* ${outputDir}/ 2>/dev/null || true; fi)`;
-              
-              return [
-                `echo "Copying Next.js standalone build from ${standalonePath} to ${outputDir}"`,
-                `echo "Contents of standalone directory:"`,
-                `ls -la ${standalonePath} || echo "Failed to list standalone directory"`,
-                copyCommand,
-                `echo "Verifying files after copy:"`,
-                `ls -la ${outputDir}/server.js || echo "ERROR: server.js not found!"`,
-                `ls -d ${outputDir}/.next 2>/dev/null && echo "✓ .next directory copied" || echo "✗ .next directory missing"`,
-                `ls -d ${outputDir}/node_modules 2>/dev/null && echo "✓ node_modules copied" || echo "✗ node_modules missing"`,
-                `echo "All files in output directory:"`,
-                `ls -la ${outputDir} | head -20 || true`,
-              ];
-            } else {
-              return [
-                `echo "ERROR: Next.js standalone build not found at ${standalonePath}"`,
-                `echo "Make sure you run 'npm run build' in the client directory first"`,
-              ];
-            }
-          },
-          afterBundling(inputDir: string, outputDir: string): string[] {
-            // After bundling, re-copy node_modules from standalone build
-            // The bundler might have removed or processed it incorrectly
-            const standalonePath = join(clientDir, '.next', 'standalone');
-            
-            return [
-              `echo "=== After Bundling Verification ==="`,
-              `echo "Checking standalone path: ${standalonePath}"`,
-              `ls -la ${standalonePath}/node_modules 2>/dev/null | head -5 || echo "Standalone node_modules not found"`,
-              `echo "Checking output directory before fix:"`,
-              `ls -d ${outputDir}/node_modules 2>/dev/null && echo "✓ node_modules exists" || echo "✗ node_modules missing"`,
-              `echo "Re-copying node_modules from standalone build..."`,
-              existsSync(standalonePath)
-                ? `(cd ${standalonePath} && tar -cf - node_modules | (cd ${outputDir} && tar -xf -)) && echo "✓ node_modules copied via tar" || (cp -r ${standalonePath}/node_modules ${outputDir}/ 2>&1 && echo "✓ node_modules copied via cp" || echo "✗ node_modules copy failed")`
-                : `echo "✗ Standalone path not found"`,
-              `echo "Verifying after re-copy:"`,
-              `ls -d ${outputDir}/node_modules 2>/dev/null && echo "✓ node_modules directory exists" || echo "✗ node_modules directory missing"`,
-              `ls -d ${outputDir}/node_modules/next 2>/dev/null && echo "✓ next package found" || echo "✗ next package missing"`,
-              `ls -d ${outputDir}/node_modules/react 2>/dev/null && echo "✓ react package found" || echo "✗ react package missing"`,
-              `echo "Verifying other standalone files:"`,
-              `ls -la ${outputDir}/server.js && echo "✓ server.js found" || echo "✗ server.js missing"`,
-              `ls -d ${outputDir}/.next 2>/dev/null && echo "✓ .next directory found" || echo "✗ .next directory missing"`,
-              `echo "Final output directory structure:"`,
-              `find ${outputDir} -maxdepth 1 -type d | head -10 || true`,
-            ];
-          },
-          beforeInstall(): string[] {
-            return [];
-          },
-        },
-      },
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset(serverFunctionPath, {
+        assetHashType: cdk.AssetHashType.OUTPUT,
+      }),
       timeout: cdk.Duration.seconds(60),
       memorySize: 2048,
-      // Set working directory to Lambda package root so server.js can find node_modules
       environment: {
-        NODE_PATH: '/var/task:/var/task/node_modules',
         NODE_ENV: 'production',
         NEXT_PUBLIC_PFP_BUCKET_URL: `https://${avatarBucket.bucketName}.s3.${region}.amazonaws.com/`,
         S3_BUCKET_NAME: avatarBucket.bucketName,
-        // Note: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN are
-        // automatically provided by Lambda runtime via IAM role - don't set them manually
-        // Add all required environment variables
         MONGODB_URI: process.env.MONGODB_URI || '',
         NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
-        NEXTAUTH_URL: process.env.NEXTAUTH_URL || 'https://leetbattle.net',
-        // AWS credentials are handled via IAM role (avatarBucket.grantReadWrite already configured)
+        NEXTAUTH_URL: process.env.NEXTAUTH_URL || '',
         REDIS_HOST: process.env.REDIS_HOST || '',
         REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
         NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE || '',
         NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '',
         NEXT_PUBLIC_COLYSEUS_WS_URL: process.env.NEXT_PUBLIC_COLYSEUS_WS_URL || '',
+        OPENNEXT_CACHE_BUCKET: cacheBucket.bucketName,
+        OPENNEXT_CACHE_REGION: region,
       },
+      description: 'Next.js server function (generated by OpenNext)',
     });
 
-    // Grant Lambda permissions to access S3 bucket
+    // Image optimization function (optional)
+    let imageOptimizationLambda: lambda.Function | undefined;
+    if (existsSync(imageOptimizationPath)) {
+      const imageOptConfig = openNextConfig?.imageOptimization || {};
+      imageOptimizationLambda = new lambda.Function(this, 'NextJsImageOptimization', {
+        runtime: lambda.Runtime.NODEJS_20_X,
+        handler: 'index.handler',
+        code: lambda.Code.fromAsset(imageOptimizationPath, {
+          assetHashType: cdk.AssetHashType.OUTPUT,
+        }),
+        timeout: cdk.Duration.seconds(imageOptConfig.timeout || 10),
+        memorySize: imageOptConfig.memory || 1024,
+        environment: {
+          NODE_ENV: 'production',
+        },
+        description: 'Next.js image optimization (generated by OpenNext)',
+      });
+    }
+
+    // Middleware function (optional, Lambda@Edge)
+    // Lambda@Edge MUST be deployed in us-east-1
+    let edgeFunction: cloudfront.experimental.EdgeFunction | undefined;
+    if (existsSync(middlewarePath)) {
+      if (region !== 'us-east-1') {
+        throw new Error('Lambda@Edge must be deployed in us-east-1. Current region: ' + region);
+      }
+
+      edgeFunction = new cloudfront.experimental.EdgeFunction(this, 'NextEdgeFunction', {
+        runtime: lambda.Runtime.NODEJS_20_X,
+        handler: 'index.handler',
+        code: lambda.Code.fromAsset(middlewarePath, {
+          assetHashType: cdk.AssetHashType.OUTPUT,
+        }),
+        memorySize: 128,
+        timeout: cdk.Duration.seconds(5),
+        description: 'Next.js middleware (generated by OpenNext)',
+      });
+    }
+
+    // ===== IAM Permissions =====
+
     avatarBucket.grantReadWrite(nextjsLambda);
     staticAssetsBucket.grantRead(nextjsLambda);
+    cacheBucket.grantReadWrite(nextjsLambda);
 
-    // Create Lambda Function URL for CloudFront to use
+    if (imageOptimizationLambda) {
+      staticAssetsBucket.grantRead(imageOptimizationLambda);
+      cacheBucket.grantReadWrite(imageOptimizationLambda);
+    }
+
+    // ===== Lambda Function URLs =====
+
     const lambdaFunctionUrl = nextjsLambda.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
       cors: {
@@ -270,64 +265,63 @@ export class InfrastructureStack extends cdk.Stack {
       },
     });
 
-    // CloudFront origin for static assets (S3)
-    const staticOrigin = new cloudfrontOrigins.S3BucketOrigin(staticAssetsBucket);
+    // ===== CloudFront Origins =====
 
-    // CloudFront origin for Lambda (SSR + API)
-    // Lambda Function URLs format: https://{id}.lambda-url.{region}.on.aws
-    // Extract domain name using CDK Fn functions
-    // Split URL to extract just the hostname (domain) part
+    const staticOrigin = new cloudfrontOrigins.S3Origin(staticAssetsBucket);
+
+    // Extract Lambda Function URL domain for CloudFront origin
     const lambdaUrlString = lambdaFunctionUrl.url;
     const urlParts = cdk.Fn.split('://', lambdaUrlString);
     const hostAndPath = cdk.Fn.select(1, urlParts);
     const domainNameOnly = cdk.Fn.select(0, cdk.Fn.split('/', hostAndPath));
-    
-    // Create HttpOrigin with extracted domain
-    // Important: Lambda Function URLs require specific origin settings
-    // The origin ID will be auto-generated from the construct ID, not the domain
+
     const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(domainNameOnly, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-      // Lambda Function URLs need the full URL path preserved
       httpPort: 443,
       httpsPort: 443,
-      // Don't set custom headers that might interfere
-      // The origin request policy will forward all viewer headers
-    });
-    
-    // Output the Lambda Function URL for debugging
-    new cdk.CfnOutput(this, 'NextJsLambdaFunctionUrl', {
-      value: lambdaFunctionUrl.url,
-      description: 'Lambda Function URL (for debugging)',
     });
 
-    // Determine domain names for Next.js app
-    // Use NEXTJS_DOMAIN_NAME if provided, otherwise derive from hosted zone
+    // Image optimization origin (if function exists)
+    let imageOptOrigin: cloudfrontOrigins.HttpOrigin | undefined;
+    if (imageOptimizationLambda) {
+      const imageOptFunctionUrl = imageOptimizationLambda.addFunctionUrl({
+        authType: lambda.FunctionUrlAuthType.NONE,
+      });
+
+      const imageOptUrlParts = cdk.Fn.split('://', imageOptFunctionUrl.url);
+      const imageOptHostAndPath = cdk.Fn.select(1, imageOptUrlParts);
+      const imageOptDomain = cdk.Fn.select(0, cdk.Fn.split('/', imageOptHostAndPath));
+
+      imageOptOrigin = new cloudfrontOrigins.HttpOrigin(imageOptDomain, {
+        protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+        httpPort: 443,
+        httpsPort: 443,
+      });
+    }
+
+    // ===== Certificate and Domain Setup =====
+
     const nextDomainName = process.env.NEXTJS_DOMAIN_NAME || (hostedZone ? hostedZoneName : undefined);
-    
-    // Certificate and Route53 setup (only if hosted zone and domain are configured)
     let certificate: acm.ICertificate | undefined;
     const domainNames: string[] = [];
 
     if (hostedZone && nextDomainName) {
-      // Determine all domain aliases (root domain and www subdomain)
       const rootDomain = nextDomainName.endsWith(`.${hostedZoneName}`)
         ? nextDomainName.replace(`.${hostedZoneName}`, '')
         : nextDomainName.includes('.')
         ? nextDomainName.split('.').slice(-2).join('.')
         : nextDomainName;
-      
+
       const rootDomainFull = rootDomain === hostedZoneName ? hostedZoneName : `${rootDomain}.${hostedZoneName}`;
       const wwwDomain = `www.${hostedZoneName}`;
-      
-      // Add both root and www domains
+
       domainNames.push(rootDomainFull);
       if (wwwDomain !== rootDomainFull) {
         domainNames.push(wwwDomain);
       }
 
-      // Create DNS-validated certificate in us-east-1 (required for CloudFront)
-      // Note: CloudFront certificates MUST be in us-east-1
-      // Using Certificate with DNS validation (replacement for deprecated DnsValidatedCertificate)
+      // CloudFront certificates MUST be in us-east-1
+      // Since the stack is deployed in us-east-1, the certificate will be created there
       certificate = new acm.Certificate(this, 'NextJsCertificate', {
         domainName: rootDomainFull,
         subjectAlternativeNames: domainNames.length > 1 ? domainNames.slice(1) : undefined,
@@ -335,17 +329,16 @@ export class InfrastructureStack extends cdk.Stack {
       });
     }
 
-    // CloudFront distribution with proper cache behaviors
-    // Create distribution with explicit origin configuration
+    // ===== CloudFront Distribution =====
+
+    // Default behavior configuration
     const defaultBehaviorConfig: cloudfront.BehaviorOptions = {
-      origin: lambdaOrigin, // SSR handler (all routes except static assets)
+      origin: lambdaOrigin,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // No cache for SSR
+      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-      // Use ALL_VIEWER_EXCEPT_HOST_HEADER so CloudFront sets the correct Host for Lambda Function URL
-      // The Lambda handler will reconstruct the original host from x-forwarded-host or other headers
       originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-      // Attach Lambda@Edge if edge runtime is detected
+      responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS_WITH_PREFLIGHT,
       ...(edgeFunction ? {
         edgeLambdas: [
           {
@@ -356,68 +349,80 @@ export class InfrastructureStack extends cdk.Stack {
       } : {}),
     };
 
+    // Additional behaviors
+    const additionalBehaviors: Record<string, cloudfront.BehaviorOptions> = {
+      // Static assets - heavily cached
+      '_next/static/*': {
+        origin: staticOrigin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      // API routes - no cache
+      '/api/*': {
+        origin: lambdaOrigin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      },
+      // Server actions endpoint - no cache
+      '/_next/data/*': {
+        origin: lambdaOrigin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      },
+    };
+
+    // Image optimization behavior (if function exists)
+    if (imageOptOrigin) {
+      additionalBehaviors['/_next/image'] = {
+        origin: imageOptOrigin,
+        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      };
+    }
+
     const distribution = new cloudfront.Distribution(this, 'NextJsDistribution', {
       defaultBehavior: defaultBehaviorConfig,
-      comment: 'Next.js serverless deployment',
-      additionalBehaviors: {
-        // Static assets - heavily cached
-        '_next/static/*': {
-          origin: staticOrigin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        },
-        'static/*': {
-          origin: staticOrigin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        },
-        // API routes - no cache
-        '/api/*': {
-          origin: lambdaOrigin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-        },
-        // Server actions endpoint - no cache
-        '/_next/data/*': {
-          origin: lambdaOrigin,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-        },
-      },
+      comment: 'Next.js serverless deployment (OpenNext)',
+      additionalBehaviors,
       certificate: certificate,
       domainNames: domainNames.length > 0 ? domainNames : undefined,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-      // Don't set defaultRootObject - Next.js handles routing via Lambda
+      enableLogging: true,
+      logBucket: cloudFrontLogsBucket,
+      logFilePrefix: 'cloudfront-logs/',
+      // NOTE: Do not set defaultRootObject as it breaks SSR routing
     });
 
-    // Upload static assets from .next/static to S3 with CloudFront cache invalidation
-    const staticAssetsPath = join(nextBuildDir, 'static');
-    if (existsSync(staticAssetsPath)) {
+    // ===== Static Asset Deployment =====
+
+    if (existsSync(assetsPath)) {
       new s3deploy.BucketDeployment(this, 'DeployNextJsStaticAssets', {
-        sources: [s3deploy.Source.asset(staticAssetsPath)],
+        sources: [s3deploy.Source.asset(assetsPath)],
         destinationBucket: staticAssetsBucket,
-        destinationKeyPrefix: '_next/static',
+        cacheControl: [
+          s3deploy.CacheControl.maxAge(cdk.Duration.days(30)),
+        ],
         prune: true,
+        retainOnDelete: true,
         distribution: distribution,
         distributionPaths: ['/*'],
       });
     }
 
-    // Route53 A records for all domain aliases (aliasing to CloudFront)
+    // ===== Route53 Records =====
+
     if (hostedZone && domainNames.length > 0) {
       domainNames.forEach((domain, index) => {
-        // Extract relative record name (subdomain part)
         const relativeRecordName = domain.endsWith(`.${hostedZoneName}`)
-          ? domain.slice(0, -(hostedZoneName.length + 1)) || '' // Empty string for root domain
+          ? domain.slice(0, -(hostedZoneName.length + 1)) || ''
           : domain;
-        
-        // For root domain, use empty string; for www, use 'www'
+
         const recordName = relativeRecordName === hostedZoneName ? '' : relativeRecordName;
 
         new route53.ARecord(this, `NextJsAliasRecord${index === 0 ? 'Root' : 'Www'}`, {
@@ -429,7 +434,8 @@ export class InfrastructureStack extends cdk.Stack {
       });
     }
 
-    // Outputs
+    // ===== CloudFormation Outputs =====
+
     new cdk.CfnOutput(this, 'NextJsDistributionId', {
       value: distribution.distributionId,
       description: 'CloudFront distribution ID',
@@ -470,26 +476,10 @@ export class InfrastructureStack extends cdk.Stack {
         description: 'Lambda@Edge function ARN for Next.js middleware',
       });
     }
-    
-    // Outputs
+
     new cdk.CfnOutput(this, 'AvatarBucketName', {
       value: avatarBucket.bucketName,
       description: 'S3 bucket for avatars',
     });
-
-    new cdk.CfnOutput(this, 'AvatarBucketUrl', {
-      value: avatarBucket.urlForObject(),
-      description: 'URL for accessing avatars',
-    });
-
-    // Print deployment summary
-    console.log('\n✅ Next.js deployment configured:');
-    console.log(`   CloudFront URL: https://${distribution.distributionDomainName}`);
-    if (domainNames.length > 0) {
-      console.log(`   Custom Domains: ${domainNames.join(', ')}`);
-    }
-    console.log(`   Lambda Function: ${nextjsLambda.functionName}`);
-    console.log(`   Static Assets: s3://${staticAssetsBucket.bucketName}/_next/static`);
-    console.log(`   Lambda Function URL: ${lambdaFunctionUrl.url}`);
   }
 }

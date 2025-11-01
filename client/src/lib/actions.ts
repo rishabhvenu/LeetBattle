@@ -1,7 +1,9 @@
 'use server';
 
+export const runtime = 'nodejs';
+
 import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
+// Note: cookies() usage moved to session-edge.ts for Edge compatibility
 import connectDB, { getMongoClient } from './mongodb';
 import { generatePresignedUrl } from './minio';
 import { getRedis, RedisKeys } from './redis';
@@ -23,7 +25,6 @@ import {
   getSession as getSessionImpl,
   deleteSession,
   assertAdminSession,
-  getSessionCookieName,
 } from './session';
 
 // Re-export getSession as async function wrapper to comply with "use server" requirements
@@ -225,16 +226,19 @@ export async function loginUser(prevState: { error?: string } | null, formData: 
 
 export async function logoutUser() {
   try {
-    const cookieStore = await cookies();
-    const cookieName = await getSessionCookieName();
-    const sessionId = cookieStore.get(cookieName)?.value;
+    // Get sessionId from cookie (Edge operation)
+    const { getSessionCookie } = await import('./session-edge');
+    const sessionId = await getSessionCookie();
 
     if (sessionId) {
+      // deleteSession handles both cookie deletion (Edge) and DB deletion (Node)
       await deleteSession(sessionId);
+    } else {
+      // If no sessionId, still try to clear cookie
+      const { deleteSessionCookie } = await import('./session-edge');
+      await deleteSessionCookie();
     }
 
-    // Clear cookie
-    cookieStore.delete(cookieName);
     redirect('/login');
   } catch (error) {
     // Check if it's a redirect error (which is expected)
@@ -429,9 +433,9 @@ export async function generatePresignedUploadUrl(fileName: string, contentType: 
 
 export async function saveUserAvatar(fileName: string) {
   try {
-    const cookieStore = await cookies();
-    const cookieName = await getSessionCookieName();
-    const sessionId = cookieStore.get(cookieName)?.value;
+    // Get sessionId from cookie (Edge operation via dynamic import)
+    const { getSessionCookie } = await import('./session-edge');
+    const sessionId = await getSessionCookie();
     if (!sessionId) return { success: false, error: 'No session' };
 
     await connectDB();
@@ -2166,10 +2170,10 @@ export async function verifyProblemSolutions(problemId: string) {
     // Call Colyseus validation endpoint
     const COLYSEUS_URL = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || 'http://localhost:2567';
     
-    // Forward session cookie to backend for admin auth
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('codeclashers.sid');
-    const cookieHeader = sessionCookie ? `${sessionCookie.name}=${sessionCookie.value}` : '';
+    // Forward session cookie to backend for admin auth (Edge operation via dynamic import)
+    const { getSessionCookie } = await import('./session-edge');
+    const sessionId = await getSessionCookie();
+    const cookieHeader = sessionId ? `codeclashers.sid=${sessionId}` : '';
     
     const validationResponse = await fetch(`${COLYSEUS_URL}/admin/validate-solutions`, {
       method: 'POST',
@@ -3432,11 +3436,11 @@ export async function getBots() {
   }
 
   try {
-    // Get the session cookie to include in the request
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('codeclashers.sid');
+    // Get the session cookie to include in the request (Edge operation via dynamic import)
+    const { getSessionCookie } = await import('./session-edge');
+    const sessionId = await getSessionCookie();
     
-    if (!sessionCookie) {
+    if (!sessionId) {
       console.error('No session cookie found');
       return { success: false, error: 'Not authenticated' };
     }
@@ -3448,7 +3452,7 @@ export async function getBots() {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': `codeclashers.sid=${sessionCookie.value}`
+        'Cookie': `codeclashers.sid=${sessionId}`
       },
       credentials: 'include' // Include cookies for authentication
     });
@@ -3683,10 +3687,11 @@ export async function setRotationConfig(maxDeployed: number) {
   }
 
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('codeclashers.sid');
+    // Get session cookie (Edge operation via dynamic import)
+    const { getSessionCookie } = await import('./session-edge');
+    const sessionId = await getSessionCookie();
     
-    if (!sessionCookie) {
+    if (!sessionId) {
       return { success: false, error: 'Not authenticated' };
     }
 
@@ -3694,7 +3699,7 @@ export async function setRotationConfig(maxDeployed: number) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': `codeclashers.sid=${sessionCookie.value}`
+        'Cookie': `codeclashers.sid=${sessionId}`
       },
       credentials: 'include',
       body: JSON.stringify({ maxDeployed }),
@@ -3715,10 +3720,11 @@ export async function getRotationStatus() {
   }
 
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('codeclashers.sid');
+    // Get session cookie (Edge operation via dynamic import)
+    const { getSessionCookie } = await import('./session-edge');
+    const sessionId = await getSessionCookie();
     
-    if (!sessionCookie) {
+    if (!sessionId) {
       return { success: false, error: 'Not authenticated' };
     }
 
@@ -3726,7 +3732,7 @@ export async function getRotationStatus() {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': `codeclashers.sid=${sessionCookie.value}`
+        'Cookie': `codeclashers.sid=${sessionId}`
       },
       credentials: 'include',
     });
@@ -3746,10 +3752,11 @@ export async function initializeRotationSystem() {
   }
 
   try {
-    const cookieStore = await cookies();
-    const sessionCookie = cookieStore.get('codeclashers.sid');
+    // Get session cookie (Edge operation via dynamic import)
+    const { getSessionCookie } = await import('./session-edge');
+    const sessionId = await getSessionCookie();
     
-    if (!sessionCookie) {
+    if (!sessionId) {
       return { success: false, error: 'Not authenticated' };
     }
 
@@ -3757,7 +3764,7 @@ export async function initializeRotationSystem() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': `codeclashers.sid=${sessionCookie.value}`
+        'Cookie': `codeclashers.sid=${sessionId}`
       },
       credentials: 'include',
     });

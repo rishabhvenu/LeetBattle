@@ -1,9 +1,8 @@
 import type { NextConfig } from "next";
-import path from "path";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  output: 'standalone', // Required for serverless/Lambda deployment
+  // OpenNext will handle the build output, no need for standalone mode
   experimental: {
     serverActions: {
       allowedOrigins: process.env.NODE_ENV === 'production' 
@@ -15,35 +14,26 @@ const nextConfig: NextConfig = {
     ignoreDuringBuilds: true,
   },
   images: {
-    remotePatterns: [
-      {
-        protocol: 'http',
-        hostname: 'localhost',
-        port: '9000',
-        pathname: '/codeclashers-avatars/**',
-      },
+    domains: [
+      'localhost',
+      'leetbattle.net',
+      'www.leetbattle.net',
+      ...(process.env.S3_BUCKET_NAME 
+        ? [`${process.env.S3_BUCKET_NAME}.s3.amazonaws.com`]
+        : []
+      ),
     ],
-    // Allow local images from public directory
-    domains: ['localhost'],
     unoptimized: false,
   },
-  // Environment variables for API routes
-  env: {
-    MONGODB_URI: process.env.MONGODB_URI,
-    NEXTAUTH_URL: process.env.NEXTAUTH_URL,
-    INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET,
-  },
   typescript: {
-    // Skip type checking during build (you can run it separately with tsc --noEmit)
-    ignoreBuildErrors: false, // Set to true if you want to skip, but better to fix the exclude
+    ignoreBuildErrors: false,
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     // Ignore infra directory completely - it's CDK infrastructure code, not part of Next.js app
-    const { IgnorePlugin } = require('webpack');
     config.plugins = config.plugins || [];
     config.plugins.push(
-      new IgnorePlugin({
-        resourceRegExp: /infra/,
+      new webpack.IgnorePlugin({
+        resourceRegExp: /infra($|\/)/,
       })
     );
 

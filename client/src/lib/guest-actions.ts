@@ -1,8 +1,13 @@
 'use server';
 
+export const runtime = 'edge';
+
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { getRedis } from './redis';
+import { getGuestMatchDataFromRedis, type GuestMatchData } from './guest-actions-db';
+
+// Re-export type
+export type { GuestMatchData } from './guest-actions-db';
 
 const COLYSEUS_HTTP_URL = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || 'http://localhost:2567';
 
@@ -11,25 +16,6 @@ export interface GuestSession {
   matchId: string;
   roomId: string;
   createdAt: number;
-}
-
-export interface GuestMatchData {
-  matchId: string;
-  roomId: string;
-  guestId: string;
-  opponentId: string;
-  problemId: string;
-  result: 'win' | 'loss' | 'draw';
-  submissions: Array<{
-    language: string;
-    code: string;
-    passed: boolean;
-    testResults: unknown[];
-    timestamp: number;
-  }>;
-  testsPassed: number;
-  totalTests: number;
-  completedAt: number;
 }
 
 /**
@@ -188,33 +174,8 @@ export async function claimGuestMatch(guestId: string, userId: string): Promise<
 
 /**
  * Get guest match data from Redis
+ * Edge runtime orchestrator - delegates to Node runtime
  */
 export async function getGuestMatchData(guestId: string): Promise<GuestMatchData | null> {
-  try {
-    const redis = getRedis();
-    
-    // Get session data which contains the match info
-    const sessionData = await redis.get(`guest:session:${guestId}`);
-    if (!sessionData) return null;
-    
-    const parsedSession = JSON.parse(sessionData);
-    
-    // Return session data as match data (contains matchId, roomId, etc.)
-    return {
-      matchId: parsedSession.matchId,
-      roomId: parsedSession.roomId,
-      guestId: parsedSession.guestId,
-      // These will be filled in after match completion
-      opponentId: '',
-      problemId: '',
-      result: 'draw' as const,
-      submissions: [],
-      testsPassed: 0,
-      totalTests: 0,
-      completedAt: 0
-    };
-  } catch (error) {
-    console.error('Error getting guest match data:', error);
-    return null;
-  }
+  return await getGuestMatchDataFromRedis(guestId);
 }
