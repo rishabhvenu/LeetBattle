@@ -29,9 +29,21 @@ async function getNextServer() {
       
       // Import the Next.js server from standalone build
       // Next.js standalone server.js can export in different ways depending on version
-      const serverModule = await import(NEXT_SERVER_PATH);
-      console.log('Next.js server module loaded successfully');
+      let serverModule: any;
+      try {
+        // Try ESM import first
+        serverModule = await import(NEXT_SERVER_PATH);
+        console.log('Next.js server module loaded successfully (ESM)');
+      } catch (esmError) {
+        // Fallback to CommonJS require if ESM fails
+        console.log('ESM import failed, trying CommonJS require...');
+        const { createRequire } = await import('module');
+        const require = createRequire(import.meta.url || __filename);
+        serverModule = require(NEXT_SERVER_PATH);
+        console.log('Next.js server module loaded successfully (CommonJS)');
+      }
       console.log('Module keys:', Object.keys(serverModule));
+      console.log('Module type:', typeof serverModule);
       
       // Try different export patterns
       let handler: any = null;
@@ -40,6 +52,8 @@ async function getNextServer() {
       if (serverModule.default) {
         handler = serverModule.default;
         console.log('Using default export');
+        console.log('Default export type:', typeof handler);
+        console.log('Default export keys:', typeof handler === 'object' ? Object.keys(handler) : 'N/A');
       }
       // Pattern 2: Named export 'handler'
       else if (serverModule.handler) {
@@ -56,11 +70,59 @@ async function getNextServer() {
         throw new Error(`Next.js server.js does not export a handler. Available keys: ${Object.keys(serverModule).join(', ')}`);
       }
       
+      // Handle case where handler is an object (Next.js 15 standalone sometimes exports server instance)
       if (typeof handler !== 'function') {
-        throw new Error(`Next.js handler must be a function, got: ${typeof handler}`);
+        console.log('Handler is not a function, checking for request handler methods...');
+        console.log('Handler object keys:', Object.keys(handler));
+        console.log('Handler object:', JSON.stringify(Object.keys(handler).reduce((acc, key) => {
+          acc[key] = typeof handler[key];
+          return acc;
+        }, {} as Record<string, string>)));
+        
+        // Check if handler is a Promise that resolves to a function
+        if (handler && typeof handler.then === 'function') {
+          console.log('Handler is a Promise, awaiting...');
+          handler = await handler;
+          console.log('Promise resolved to type:', typeof handler);
+        }
+        
+        // If still not a function after awaiting, try object patterns
+        if (typeof handler !== 'function') {
+          // Next.js standalone might export an object with a request handler
+          // Try common patterns:
+          if (handler.handle && typeof handler.handle === 'function') {
+            console.log('Found handler.handle method');
+            handler = handler.handle.bind(handler);
+          } else if (handler.request && typeof handler.request === 'function') {
+            console.log('Found handler.request method');
+            handler = handler.request.bind(handler);
+          } else if (handler.listener && typeof handler.listener === 'function') {
+            console.log('Found handler.listener method');
+            handler = handler.listener.bind(handler);
+          } else if (handler.default && typeof handler.default === 'function') {
+            // Nested default export
+            console.log('Found nested default export');
+            handler = handler.default;
+          } else {
+            // Last resort: check if it has a __esModule flag and default export
+            if (handler.__esModule && handler.default) {
+              console.log('Found ESM module with default export');
+              handler = handler.default;
+            } else {
+              // If it's still an object, throw a detailed error
+              const handlerStr = JSON.stringify(Object.keys(handler), null, 2);
+              throw new Error(`Next.js handler must be a function or have a handle/request/listener/default method. Got type: ${typeof handler}, keys: ${handlerStr}`);
+            }
+          }
+        }
       }
       
-      console.log('Handler type:', typeof handler);
+      // Final check after all processing
+      if (typeof handler !== 'function') {
+        throw new Error(`Next.js handler processing failed. Final type: ${typeof handler}, value: ${JSON.stringify(handler ? Object.keys(handler) : 'null')}`);
+      }
+      
+      console.log('Handler type after processing:', typeof handler);
       console.log('Handler name:', handler.name || 'anonymous');
       
       // Next.js standalone server exports a request handler function

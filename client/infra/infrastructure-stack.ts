@@ -12,7 +12,7 @@ import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import { Construct } from 'constructs';
 import { execSync } from 'child_process';
 import { join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 
 export class InfrastructureStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -93,12 +93,55 @@ export class InfrastructureStack extends cdk.Stack {
       }
     }
 
-    // Check for edge runtime routes (not supported in Lambda)
+    // Detect Edge runtime (middleware and edge routes)
+    const middlewareManifestPath = join(nextBuildDir, 'server', 'middleware-manifest.json');
     const edgeRuntimePath = join(nextBuildDir, 'server', 'edge-runtime');
-    if (existsSync(edgeRuntimePath)) {
-      console.warn('⚠️  WARNING: Next.js edge runtime routes detected!');
-      console.warn('   Edge routes (export const runtime = "edge") are not supported in AWS Lambda.');
-      console.warn('   These routes will fail at runtime. Consider using Node.js runtime instead.');
+    let hasEdgeRuntime = false;
+    let edgeFunction: cloudfront.experimental.EdgeFunction | undefined;
+
+    if (existsSync(middlewareManifestPath)) {
+      try {
+        const manifestContent = readFileSync(middlewareManifestPath, 'utf-8');
+        const manifest = JSON.parse(manifestContent);
+        
+        // Check if middleware exists
+        if (manifest.middleware && Object.keys(manifest.middleware).length > 0) {
+          hasEdgeRuntime = true;
+          console.log('✓ Next.js middleware detected in manifest');
+        }
+        
+        // Check if any functions use edge runtime
+        if (manifest.functions && typeof manifest.functions === 'object') {
+          for (const [key, value] of Object.entries(manifest.functions)) {
+            if (value && typeof value === 'object' && (value as any).runtime === 'edge') {
+              hasEdgeRuntime = true;
+              console.log(`✓ Edge runtime function detected: ${key}`);
+              break;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to parse middleware-manifest.json:', error);
+      }
+    }
+
+    // Create Lambda@Edge function if edge runtime is detected
+    if (hasEdgeRuntime && existsSync(edgeRuntimePath)) {
+      console.log('🚀 Detected Next.js edge runtime — deploying Lambda@Edge middleware');
+      
+      edgeFunction = new cloudfront.experimental.EdgeFunction(this, 'NextEdgeFunction', {
+        runtime: lambda.Runtime.NODEJS_20_X,
+        // Next.js edge runtime bundles middleware into edge-runtime directory
+        // Handler entry point depends on Next.js build output structure
+        handler: 'middleware.handler',
+        code: lambda.Code.fromAsset(edgeRuntimePath),
+        memorySize: 128,
+        description: 'Next.js middleware and edge runtime routes',
+      });
+      
+      console.log('✓ Lambda@Edge function created');
+    } else {
+      console.log('ℹ️  No edge runtime detected — deploying Node Lambda only');
     }
 
     // S3 bucket for Next.js static assets
@@ -273,16 +316,27 @@ export class InfrastructureStack extends cdk.Stack {
 
     // CloudFront distribution with proper cache behaviors
     // Create distribution with explicit origin configuration
+    const defaultBehaviorConfig: cloudfront.BehaviorOptions = {
+      origin: lambdaOrigin, // SSR handler (all routes except static assets)
+      allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+      cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // No cache for SSR
+      viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      // Use ALL_VIEWER_EXCEPT_HOST_HEADER so CloudFront sets the correct Host for Lambda Function URL
+      // The Lambda handler will reconstruct the original host from x-forwarded-host or other headers
+      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      // Attach Lambda@Edge if edge runtime is detected
+      ...(edgeFunction ? {
+        edgeLambdas: [
+          {
+            functionVersion: edgeFunction.currentVersion,
+            eventType: cloudfront.LambdaEdgeEventType.VIEWER_REQUEST,
+          },
+        ],
+      } : {}),
+    };
+
     const distribution = new cloudfront.Distribution(this, 'NextJsDistribution', {
-      defaultBehavior: {
-        origin: lambdaOrigin, // SSR handler (all routes except static assets)
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-        cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // No cache for SSR
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        // Use ALL_VIEWER_EXCEPT_HOST_HEADER so CloudFront sets the correct Host for Lambda Function URL
-        // The Lambda handler will reconstruct the original host from x-forwarded-host or other headers
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
-      },
+      defaultBehavior: defaultBehaviorConfig,
       comment: 'Next.js serverless deployment',
       additionalBehaviors: {
         // Static assets - heavily cached
@@ -386,6 +440,13 @@ export class InfrastructureStack extends cdk.Stack {
       new cdk.CfnOutput(this, 'NextJsDomainNames', {
         value: domainNames.join(', '),
         description: 'Domain names configured for Next.js app',
+      });
+    }
+
+    if (edgeFunction) {
+      new cdk.CfnOutput(this, 'NextJsEdgeFunctionArn', {
+        value: edgeFunction.functionArn,
+        description: 'Lambda@Edge function ARN for Next.js middleware',
       });
     }
     
