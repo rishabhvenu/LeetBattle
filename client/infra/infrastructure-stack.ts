@@ -147,13 +147,13 @@ export class InfrastructureStack extends cdk.Stack {
         NODE_ENV: 'production',
         NEXT_PUBLIC_PFP_BUCKET_URL: `https://${avatarBucket.bucketName}.s3.${region}.amazonaws.com/`,
         S3_BUCKET_NAME: avatarBucket.bucketName,
-        // Note: AWS_REGION is automatically provided by Lambda runtime - don't set it manually
+        // Note: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN are
+        // automatically provided by Lambda runtime via IAM role - don't set them manually
         // Add all required environment variables
         MONGODB_URI: process.env.MONGODB_URI || '',
         NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
         NEXTAUTH_URL: process.env.NEXTAUTH_URL || '',
-        AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',
-        AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || '',
+        // AWS credentials are handled via IAM role (avatarBucket.grantReadWrite already configured)
         REDIS_HOST: process.env.REDIS_HOST || '',
         REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
         NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE || '',
