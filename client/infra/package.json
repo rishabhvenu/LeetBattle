@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "build": "tsc",
-    "deploy": "npx cdk deploy --all",
+    "deploy": "npx cdk deploy --all --require-approval never",
+    "deploy:interactive": "npx cdk deploy --all",
     "diff": "npx cdk diff",
     "synth": "npx cdk synth"
   },

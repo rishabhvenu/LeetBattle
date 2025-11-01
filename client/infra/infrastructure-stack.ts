@@ -177,7 +177,7 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // CloudFront origin for static assets (S3)
-    const staticOrigin = new cloudfrontOrigins.S3Origin(staticAssetsBucket);
+    const staticOrigin = new cloudfrontOrigins.S3BucketOrigin(staticAssetsBucket);
 
     // CloudFront origin for Lambda (SSR + API)
     // Extract hostname from Lambda Function URL
@@ -213,13 +213,11 @@ export class InfrastructureStack extends cdk.Stack {
 
       // Create DNS-validated certificate in us-east-1 (required for CloudFront)
       // Note: CloudFront certificates MUST be in us-east-1
-      // Using DnsValidatedCertificate which supports cross-region certificate creation
-      // If the stack is not in us-east-1, this will create the certificate in us-east-1 automatically
-      certificate = new acm.DnsValidatedCertificate(this, 'NextJsCertificate', {
+      // Using Certificate with DNS validation (replacement for deprecated DnsValidatedCertificate)
+      certificate = new acm.Certificate(this, 'NextJsCertificate', {
         domainName: rootDomainFull,
         subjectAlternativeNames: domainNames.length > 1 ? domainNames.slice(1) : undefined,
-        hostedZone: hostedZone,
-        region: 'us-east-1', // CloudFront requires certificates in us-east-1
+        validation: acm.CertificateValidation.fromDns(hostedZone),
       });
     }
 
