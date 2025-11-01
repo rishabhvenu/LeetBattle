@@ -246,7 +246,7 @@ export class InfrastructureStack extends cdk.Stack {
         // Add all required environment variables
         MONGODB_URI: process.env.MONGODB_URI || '',
         NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
-        NEXTAUTH_URL: process.env.NEXTAUTH_URL || '',
+        NEXTAUTH_URL: process.env.NEXTAUTH_URL || 'https://leetbattle.net',
         // AWS credentials are handled via IAM role (avatarBucket.grantReadWrite already configured)
         REDIS_HOST: process.env.REDIS_HOST || '',
         REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
@@ -393,7 +393,7 @@ export class InfrastructureStack extends cdk.Stack {
       certificate: certificate,
       domainNames: domainNames.length > 0 ? domainNames : undefined,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-      defaultRootObject: 'index.html',
+      // Don't set defaultRootObject - Next.js handles routing via Lambda
     });
 
     // Upload static assets from .next/static to S3 with CloudFront cache invalidation
