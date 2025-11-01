@@ -529,11 +529,14 @@ export class InfrastructureStack extends cdk.Stack {
     );
 
     // ===== Static Asset Deployment =====
+    // Note: BucketDeployment requires the bucket to exist before deployment
+    // If using IMPORT_EXISTING_STATIC_BUCKET=true, ensure the bucket exists and is accessible
 
     if (existsSync(assetsPath)) {
       // Check if assets directory has content before deploying
       const assetsFiles = require('fs').readdirSync(assetsPath);
       if (assetsFiles.length > 0) {
+        console.log(`Deploying ${assetsFiles.length} static assets from ${assetsPath} to ${staticAssetsBucket.bucketName}`);
         new s3deploy.BucketDeployment(this, 'DeployNextJsStaticAssets', {
           sources: [s3deploy.Source.asset(assetsPath)],
           destinationBucket: staticAssetsBucket,
@@ -550,10 +553,14 @@ export class InfrastructureStack extends cdk.Stack {
             '/favicon.ico',          // Favicon
             '/robots.txt',            // SEO robots file
           ],
+          // Add explicit error handling
+          memoryLimit: 512,
         });
       } else {
         console.warn(`Skipping static asset deployment: ${assetsPath} is empty`);
       }
+    } else {
+      console.warn(`Skipping static asset deployment: ${assetsPath} does not exist`);
     }
 
     // ===== Route53 Records =====
