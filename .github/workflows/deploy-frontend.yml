@@ -114,6 +114,8 @@ jobs:
           OPENNEXT_CACHE_REGION: us-east-1
           IMPORT_EXISTING_CACHE_BUCKET: 'true'
           NEXTJS_STATIC_BUCKET_NAME: ${{ vars.NEXTJS_STATIC_BUCKET_NAME }}
+          IMPORT_EXISTING_STATIC_BUCKET: 'true'
+          IMPORT_EXISTING_AVATAR_BUCKET: 'true'
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
         run: npx cdk deploy --all --require-approval never --context account=${{ secrets.AWS_ACCOUNT_ID }} --context region=us-east-1

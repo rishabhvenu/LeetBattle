@@ -58,41 +58,57 @@ export class InfrastructureStack extends cdk.Stack {
     // ===== S3 Buckets =====
 
     // S3 bucket for avatars with public read access via bucket policy
-    const avatarBucket = new s3.Bucket(this, 'AvatarsBucket', {
-      bucketName: process.env.S3_BUCKET_NAME || `codeclashers-avatars-${accountId}-${region}`,
-      cors: [
-        {
-          allowedHeaders: ['*'],
-          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.PUT, s3.HttpMethods.POST, s3.HttpMethods.DELETE],
-          allowedOrigins: ['*'],
-          exposedHeaders: ['ETag'],
-          maxAge: 86400,
-        },
-      ],
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      publicReadAccess: false,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      autoDeleteObjects: false,
-    });
+    const avatarBucketName = process.env.S3_BUCKET_NAME || `codeclashers-avatars-${accountId}-${region}`;
+    const shouldImportAvatarBucket = process.env.IMPORT_EXISTING_AVATAR_BUCKET === 'true';
+    
+    let avatarBucket: s3.IBucket;
+    if (shouldImportAvatarBucket) {
+      avatarBucket = s3.Bucket.fromBucketName(this, 'AvatarsBucket', avatarBucketName);
+    } else {
+      avatarBucket = new s3.Bucket(this, 'AvatarsBucket', {
+        bucketName: avatarBucketName,
+        cors: [
+          {
+            allowedHeaders: ['*'],
+            allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.PUT, s3.HttpMethods.POST, s3.HttpMethods.DELETE],
+            allowedOrigins: ['*'],
+            exposedHeaders: ['ETag'],
+            maxAge: 86400,
+          },
+        ],
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        publicReadAccess: false,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+        autoDeleteObjects: false,
+      });
+    }
 
     // Grant public read access via bucket policy (more secure than ACLs)
-    avatarBucket.addToResourcePolicy(
-      new iam.PolicyStatement({
-        sid: 'AllowPublicReadAccess',
-        effect: iam.Effect.ALLOW,
-        principals: [new iam.AnyPrincipal()],
-        actions: ['s3:GetObject'],
-        resources: [`${avatarBucket.bucketArn}/*`],
-      })
-    );
+    // Only add policy if bucket is managed by CDK (not imported)
+    if (!shouldImportAvatarBucket) {
+      (avatarBucket as s3.Bucket).addToResourcePolicy(
+        new iam.PolicyStatement({
+          sid: 'AllowPublicReadAccess',
+          effect: iam.Effect.ALLOW,
+          principals: [new iam.AnyPrincipal()],
+          actions: ['s3:GetObject'],
+          resources: [`${avatarBucket.bucketArn}/*`],
+        })
+      );
+    }
 
     // S3 bucket for Next.js static assets (OpenNext assets)
-    const staticAssetsBucket = new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
-      bucketName: process.env.NEXTJS_STATIC_BUCKET_NAME || `codeclashers-static-${accountId}-${region}`,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      autoDeleteObjects: false,
-    });
+    const staticBucketName = process.env.NEXTJS_STATIC_BUCKET_NAME || `codeclashers-static-${accountId}-${region}`;
+    const shouldImportStaticBucket = process.env.IMPORT_EXISTING_STATIC_BUCKET === 'true';
+    
+    const staticAssetsBucket = shouldImportStaticBucket
+      ? s3.Bucket.fromBucketName(this, 'NextJsStaticAssetsBucket', staticBucketName)
+      : new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
+          bucketName: staticBucketName,
+          blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+          removalPolicy: cdk.RemovalPolicy.RETAIN,
+          autoDeleteObjects: false,
+        });
 
     // S3 bucket for OpenNext incremental cache
     // If OPENNEXT_CACHE_BUCKET env var points to existing bucket, import it
