@@ -80,7 +80,6 @@ async function getNextServer() {
         // Use absolute path to ensure module resolution works correctly
         try {
           const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
-        const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
         console.log(`Attempting to require server.js from: ${absoluteServerPath}`);
         
         // Test if 'next' can be required before requiring server.js
