@@ -373,6 +373,13 @@ export class InfrastructureStack extends cdk.Stack {
           cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         },
+        // Public assets (favicon, images, etc.) - served from S3 root
+        'favicon.ico': {
+          origin: staticOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
         // API routes - no cache
         '/api/*': {
           origin: lambdaOrigin,
@@ -393,7 +400,8 @@ export class InfrastructureStack extends cdk.Stack {
       certificate: certificate,
       domainNames: domainNames.length > 0 ? domainNames : undefined,
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
-      defaultRootObject: 'index.html',
+      // Don't set defaultRootObject for Next.js - it uses dynamic routing
+      // CloudFront will forward all requests to Lambda which handles routing
     });
 
     // Upload static assets from .next/static to S3 with CloudFront cache invalidation
@@ -407,6 +415,24 @@ export class InfrastructureStack extends cdk.Stack {
         distribution: distribution,
         distributionPaths: ['/*'],
       });
+    }
+
+    // Upload public folder assets to S3 (favicon, images, etc.)
+    // These are served from root path in Next.js (e.g., /favicon.ico, /logo.png)
+    const publicAssetsPath = join(clientDir, 'public');
+    if (existsSync(publicAssetsPath)) {
+      new s3deploy.BucketDeployment(this, 'DeployPublicAssets', {
+        sources: [s3deploy.Source.asset(publicAssetsPath)],
+        destinationBucket: staticAssetsBucket,
+        destinationKeyPrefix: '', // Public files are at root
+        prune: true,
+        distribution: distribution,
+        distributionPaths: ['/*'],
+      });
+      
+      // Add CloudFront behavior for public assets (favicon, images, etc.)
+      // Note: This will be handled by additionalBehaviors or default behavior
+      // Files like /favicon.ico, /logo.png will be served from S3
     }
 
     // Route53 A records for all domain aliases (aliasing to CloudFront)

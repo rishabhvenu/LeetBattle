@@ -20,7 +20,8 @@ async function getNextServer() {
       const fs = await import('fs/promises');
       const pathModule = await import('path');
       const { createRequire } = await import('module');
-      const cjsRequire = createRequire(import.meta.url || __filename);
+      // Use __filename for CommonJS compatibility (NodejsFunction compiles to CommonJS)
+      const cjsRequire = createRequire(typeof __filename !== 'undefined' ? __filename : require.resolve('fs'));
       
       // Verify .next exists
       try {
