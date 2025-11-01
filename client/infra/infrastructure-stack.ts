@@ -266,10 +266,23 @@ export class InfrastructureStack extends cdk.Stack {
     
     const assetsPath = join(openNextDir, 'assets');
 
-    // Verify required paths exist
+    // Verify required paths exist and contain files
     if (!existsSync(assetsPath)) {
       throw new Error(
         `OpenNext assets directory not found at ${assetsPath}. ` +
+        `Please run 'npx open-next build' before deploying.`
+      );
+    }
+    
+    // Check if assets directory has content (readdirSync will throw if not a directory)
+    try {
+      const assetsFiles = require('fs').readdirSync(assetsPath);
+      if (assetsFiles.length === 0) {
+        console.warn(`Warning: Assets directory at ${assetsPath} is empty. Skipping static asset deployment.`);
+      }
+    } catch (error) {
+      throw new Error(
+        `OpenNext assets directory at ${assetsPath} is not accessible or is not a directory. ` +
         `Please run 'npx open-next build' before deploying.`
       );
     }
@@ -518,23 +531,29 @@ export class InfrastructureStack extends cdk.Stack {
     // ===== Static Asset Deployment =====
 
     if (existsSync(assetsPath)) {
-      new s3deploy.BucketDeployment(this, 'DeployNextJsStaticAssets', {
-        sources: [s3deploy.Source.asset(assetsPath)],
-        destinationBucket: staticAssetsBucket,
-        cacheControl: [
-          s3deploy.CacheControl.maxAge(cdk.Duration.days(30)),
-        ],
-        prune: true,
-        retainOnDelete: true,
-        distribution: distribution,
-        // Optimized: Only invalidate specific paths instead of everything
-        // Reduces CloudFront invalidation costs and deployment time
-        distributionPaths: [
-          '/_next/static/*',       // Next.js static chunks
-          '/favicon.ico',          // Favicon
-          '/robots.txt',            // SEO robots file
-        ],
-      });
+      // Check if assets directory has content before deploying
+      const assetsFiles = require('fs').readdirSync(assetsPath);
+      if (assetsFiles.length > 0) {
+        new s3deploy.BucketDeployment(this, 'DeployNextJsStaticAssets', {
+          sources: [s3deploy.Source.asset(assetsPath)],
+          destinationBucket: staticAssetsBucket,
+          cacheControl: [
+            s3deploy.CacheControl.maxAge(cdk.Duration.days(30)),
+          ],
+          prune: true,
+          retainOnDelete: true,
+          distribution: distribution,
+          // Optimized: Only invalidate specific paths instead of everything
+          // Reduces CloudFront invalidation costs and deployment time
+          distributionPaths: [
+            '/_next/static/*',       // Next.js static chunks
+            '/favicon.ico',          // Favicon
+            '/robots.txt',            // SEO robots file
+          ],
+        });
+      } else {
+        console.warn(`Skipping static asset deployment: ${assetsPath} is empty`);
+      }
     }
 
     // ===== Route53 Records =====
