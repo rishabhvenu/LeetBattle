@@ -76,15 +76,17 @@ export class InfrastructureStack extends cdk.Stack {
     // S3 bucket for avatars - using CloudFront/signed URLs instead of public access
     // Import existing bucket if specified, otherwise create new one
     // Buckets are accessed via CloudFront distribution (more secure than public S3 URLs)
-    const avatarBucketName = process.env.S3_BUCKET_NAME || `leetbattle-avatars-${region}`;
+    const avatarBucketName = process.env.S3_BUCKET_NAME;
     const shouldImportAvatarBucket = process.env.IMPORT_EXISTING_AVATAR_BUCKET === 'true';
     
     let avatarBucket: s3.IBucket;
-    if (shouldImportAvatarBucket) {
+    if (shouldImportAvatarBucket && avatarBucketName) {
       // Import existing bucket - CloudFormation won't manage it
       avatarBucket = s3.Bucket.fromBucketName(this, 'AvatarsBucket', avatarBucketName);
-    } else {
-      // Create new bucket - CloudFormation will manage it
+    } else if (avatarBucketName) {
+      // Create new bucket with explicit name - CloudFormation will manage it
+      // Note: This will fail if bucket already exists. If you get a bucket exists error,
+      // set IMPORT_EXISTING_AVATAR_BUCKET=true to import the existing bucket instead.
       avatarBucket = new s3.Bucket(this, 'AvatarsBucket', {
         bucketName: avatarBucketName,
         cors: [
@@ -119,46 +121,63 @@ export class InfrastructureStack extends cdk.Stack {
     // S3 bucket for Next.js static assets (OpenNext assets)
     // Import existing bucket if specified, otherwise create new one
     // Accessed via CloudFront with OAC (Origin Access Control) - no public access needed
-    const staticBucketName = process.env.NEXTJS_STATIC_BUCKET_NAME || `leetbattle-static-${region}`;
+    const staticBucketName = process.env.NEXTJS_STATIC_BUCKET_NAME;
     const shouldImportStaticBucket = process.env.IMPORT_EXISTING_STATIC_BUCKET === 'true';
     
-    const staticAssetsBucket = shouldImportStaticBucket
-      ? s3.Bucket.fromBucketName(this, 'NextJsStaticAssetsBucket', staticBucketName)
-      : new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
-          bucketName: staticBucketName,
-          blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-          removalPolicy: cdk.RemovalPolicy.RETAIN,
-          autoDeleteObjects: false,
-        });
+    let staticAssetsBucket: s3.IBucket;
+    if (shouldImportStaticBucket && staticBucketName) {
+      // Import existing bucket - CloudFormation won't manage it
+      staticAssetsBucket = s3.Bucket.fromBucketName(this, 'NextJsStaticAssetsBucket', staticBucketName);
+    } else if (staticBucketName) {
+      // Create new bucket with explicit name - CloudFormation will manage it
+      // Note: This will fail if bucket already exists. If you get a bucket exists error,
+      // set IMPORT_EXISTING_STATIC_BUCKET=true to import the existing bucket instead.
+      staticAssetsBucket = new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
+        bucketName: staticBucketName,
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+        autoDeleteObjects: false,
+      });
+    } else {
+      // No explicit name - let CDK auto-generate unique name to avoid conflicts
+      // This is safest for new deployments or when bucket might already exist
+      staticAssetsBucket = new s3.Bucket(this, 'NextJsStaticAssetsBucket', {
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+        autoDeleteObjects: false,
+      });
+    }
 
     // S3 bucket for OpenNext incremental cache
     // Import existing bucket if specified, otherwise create new one
     // Used for Next.js ISR (Incremental Static Regeneration) caching
     const explicitCacheBucketName = process.env.OPENNEXT_CACHE_BUCKET;
+    const shouldImportCacheBucket = process.env.IMPORT_EXISTING_CACHE_BUCKET === 'true';
     
     let cacheBucket: s3.IBucket;
-    if (explicitCacheBucketName) {
-      if (process.env.IMPORT_EXISTING_CACHE_BUCKET === 'true') {
-        // Import existing bucket - CloudFormation won't manage it
-        cacheBucket = s3.Bucket.fromBucketName(this, 'NextJsCacheBucket', explicitCacheBucketName);
-      } else {
-        // Create new bucket with explicit name - CloudFormation will manage it
-        cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
-          bucketName: explicitCacheBucketName,
-          blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-          removalPolicy: cdk.RemovalPolicy.RETAIN,
-          autoDeleteObjects: false,
-          // Lifecycle rule to clean up old cache entries
-          lifecycleRules: [
-            {
-              id: 'CleanupOldCache',
-              expiration: cdk.Duration.days(30),
-            },
-          ],
-        });
-      }
+    if (shouldImportCacheBucket && explicitCacheBucketName) {
+      // Import existing bucket - CloudFormation won't manage it
+      cacheBucket = s3.Bucket.fromBucketName(this, 'NextJsCacheBucket', explicitCacheBucketName);
+    } else if (explicitCacheBucketName) {
+      // Create new bucket with explicit name - CloudFormation will manage it
+      // Note: This will fail if bucket already exists. If you get a bucket exists error,
+      // set IMPORT_EXISTING_CACHE_BUCKET=true to import the existing bucket instead.
+      cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
+        bucketName: explicitCacheBucketName,
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+        autoDeleteObjects: false,
+        // Lifecycle rule to clean up old cache entries
+        lifecycleRules: [
+          {
+            id: 'CleanupOldCache',
+            expiration: cdk.Duration.days(30),
+          },
+        ],
+      });
     } else {
       // No explicit name - let CDK auto-generate unique name to avoid conflicts
+      // This is safest for new deployments or when bucket might already exist
       cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
