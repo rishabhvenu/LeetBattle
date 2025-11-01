@@ -80,7 +80,8 @@ jobs:
           if [ -d ".open-next-temp" ]; then
             ls -la .open-next-temp/ || true
             echo ""
-            # Handle nested structure (artifact might contain .open-next directory)
+            
+            # Find the actual .open-next directory - could be nested in artifact-named directory
             if [ -d ".open-next-temp/.open-next" ]; then
               echo "Found nested .open-next structure, moving contents"
               rm -rf client/.open-next || true
@@ -90,10 +91,21 @@ jobs:
               rm -rf client/.open-next || true
               mv .open-next-temp/client/.open-next client/.open-next
             else
-              echo "Artifact is at root level, moving to client/"
-              rm -rf client/.open-next || true
-              mkdir -p client
-              mv .open-next-temp client/.open-next
+              # Check if there's an artifact-named directory containing the .open-next structure
+              ARTIFACT_DIR=$(find .open-next-temp -maxdepth 1 -type d -name "open-next-artifacts-*" | head -1)
+              if [ -n "$ARTIFACT_DIR" ] && [ -d "$ARTIFACT_DIR" ]; then
+                echo "Found artifact directory: $ARTIFACT_DIR"
+                echo "Contents:"
+                ls -la "$ARTIFACT_DIR/" | head -10 || true
+                # The artifact directory IS the .open-next content (server-functions, etc. are directly inside)
+                rm -rf client/.open-next || true
+                mv "$ARTIFACT_DIR" client/.open-next
+              else
+                echo "Artifact is at root level, moving to client/"
+                rm -rf client/.open-next || true
+                mkdir -p client
+                mv .open-next-temp client/.open-next
+              fi
             fi
             rm -rf .open-next-temp
           fi
@@ -116,9 +128,17 @@ jobs:
               rm -rf client/.open-next || true
               mv .open-next-temp/client/.open-next client/.open-next
             else
-              rm -rf client/.open-next || true
-              mkdir -p client
-              mv .open-next-temp client/.open-next
+              # Check for artifact-named directory
+              ARTIFACT_DIR=$(find .open-next-temp -maxdepth 1 -type d -name "open-next-artifacts-*" | head -1)
+              if [ -n "$ARTIFACT_DIR" ] && [ -d "$ARTIFACT_DIR" ]; then
+                echo "Found artifact directory: $ARTIFACT_DIR"
+                rm -rf client/.open-next || true
+                mv "$ARTIFACT_DIR" client/.open-next
+              else
+                rm -rf client/.open-next || true
+                mkdir -p client
+                mv .open-next-temp client/.open-next
+              fi
             fi
             rm -rf .open-next-temp
           fi
