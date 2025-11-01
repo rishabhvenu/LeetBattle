@@ -22,6 +22,12 @@
         ],
       });
 
+      const api = new sst.aws.Api("api", {
+        routes: {
+          "GET /health": "packages/functions/src/health.handler",
+        },
+      });
+
       const site = new sst.aws.Nextjs("site", {
         domain: {
           name: "leetbattle.net",
@@ -45,6 +51,8 @@
           COLYSEUS_HOST_IP: process.env.COLYSEUS_HOST_IP || "",
         },
       });
+
+      sst.link(api);
 
       // Note: Route53 A record for Colyseus is created outside SST via AWS CLI in GitHub Actions
       
