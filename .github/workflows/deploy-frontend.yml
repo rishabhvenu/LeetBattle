@@ -1,4 +1,4 @@
-name: Deploy Frontend to AWS (SST)
+name: Deploy Frontend to AWS (CDK)
 
 on:
   push:
@@ -30,6 +30,10 @@ jobs:
         working-directory: ./client
         run: npm ci
 
+      - name: Install CDK dependencies
+        working-directory: ./client/infra
+        run: npm ci
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -37,98 +41,25 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Install SST
-        run: npm install -g sst
-
-      - name: Unlock SST (in case of stuck deployment)
-        working-directory: ./client
-        run: npx sst unlock --stage production || true
-
-      - name: Debug environment variables
+      - name: Bootstrap CDK (if needed)
         run: |
-          echo "COLYSEUS_DOMAIN=${COLYSEUS_DOMAIN}"
-          echo "COLYSEUS_HOST_IP=${COLYSEUS_HOST_IP}"
+          cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1 || echo "Bootstrap already done or failed"
         env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        working-directory: ./client/infra
+
+      - name: Deploy infrastructure with CDK
+        working-directory: ./client/infra
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: us-east-1
+          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
+        run: npm run deploy
 
-      - name: Setup Route53 A record for Colyseus
+      - name: Output deployment URLs
         run: |
-          # Create Route53 A record for Colyseus if configured
-          if [ -n "${COLYSEUS_DOMAIN}" ] && [ -n "${COLYSEUS_HOST_IP}" ] && [ -n "${ROUTE53_HOSTED_ZONE_ID}" ]; then
-            echo "Creating A record for ${COLYSEUS_DOMAIN}.leetbattle.net -> ${COLYSEUS_HOST_IP}"
-            
-            # Check if record already exists
-            existing_record=$(aws route53 list-resource-record-sets \
-              --hosted-zone-id "${ROUTE53_HOSTED_ZONE_ID}" \
-              --query "ResourceRecordSets[?Name=='${COLYSEUS_DOMAIN}.leetbattle.net.']" \
-              --output json || echo "[]")
-            
-            if echo "$existing_record" | grep -q "ResourceRecord"; then
-              echo "Record already exists, updating..."
-              action="UPSERT"
-            else
-              echo "Record doesn't exist, creating..."
-              action="CREATE"
-            fi
-            
-            # Create/Update the A record
-            cat > /tmp/record-change.json <<EOF
-          {
-            "Changes": [
-              {
-                "Action": "${action}",
-                "ResourceRecordSet": {
-                  "Name": "${COLYSEUS_DOMAIN}.leetbattle.net",
-                  "Type": "A",
-                  "TTL": 300,
-                  "ResourceRecords": [
-                    {
-                      "Value": "${COLYSEUS_HOST_IP}"
-                    }
-                  ]
-                }
-              }
-            ]
-          }
-          EOF
-            
-            aws route53 change-resource-record-sets \
-              --hosted-zone-id "${ROUTE53_HOSTED_ZONE_ID}" \
-              --change-batch file:///tmp/record-change.json
-            
-            echo "✅ Route53 A record created/updated successfully"
-          else
-            echo "Skipping Route53 record creation (COLYSEUS_DOMAIN, COLYSEUS_HOST_IP, or ROUTE53_HOSTED_ZONE_ID not set)"
-          fi
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
-          COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
-          COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
-          ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
-
-      - name: Deploy with SST
-        working-directory: ./client
-        env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
-          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-          NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
-          NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: ${{vars.AWS_REGION}}
-          REDIS_HOST: ${{ vars.REDIS_HOST }}
-          REDIS_PORT: ${{ vars.REDIS_PORT }}
-          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
-          COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
-          ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
-        run: npx sst deploy --stage production
-
-      - name: Output deployment URL
-        run: echo "Frontend deployed! Check the CloudFront URL in the logs above."
+          echo "✅ Infrastructure deployed successfully!"
+          echo "Check AWS Console for deployed resources"
