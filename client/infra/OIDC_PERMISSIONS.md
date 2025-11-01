@@ -85,6 +85,14 @@ Add this inline JSON policy to the IAM role specified in `AWS_ROLE_ARN`:
         "sns:SetTopicAttributes"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/cdk-bootstrap/*"
     }
   ]
 }
