@@ -103,10 +103,12 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // S3 bucket for CloudFront logs
+    // CloudFront logs require ACLs to be enabled (legacy requirement)
     const cloudFrontLogsBucket = new s3.Bucket(this, 'CloudFrontLogs', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      objectOwnership: s3.ObjectOwnership.BUCKET_OWNER_PREFERRED, // Required for CloudFront logs (ACLs)
       lifecycleRules: [
         {
           expiration: cdk.Duration.days(90),
@@ -288,6 +290,8 @@ export class InfrastructureStack extends cdk.Stack {
 
     // ===== CloudFront Origins =====
 
+    // Note: S3Origin is deprecated but still functional
+    // Will need to migrate to S3BucketOrigin in future CDK versions
     const staticOrigin = new cloudfrontOrigins.S3Origin(staticAssetsBucket);
 
     // Extract Lambda Function URL domain for CloudFront origin
