@@ -133,24 +133,16 @@ export class InfrastructureStack extends cdk.Stack {
             const standalonePath = join(clientDir, '.next', 'standalone');
             if (existsSync(standalonePath)) {
               // Copy ALL contents of standalone directory including hidden files/directories
-              // Use rsync or cp with proper flags to include .next/ and other hidden dirs
+              // Use tar, rsync, or cp with proper flags to include .next/ and other hidden dirs
               // This ensures server.js, .next/, node_modules/, public/ are all at /var/task/
+              // Combine the entire copy operation into a single bash command to avoid syntax errors
+              const copyCommand = `(cd ${standalonePath} && tar -cf - . | (cd ${outputDir} && tar -xf -)) || (if command -v rsync >/dev/null 2>&1; then rsync -av --exclude='.git' ${standalonePath}/ ${outputDir}/; else echo "Using cp fallback..."; shopt -s dotglob 2>/dev/null || true; cp -r ${standalonePath}/* ${outputDir}/ 2>/dev/null || true; cp -r ${standalonePath}/.[!.]* ${outputDir}/ 2>/dev/null || true; fi)`;
+              
               return [
                 `echo "Copying Next.js standalone build from ${standalonePath} to ${outputDir}"`,
                 `echo "Contents of standalone directory:"`,
                 `ls -la ${standalonePath} || echo "Failed to list standalone directory"`,
-                // Use tar to preserve all files including hidden directories like .next
-                `cd ${standalonePath} && tar -cf - . | (cd ${outputDir} && tar -xf -) || {`,
-                `  echo "Tar failed, trying rsync..."`,
-                `  if command -v rsync &> /dev/null; then`,
-                `    rsync -av --exclude='.git' ${standalonePath}/ ${outputDir}/ || exit 1`,
-                `  else`,
-                `    echo "Neither tar nor rsync available, using cp..."`,
-                `    shopt -s dotglob || true`,
-                `    cp -r ${standalonePath}/* ${outputDir}/ 2>/dev/null || true`,
-                `    cp -r ${standalonePath}/.[!.]* ${outputDir}/ 2>/dev/null || true`,
-                `  fi`,
-                `}`,
+                copyCommand,
                 `echo "Verifying files after copy:"`,
                 `ls -la ${outputDir}/server.js || echo "ERROR: server.js not found!"`,
                 `ls -d ${outputDir}/.next 2>/dev/null && echo "✓ .next directory copied" || echo "✗ .next directory missing"`,
