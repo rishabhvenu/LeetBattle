@@ -24,8 +24,9 @@ export class InfrastructureStack extends cdk.Stack {
           maxAge: 86400,
         },
       ],
-      publicReadAccess: true,
+      objectOwnership: s3.ObjectOwnership.OBJECT_WRITER,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_NONE,
+      publicReadAccess: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
