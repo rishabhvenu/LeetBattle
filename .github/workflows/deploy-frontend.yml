@@ -226,7 +226,7 @@ jobs:
             
             echo ""
             echo "════════════════════════════════════════"
-            echo "CDK Bootstrap Output:"
+            echo "CDK Bootstrap Output (First Attempt):"
             echo "════════════════════════════════════════"
             echo "$BOOTSTRAP_OUTPUT"
             echo "════════════════════════════════════════"
@@ -240,15 +240,88 @@ jobs:
             
             # Check if bootstrap said "no changes"
             BOOTSTRAP_NO_CHANGES=false
-            if echo "$BOOTSTRAP_OUTPUT" | grep -qi "no changes"; then
+            if echo "$BOOTSTRAP_OUTPUT" | grep -qi "no changes\|skipping deployment"; then
               BOOTSTRAP_NO_CHANGES=true
-              echo "⚠️  Bootstrap reported 'no changes'"
+              echo "⚠️  Bootstrap reported 'no changes' or 'skipping deployment'"
+              
+              # If bucket doesn't exist but bootstrap says no changes, force update
+              if [ "$BUCKET_EXISTS" = false ]; then
+                echo ""
+                echo "⚠️  CORRUPTED STATE DETECTED: Stack says bucket exists but it doesn't"
+                echo "   Attempting to force bootstrap to fix corrupted state..."
+                echo ""
+                echo "🔄 Executing CDK bootstrap with --force flag..."
+                
+                set +e
+                BOOTSTRAP_OUTPUT=$(npx cdk bootstrap \
+                  aws://$AWS_ACCOUNT_ID/$AWS_REGION \
+                  --require-approval never \
+                  --force \
+                  --verbose 2>&1)
+                BOOTSTRAP_EXIT_CODE=$?
+                set -e
+                
+                echo ""
+                echo "════════════════════════════════════════"
+                echo "CDK Bootstrap Output (Force Attempt):"
+                echo "════════════════════════════════════════"
+                echo "$BOOTSTRAP_OUTPUT"
+                echo "════════════════════════════════════════"
+                echo "Exit Code: $BOOTSTRAP_EXIT_CODE"
+                echo ""
+                
+                if [ $BOOTSTRAP_EXIT_CODE -ne 0 ]; then
+                  echo "❌ Force bootstrap failed with exit code $BOOTSTRAP_EXIT_CODE"
+                  echo "   This may require manual intervention"
+                  exit 1
+                fi
+                
+                # Check again if bootstrap said no changes after force
+                if echo "$BOOTSTRAP_OUTPUT" | grep -qi "no changes\|skipping deployment"; then
+                  echo "⚠️  Force bootstrap still reports no changes"
+                  echo "   This indicates CloudFormation needs manual intervention"
+                else
+                  echo "✅ Force bootstrap completed - stack should be updating"
+                  BOOTSTRAP_NO_CHANGES=false  # Reset flag since we forced an update
+                  echo ""
+                  echo "⏳ Waiting for CloudFormation stack update to complete..."
+                  echo "   (This may take a minute for bucket creation)"
+                  sleep 10  # Wait for CloudFormation to start the update
+                  
+                  # Wait for stack to finish updating (max 5 minutes)
+                  TIMEOUT=300
+                  ELAPSED=0
+                  while [ $ELAPSED -lt $TIMEOUT ]; do
+                    STACK_STATUS=$(aws cloudformation describe-stacks \
+                      --stack-name "$CDK_TOOLKIT_STACK" \
+                      --region "$AWS_REGION" \
+                      --query 'Stacks[0].StackStatus' \
+                      --output text 2>/dev/null || echo "UNKNOWN")
+                    
+                    if echo "$STACK_STATUS" | grep -q "COMPLETE"; then
+                      echo "   ✅ Stack update complete: $STACK_STATUS"
+                      break
+                    elif echo "$STACK_STATUS" | grep -q "FAILED\|ROLLBACK"; then
+                      echo "   ❌ Stack update failed: $STACK_STATUS"
+                      break
+                    else
+                      echo "   ⏳ Stack status: $STACK_STATUS (waiting...)"
+                      sleep 10
+                      ELAPSED=$((ELAPSED + 10))
+                    fi
+                  done
+                  
+                  if [ $ELAPSED -ge $TIMEOUT ]; then
+                    echo "   ⚠️  Timeout waiting for stack update"
+                  fi
+                fi
+              fi
             fi
             
             # Check CDKToolkit stack status after bootstrap
             echo ""
             echo "📊 Checking CDKToolkit stack status AFTER bootstrap..."
-            sleep 2  # Wait a moment for stack updates to propagate
+            sleep 3  # Wait a moment for stack updates to propagate
             
             STACK_AFTER_STATUS=$(aws cloudformation describe-stacks \
               --stack-name "$CDK_TOOLKIT_STACK" \
