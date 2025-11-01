@@ -159,7 +159,7 @@ export class InfrastructureStack extends cdk.Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'handler',
       entry: join(currentDir, 'lambda-handler.ts'),
-      bundling: {
+        bundling: {
         // Bundle the Lambda handler but don't bundle Next.js dependencies
         // Next.js standalone build will be copied alongside the handler
         externalModules: [
@@ -168,6 +168,8 @@ export class InfrastructureStack extends cdk.Stack {
           '@next/env',
           '@swc/helpers',
         ],
+        // Don't bundle server.js - it will be available at runtime from standalone build
+        nodeModules: [],
         minify: true,
         sourceMap: true,
         // Copy the entire Next.js standalone build to the Lambda package
