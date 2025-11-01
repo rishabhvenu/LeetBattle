@@ -47,18 +47,23 @@ async function getNextServer() {
         // Initialize Next.js app in production mode
         // Point it to the standalone build directory
         const nextDir = pathModule.resolve(process.cwd(), '.next');
-        console.log('[INIT] Initializing Next.js app with dir:', nextDir);
+        console.log('[INIT] Initializing Next.js app with dir:', process.cwd());
         
+        // Initialize Next.js - don't specify custom config, let it auto-detect
         nextApp = nextModule.default({
           dev: false,
           dir: process.cwd(),
-          conf: {
-            distDir: '.next',
-          },
         });
         
-        console.log('[INIT] Next.js app initialized, preparing...');
-        await nextApp.prepare();
+        console.log('[INIT] Next.js app created, calling prepare() with timeout...');
+        
+        // Wrap prepare() with timeout to detect if it's hanging
+        const preparePromise = nextApp.prepare();
+        const prepareTimeout = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('nextApp.prepare() timeout after 20s')), 20000);
+        });
+        
+        await Promise.race([preparePromise, prepareTimeout]);
         console.log('[INIT] ✓ Next.js app prepared successfully');
         
         // Get the request handler
