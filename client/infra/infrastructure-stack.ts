@@ -116,6 +116,37 @@ export class InfrastructureStack extends cdk.Stack {
           },
         ],
       });
+    } else {
+      // No explicit name - let CDK auto-generate unique name to avoid conflicts
+      // This is safest for new deployments or when bucket might already exist
+      avatarBucket = new s3.Bucket(this, 'AvatarsBucket', {
+        cors: [
+          {
+            allowedHeaders: ['*'],
+            allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.PUT, s3.HttpMethods.POST, s3.HttpMethods.DELETE],
+            allowedOrigins: ['*'],
+            exposedHeaders: ['ETag'],
+            maxAge: 86400,
+          },
+        ],
+        // Secure: Block all public access - avatars accessed via CloudFront or signed URLs
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        publicReadAccess: false,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+        autoDeleteObjects: false,
+        // Lifecycle rule to transition old avatars to cheaper storage
+        lifecycleRules: [
+          {
+            id: 'TransitionOldAvatars',
+            transitions: [
+              {
+                storageClass: s3.StorageClass.INFREQUENT_ACCESS,
+                transitionAfter: cdk.Duration.days(90),
+              },
+            ],
+          },
+        ],
+      });
     }
 
     // S3 bucket for Next.js static assets (OpenNext assets)
