@@ -46,25 +46,11 @@
         },
       });
 
-      // Note: SST v3 doesn't have a Record component in sst.aws namespace
-      // Create A record manually using AWS CLI or Console:
-      // aws route53 change-resource-record-sets --hosted-zone-id <ZONE_ID> --change-batch '{
-      //   "Changes": [{
-      //     "Action": "UPSERT",
-      //     "ResourceRecordSet": {
-      //       "Name": "matchmaker.leetbattle.net",
-      //       "Type": "A",
-      //       "TTL": 300,
-      //       "ResourceRecords": [{"Value": "40.233.103.179"}]
-      //     }
-      //   }]
-      // }'
-      let colyseusRecord = null;
-
+      // Note: S3 bucket and Route53 A record are created outside SST via AWS CLI in GitHub Actions
+      
       return {
         siteUrl: site.url,
         bucketName: avatarBucket.name,
-        colyseusUrl: colyseusRecord?.url || process.env.COLYSEUS_HOST_IP,
       };
     },
   });
