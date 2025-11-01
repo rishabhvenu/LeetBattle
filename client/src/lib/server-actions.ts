@@ -1,7 +1,10 @@
 'use server';
 
+// Runtime is Node.js by default in Lambda deployment
+// Removed runtime export - Next.js 15 doesn't allow non-function exports in "use server" files
+
 import { redirect } from 'next/navigation';
-import { cookies } from 'next/headers';
+// Note: cookies() usage moved to session-edge.ts for Edge compatibility
 import bcrypt from 'bcryptjs';
 import { generatePresignedUrl } from './minio';
 import { REST_ENDPOINTS } from '../constants/RestEndpoints';
@@ -40,32 +43,19 @@ async function getTryToObjectId() {
 // This is a simplified version - you'll need to copy all functions from the original file
 
 export async function getSession() {
-  const cookieStore = await cookies();
-  const sessionId = cookieStore.get('session')?.value;
+  // Use the Edge-compatible session system
+  const { getSession: getSessionImpl } = await import('./session');
+  const sessionData = await getSessionImpl();
   
-  if (!sessionId) {
+  if (!sessionData.authenticated) {
     return null;
   }
 
-  try {
-    const client = await getMongoClient();
-    const db = client.db(process.env.DB_NAME || 'codeclashers');
-    const sessions = db.collection('sessions');
-    
-    const session = await sessions.findOne({ _id: sessionId as unknown });
-    if (!session) {
-      return null;
-    }
-
-    return {
-      id: sessionId,
-      userId: session.userId,
-      user: session.user
-    };
-  } catch (error) {
-    console.error('Session error:', error);
-    return null;
-  }
+  return {
+    id: sessionData.userId || '',
+    userId: sessionData.userId || '',
+    user: sessionData.user
+  };
 }
 
 // Rounding function for stats display
