@@ -14,38 +14,72 @@ let nextServer: any = null;
 async function getNextServer() {
   if (!nextServer) {
     try {
-      console.log(`Attempting to import Next.js server from: ${NEXT_SERVER_PATH}`);
-      console.log(`Current working directory: ${process.cwd()}`);
+      console.log(`[INIT] Starting Next.js server initialization...`);
+      console.log(`[INIT] Current working directory: ${process.cwd()}`);
       
       // Check if .next directory exists
       const fs = await import('fs/promises');
+      const pathModule = await import('path');
+      
       try {
         const nextDirStat = await fs.stat('./.next');
-        console.log('✓ .next directory exists:', nextDirStat.isDirectory());
+        console.log('[INIT] ✓ .next directory exists');
       } catch (statError) {
-        console.error('✗ .next directory not found!');
-        console.error('Directory contents:', await fs.readdir('.').catch(() => []));
+        console.error('[INIT] ✗ .next directory not found!');
+        const dirContents = await fs.readdir('.').catch(() => []);
+        console.error('[INIT] Directory contents:', dirContents.slice(0, 10));
       }
       
-      // Check if server.js exists before importing
-      try {
-        const serverJsStat = await fs.stat(NEXT_SERVER_PATH);
-        console.log(`✓ server.js found at ${NEXT_SERVER_PATH}, size: ${serverJsStat.size} bytes`);
-      } catch (statError) {
-        console.error(`✗ server.js not found at ${NEXT_SERVER_PATH}!`);
-        console.error('Current directory:', process.cwd());
-        console.error('Directory contents:', await fs.readdir('.').catch(() => []));
-        throw new Error(`Next.js server.js not found at ${NEXT_SERVER_PATH}. Make sure the standalone build is copied correctly.`);
-      }
+      // Try to use Next.js programmatically instead of requiring server.js
+      // This avoids blocking issues with server.js initialization
+      console.log('[INIT] Attempting to use Next.js programmatically...');
       
-      // Import the Next.js server from standalone build
-      // Next.js standalone server.js can export in different ways depending on version
-      let serverModule: any;
+      // First verify we can require 'next'
+      const { createRequire } = await import('module');
+      const cjsRequire = createRequire(import.meta.url || __filename);
       
-      // Try CommonJS require first (Next.js standalone typically uses CommonJS)
-      // Use absolute path to ensure module resolution works correctly
+      console.log('[INIT] Testing module resolution...');
+      let nextApp: any;
       try {
-        const pathModule = await import('path');
+        const nextModule = cjsRequire('next');
+        console.log('[INIT] ✓ Successfully required "next" module');
+        
+        // Initialize Next.js app in production mode
+        // Point it to the standalone build directory
+        const nextDir = pathModule.resolve(process.cwd(), '.next');
+        console.log('[INIT] Initializing Next.js app with dir:', nextDir);
+        
+        nextApp = nextModule.default({
+          dev: false,
+          dir: process.cwd(),
+          conf: {
+            distDir: '.next',
+          },
+        });
+        
+        console.log('[INIT] Next.js app initialized, preparing...');
+        await nextApp.prepare();
+        console.log('[INIT] ✓ Next.js app prepared successfully');
+        
+        // Get the request handler
+        nextServer = nextApp.getRequestHandler();
+        console.log('[INIT] ✓ Got request handler from Next.js app');
+        
+      } catch (nextError) {
+        console.error('[INIT] Failed to use Next.js programmatically:', nextError);
+        console.error('[INIT] Error details:', {
+          message: nextError instanceof Error ? nextError.message : String(nextError),
+          stack: nextError instanceof Error ? nextError.stack : undefined,
+        });
+        console.error('[INIT] Falling back to requiring server.js...');
+        
+        // Fallback: try to require server.js
+        let serverModule: any;
+      
+        // Try CommonJS require first (Next.js standalone typically uses CommonJS)
+        // Use absolute path to ensure module resolution works correctly
+        try {
+          const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
         const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
         console.log(`Attempting to require server.js from: ${absoluteServerPath}`);
         
@@ -486,19 +520,20 @@ async function getNextServer() {
         }
       }
       
-      // Final check after all processing
-      if (typeof handler !== 'function') {
-        throw new Error(`Next.js handler processing failed. Final type: ${typeof handler}, value: ${JSON.stringify(handler ? Object.keys(handler) : 'null')}`);
+        // Final check after all processing
+        if (typeof handler !== 'function') {
+          throw new Error(`Next.js handler processing failed. Final type: ${typeof handler}, value: ${JSON.stringify(handler ? Object.keys(handler) : 'null')}`);
+        }
+        
+        console.log('[INIT] Handler type after processing:', typeof handler);
+        console.log('[INIT] Handler name:', handler.name || 'anonymous');
+        
+        // Next.js standalone server exports a request handler function
+        // that expects Node.js IncomingMessage/ServerResponse
+        nextServer = handler;
+        
+        console.log('[INIT] ✓ Next.js server initialized via server.js');
       }
-      
-      console.log('Handler type after processing:', typeof handler);
-      console.log('Handler name:', handler.name || 'anonymous');
-      
-      // Next.js standalone server exports a request handler function
-      // that expects Node.js IncomingMessage/ServerResponse
-      nextServer = handler;
-      
-      console.log('Next.js server initialized');
     } catch (error) {
       console.error('Failed to load Next.js server:', error);
       console.error('Error details:', {
