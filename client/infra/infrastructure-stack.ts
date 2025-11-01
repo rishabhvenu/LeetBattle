@@ -203,12 +203,29 @@ export class InfrastructureStack extends cdk.Stack {
             }
           },
           afterBundling(inputDir: string, outputDir: string): string[] {
-            // Verify the standalone files are in place after bundling
+            // After bundling, re-copy node_modules from standalone build
+            // The bundler might have removed or processed it incorrectly
+            const standalonePath = join(clientDir, '.next', 'standalone');
+            
             return [
-              `echo "Verifying Next.js standalone files after bundling:"`,
+              `echo "=== After Bundling Verification ==="`,
+              `echo "Checking standalone path: ${standalonePath}"`,
+              `ls -la ${standalonePath}/node_modules 2>/dev/null | head -5 || echo "Standalone node_modules not found"`,
+              `echo "Checking output directory before fix:"`,
+              `ls -d ${outputDir}/node_modules 2>/dev/null && echo "✓ node_modules exists" || echo "✗ node_modules missing"`,
+              `echo "Re-copying node_modules from standalone build..."`,
+              existsSync(standalonePath)
+                ? `(cd ${standalonePath} && tar -cf - node_modules | (cd ${outputDir} && tar -xf -)) && echo "✓ node_modules copied via tar" || (cp -r ${standalonePath}/node_modules ${outputDir}/ 2>&1 && echo "✓ node_modules copied via cp" || echo "✗ node_modules copy failed")`
+                : `echo "✗ Standalone path not found"`,
+              `echo "Verifying after re-copy:"`,
+              `ls -d ${outputDir}/node_modules 2>/dev/null && echo "✓ node_modules directory exists" || echo "✗ node_modules directory missing"`,
+              `ls -d ${outputDir}/node_modules/next 2>/dev/null && echo "✓ next package found" || echo "✗ next package missing"`,
+              `ls -d ${outputDir}/node_modules/react 2>/dev/null && echo "✓ react package found" || echo "✗ react package missing"`,
+              `echo "Verifying other standalone files:"`,
               `ls -la ${outputDir}/server.js && echo "✓ server.js found" || echo "✗ server.js missing"`,
-              `ls -d ${outputDir}/.next && echo "✓ .next directory found" || echo "✗ .next directory missing"`,
-              `ls -d ${outputDir}/node_modules && echo "✓ node_modules found" || echo "✗ node_modules missing"`,
+              `ls -d ${outputDir}/.next 2>/dev/null && echo "✓ .next directory found" || echo "✗ .next directory missing"`,
+              `echo "Final output directory structure:"`,
+              `find ${outputDir} -maxdepth 1 -type d | head -10 || true`,
             ];
           },
           beforeInstall(): string[] {
