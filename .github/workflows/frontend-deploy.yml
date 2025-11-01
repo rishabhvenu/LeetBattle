@@ -198,11 +198,13 @@ jobs:
 
       - name: Fetch hosted zone name (if ID provided)
         id: hosted-zone
-        if: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
         run: |
-          if [ -z "${{ vars.ROUTE53_HOSTED_ZONE_NAME }}" ] && [ -n "${{ secrets.ROUTE53_HOSTED_ZONE_ID }}" ]; then
+          ROUTE53_HOSTED_ZONE_ID="${{ secrets.ROUTE53_HOSTED_ZONE_ID }}"
+          ROUTE53_HOSTED_ZONE_NAME="${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
+          
+          if [ -z "$ROUTE53_HOSTED_ZONE_NAME" ] && [ -n "$ROUTE53_HOSTED_ZONE_ID" ]; then
             echo "Fetching hosted zone name from ID..."
-            ZONE_NAME=$(aws route53 get-hosted-zone --id "${{ secrets.ROUTE53_HOSTED_ZONE_ID }}" --query 'HostedZone.Name' --output text 2>/dev/null | sed 's/\.$//' || echo "")
+            ZONE_NAME=$(aws route53 get-hosted-zone --id "$ROUTE53_HOSTED_ZONE_ID" --query 'HostedZone.Name' --output text 2>/dev/null | sed 's/\.$//' || echo "")
             if [ -n "$ZONE_NAME" ]; then
               echo "name=$ZONE_NAME" >> $GITHUB_OUTPUT
               echo "✅ Found hosted zone name: $ZONE_NAME"
@@ -210,8 +212,12 @@ jobs:
               echo "⚠️  Could not fetch hosted zone name, will use default 'leetbattle.net'"
               echo "name=leetbattle.net" >> $GITHUB_OUTPUT
             fi
+          elif [ -n "$ROUTE53_HOSTED_ZONE_NAME" ]; then
+            echo "name=$ROUTE53_HOSTED_ZONE_NAME" >> $GITHUB_OUTPUT
+            echo "✅ Using provided hosted zone name: $ROUTE53_HOSTED_ZONE_NAME"
           else
-            echo "name=${{ vars.ROUTE53_HOSTED_ZONE_NAME }}" >> $GITHUB_OUTPUT
+            echo "name=leetbattle.net" >> $GITHUB_OUTPUT
+            echo "⚠️  No hosted zone name or ID provided, using default 'leetbattle.net'"
           fi
 
       - name: Debug domain configuration
