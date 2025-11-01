@@ -47,6 +47,21 @@ jobs:
           echo "Head SHA: ${{ github.event.workflow_run.head_sha }}"
           echo "Current SHA: ${{ github.sha }}"
           echo "Expected artifact name: open-next-artifacts-${{ github.event.workflow_run.head_sha }}"
+          
+      - name: List downloaded artifacts
+        if: always()
+        run: |
+          echo "=== Current directory structure ==="
+          pwd
+          ls -la || true
+          echo ""
+          echo "=== client/ directory ==="
+          ls -la client/ || true
+          echo ""
+          if [ -d "client/.open-next" ]; then
+            echo "=== client/.open-next exists ==="
+            du -sh client/.open-next || true
+          fi
 
       - name: Download OpenNext build artifacts (from workflow_run)
         if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
@@ -65,13 +80,30 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: client/.open-next
 
-      - name: 'Guard: Verify .open-next directory'
+      - name: 'Guard: Verify .open-next directory structure'
         run: |
           if [ ! -d "client/.open-next" ]; then
             echo "Error: .open-next missing. For manual runs, set 'artifact_name' to a valid artifact name."
             exit 1
           fi
-          echo "Verified .open-next artifacts"
+          echo "=== .open-next directory structure ==="
+          ls -la client/.open-next/ || true
+          echo ""
+          echo "=== Checking for server function paths ==="
+          if [ -d "client/.open-next/server-functions/default" ]; then
+            echo "✅ Found: client/.open-next/server-functions/default"
+            ls -la client/.open-next/server-functions/default/ | head -10 || true
+          elif [ -d "client/.open-next/server-function" ]; then
+            echo "✅ Found: client/.open-next/server-function"
+            ls -la client/.open-next/server-function/ | head -10 || true
+          else
+            echo "❌ Error: Neither server-functions/default nor server-function found"
+            echo "Available directories:"
+            find client/.open-next -maxdepth 2 -type d | head -20
+            exit 1
+          fi
+          echo ""
+          echo "✅ Verified .open-next artifacts structure"
 
       - name: Install CDK dependencies
         working-directory: ./client/infra
