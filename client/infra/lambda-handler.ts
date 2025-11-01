@@ -85,18 +85,49 @@ async function getNextServer() {
         console.log('[INIT] Exports:', Object.keys(serverModule));
         
         // Extract handler from serverModule
-        let handler = serverModule.default || serverModule.handler || serverModule;
+        // Next.js standalone server.js might export different patterns
+        let handler: any = null;
+        
+        // Try all possible export patterns
+        if (typeof serverModule === 'function') {
+          handler = serverModule;
+        } else if (serverModule.default) {
+          handler = serverModule.default;
+        } else if (serverModule.handler) {
+          handler = serverModule.handler;
+        } else {
+          handler = serverModule;
+        }
+        
+        // If handler is still not a function, check if it's an object with methods
+        if (typeof handler !== 'function') {
+          console.log('[INIT] Handler is object, checking for methods...', Object.keys(handler || {}));
+          
+          // Try common Next.js patterns
+          if (handler && typeof handler.getRequestHandler === 'function') {
+            handler = handler.getRequestHandler();
+          } else if (handler && typeof handler.handle === 'function') {
+            handler = handler.handle;
+          } else if (handler && typeof handler.request === 'function') {
+            handler = handler.request;
+          } else {
+            // Check all properties
+            for (const key of Object.keys(handler || {})) {
+              if (typeof handler[key] === 'function') {
+                handler = handler[key];
+                console.log(`[INIT] Using handler.${key}`);
+                break;
+              }
+            }
+          }
+        }
         
         if (typeof handler === 'function') {
           nextServer = handler;
           console.log('[INIT] ✓ Handler extracted from server.js');
           return nextServer;
-        } else if (handler && typeof handler.getRequestHandler === 'function') {
-          nextServer = handler.getRequestHandler();
-          console.log('[INIT] ✓ Handler via getRequestHandler()');
-          return nextServer;
         } else {
-          throw new Error(`server.js exports unusable handler. Type: ${typeof handler}`);
+          throw new Error(`server.js exports unusable handler. Type: ${typeof handler}, keys: ${Object.keys(handler || {}).join(', ')}`);
         }
       } catch (requireError) {
         console.error('[INIT] Strategy 1 failed:', requireError);
@@ -105,8 +136,20 @@ async function getNextServer() {
         // Strategy 2: Use Next.js programmatically
         try {
           const nextModule = cjsRequire('next');
-          const nextApp = nextModule.default({ dev: false, dir: process.cwd() });
+          console.log('[INIT] Next module type:', typeof nextModule);
+          console.log('[INIT] Next module keys:', Object.keys(nextModule));
           
+          // Next.js can export as default or named export
+          const nextConstructor = nextModule.default || nextModule;
+          
+          if (typeof nextConstructor !== 'function') {
+            throw new Error(`Next.js constructor not found. Type: ${typeof nextConstructor}`);
+          }
+          
+          console.log('[INIT] Creating Next.js app...');
+          const nextApp = nextConstructor({ dev: false, dir: process.cwd() });
+          
+          console.log('[INIT] Preparing Next.js app...');
           const prepareWithTimeout = Promise.race([
             nextApp.prepare(),
             new Promise((_, reject) => 
