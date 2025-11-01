@@ -82,39 +82,81 @@ async function getNextServer() {
         }
         
         console.log('[INIT] ✓ server.js loaded');
-        console.log('[INIT] Exports:', Object.keys(serverModule));
+        console.log('[INIT] serverModule type:', typeof serverModule);
+        console.log('[INIT] serverModule keys:', Object.keys(serverModule || {}));
+        console.log('[INIT] serverModule.default type:', typeof serverModule?.default);
+        console.log('[INIT] serverModule.default keys:', serverModule?.default ? Object.keys(serverModule.default) : 'N/A');
         
-        // Extract handler from serverModule
-        // Next.js standalone server.js might export different patterns
+        // Next.js standalone server.js typically creates and starts an HTTP server
+        // But for Lambda, we need the request handler function
+        // The server.js might export the handler directly, or we need to extract it
+        
+        // Strategy: Check if it's already a request handler function
+        // If not, check if it's a server instance with a handler method
+        // If not, it might be a Next.js app instance
+        
         let handler: any = null;
         
-        // Try all possible export patterns
+        // Pattern 1: Direct function export
         if (typeof serverModule === 'function') {
           handler = serverModule;
-        } else if (serverModule.default) {
-          handler = serverModule.default;
-        } else if (serverModule.handler) {
-          handler = serverModule.handler;
-        } else {
+          console.log('[INIT] Using serverModule as function');
+        }
+        // Pattern 2: Default export
+        else if (serverModule.default) {
+          if (typeof serverModule.default === 'function') {
+            handler = serverModule.default;
+            console.log('[INIT] Using serverModule.default as function');
+          } else {
+            // Default might be an object with handler methods
+            console.log('[INIT] serverModule.default is object, keys:', Object.keys(serverModule.default));
+            handler = serverModule.default;
+          }
+        }
+        // Pattern 3: Named exports
+        else {
           handler = serverModule;
         }
         
-        // If handler is still not a function, check if it's an object with methods
+        // If handler is not a function, try to extract the request handler
         if (typeof handler !== 'function') {
-          console.log('[INIT] Handler is object, checking for methods...', Object.keys(handler || {}));
+          console.log('[INIT] Handler is not a function, extracting...');
+          console.log('[INIT] Handler type:', typeof handler);
+          console.log('[INIT] Handler keys:', Object.keys(handler || {}));
           
-          // Try common Next.js patterns
-          if (handler && typeof handler.getRequestHandler === 'function') {
+          // Check all common Next.js handler patterns
+          const handlerMethods = [
+            'getRequestHandler',
+            'handleRequest', 
+            'handler',
+            'request',
+            'handle',
+            'listener',
+            'render',
+          ];
+          
+          for (const method of handlerMethods) {
+            if (handler && typeof handler[method] === 'function') {
+              console.log(`[INIT] Found handler.${method}`);
+              handler = handler[method].bind(handler);
+              break;
+            }
+          }
+          
+          // If still not a function, try calling it as a Next.js app
+          if (typeof handler !== 'function' && handler && typeof handler.prepare === 'function') {
+            console.log('[INIT] Found Next.js app instance, calling getRequestHandler...');
             handler = handler.getRequestHandler();
-          } else if (handler && typeof handler.handle === 'function') {
-            handler = handler.handle;
-          } else if (handler && typeof handler.request === 'function') {
-            handler = handler.request;
-          } else {
-            // Check all properties
+          }
+          
+          // Last resort: check all properties
+          if (typeof handler !== 'function') {
             for (const key of Object.keys(handler || {})) {
-              if (typeof handler[key] === 'function') {
-                handler = handler[key];
+              const value = handler[key];
+              console.log(`[INIT] Checking ${key}: type=${typeof value}`);
+              if (typeof value === 'function') {
+                // Only use it if it looks like a request handler (accepts req, res)
+                handler = value;
                 console.log(`[INIT] Using handler.${key}`);
                 break;
               }
@@ -127,7 +169,8 @@ async function getNextServer() {
           console.log('[INIT] ✓ Handler extracted from server.js');
           return nextServer;
         } else {
-          throw new Error(`server.js exports unusable handler. Type: ${typeof handler}, keys: ${Object.keys(handler || {}).join(', ')}`);
+          const allKeys = handler ? Object.keys(handler) : [];
+          throw new Error(`server.js exports unusable handler. Type: ${typeof handler}, keys: ${allKeys.join(', ')}`);
         }
       } catch (requireError) {
         console.error('[INIT] Strategy 1 failed:', requireError);
@@ -514,4 +557,5 @@ export const handler = async (
     };
   }
 };
+
 
