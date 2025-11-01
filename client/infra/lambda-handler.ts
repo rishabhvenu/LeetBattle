@@ -45,8 +45,8 @@ async function getNextServer() {
       // Try CommonJS require first (Next.js standalone typically uses CommonJS)
       // Use absolute path to ensure module resolution works correctly
       try {
-        const path = await import('path');
-        const absoluteServerPath = path.resolve(process.cwd(), NEXT_SERVER_PATH);
+        const pathModule = await import('path');
+        const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
         console.log(`Attempting to require server.js from: ${absoluteServerPath}`);
         
         const { createRequire } = await import('module');
@@ -271,12 +271,12 @@ async function getNextServer() {
           }
         }
         
-        // Last resort: Try using file:// protocol with absolute path
-        if (!handler) {
-          try {
-            const path = await import('path');
-            const fs = await import('fs/promises');
-            const absolutePath = path.resolve(process.cwd(), NEXT_SERVER_PATH);
+          // Last resort: Try using file:// protocol with absolute path
+          if (!handler) {
+            try {
+              const pathModule = await import('path');
+              const fs = await import('fs/promises');
+              const absolutePath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
             console.log(`Trying absolute path: ${absolutePath}`);
             
             // Check if file exists
@@ -497,16 +497,16 @@ export const handler = async (
     console.log('NODE_PATH:', process.env.NODE_PATH);
     
     // Ensure server.js can find node_modules by checking paths
-    const path = await import('path');
-    const serverPath = path.resolve(process.cwd(), NEXT_SERVER_PATH);
+    const pathModule = await import('path');
+    const serverPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
     console.log('Server.js path:', serverPath);
-    console.log('Node modules path:', path.join(process.cwd(), 'node_modules'));
+    console.log('Node modules path:', pathModule.join(process.cwd(), 'node_modules'));
     const fs = await import('fs/promises');
     try {
-      const nodeModulesExists = await fs.access(path.join(process.cwd(), 'node_modules')).then(() => true).catch(() => false);
+      const nodeModulesExists = await fs.access(pathModule.join(process.cwd(), 'node_modules')).then(() => true).catch(() => false);
       console.log('node_modules exists:', nodeModulesExists);
       if (nodeModulesExists) {
-        const nextExists = await fs.access(path.join(process.cwd(), 'node_modules', 'next')).then(() => true).catch(() => false);
+        const nextExists = await fs.access(pathModule.join(process.cwd(), 'node_modules', 'next')).then(() => true).catch(() => false);
         console.log('node_modules/next exists:', nextExists);
       }
     } catch (checkError) {
