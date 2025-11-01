@@ -95,12 +95,34 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // S3 bucket for OpenNext incremental cache
-    const cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
-      bucketName: process.env.OPENNEXT_CACHE_BUCKET || `codeclashers-cache-${accountId}-${region}`,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      autoDeleteObjects: false,
-    });
+    // If OPENNEXT_CACHE_BUCKET env var points to existing bucket, import it
+    // Otherwise, create new bucket (CDK will auto-generate unique name if name conflicts)
+    const explicitCacheBucketName = process.env.OPENNEXT_CACHE_BUCKET;
+    
+    let cacheBucket: s3.IBucket;
+    if (explicitCacheBucketName) {
+      // Try to use the provided bucket name
+      // If bucket already exists outside stack, import it; otherwise create it
+      // Note: For existing buckets, set IMPORT_EXISTING_CACHE_BUCKET=true in env
+      if (process.env.IMPORT_EXISTING_CACHE_BUCKET === 'true') {
+        cacheBucket = s3.Bucket.fromBucketName(this, 'NextJsCacheBucket', explicitCacheBucketName);
+      } else {
+        cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
+          bucketName: explicitCacheBucketName,
+          blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+          removalPolicy: cdk.RemovalPolicy.RETAIN,
+          autoDeleteObjects: false,
+        });
+      }
+    } else {
+      // No explicit name - let CDK auto-generate unique name
+      // This avoids conflicts with existing buckets
+      cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
+        blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+        removalPolicy: cdk.RemovalPolicy.RETAIN,
+        autoDeleteObjects: false,
+      });
+    }
 
     // S3 bucket for CloudFront logs
     // CloudFront logs require ACLs to be enabled (legacy requirement)
