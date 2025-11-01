@@ -17,6 +17,8 @@ dist/
 build/
 .next/
 out/
+.open-next/
+*.tsbuildinfo
 
 # Logs
 logs
@@ -57,4 +59,19 @@ temp/
 data/
 volumes/
 
+# AWS CDK
+client/infra/cdk.out/
+client/infra/.cdk/
+client/infra/*.js
+client/infra/*.js.map
+!client/infra/jest.config.js
+
+# SST (if used)
 client/.sst/
+
+# AWS credentials (never commit these!)
+.aws/
+*.pem
+*.key
+credentials
+credentials.json

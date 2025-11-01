@@ -1,7 +1,15 @@
-node_modules
-cdk.out
+node_modules/
+cdk.out/
+.cdk/
 *.js
 *.js.map
 !jest.config.js
-.tsbuildinfo
+*.tsbuildinfo
+
+# AWS credentials (never commit these!)
+.aws/
+*.pem
+*.key
+credentials
+credentials.json
 

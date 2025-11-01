@@ -161,16 +161,43 @@ export class InfrastructureStack extends cdk.Stack {
       }
     }
 
-    // OpenNext output paths
-    const serverFunctionPath = join(openNextDir, 'server-function');
+    // OpenNext output paths - OpenNext v3 uses server-functions/default/
+    // Check for both old (v2) and new (v3) structure
+    let serverFunctionPath = join(openNextDir, 'server-functions', 'default');
+    if (!existsSync(serverFunctionPath)) {
+      // Fallback to v2 structure
+      serverFunctionPath = join(openNextDir, 'server-function');
+      if (!existsSync(serverFunctionPath)) {
+        throw new Error(
+          `OpenNext server function not found. ` +
+          `Checked: ${join(openNextDir, 'server-functions', 'default')} and ${serverFunctionPath}. ` +
+          `Please run 'npx open-next build' before deploying.`
+        );
+      }
+    }
+    
     const imageOptimizationPath = join(openNextDir, 'image-optimization-function');
-    const middlewarePath = join(openNextDir, 'middleware-function');
+    
+    // Middleware path - OpenNext v3 might use different structure
+    // Check for v3 structure first (.build directory or middleware-function)
+    let middlewarePath = join(openNextDir, 'middleware-function');
+    if (!existsSync(middlewarePath)) {
+      // OpenNext v3 might not have a separate middleware-function directory
+      // Check if .build exists (contains middleware.mjs)
+      const buildDir = join(openNextDir, '.build');
+      if (existsSync(buildDir)) {
+        // If .build exists but no middleware-function, middleware might be inline
+        // For now, we'll skip edge function if no middleware-function directory
+        middlewarePath = '';
+      }
+    }
+    
     const assetsPath = join(openNextDir, 'assets');
 
-    // Verify server function exists
-    if (!existsSync(serverFunctionPath)) {
+    // Verify required paths exist
+    if (!existsSync(assetsPath)) {
       throw new Error(
-        `OpenNext server function not found at ${serverFunctionPath}. ` +
+        `OpenNext assets directory not found at ${assetsPath}. ` +
         `Please run 'npx open-next build' before deploying.`
       );
     }
@@ -226,7 +253,7 @@ export class InfrastructureStack extends cdk.Stack {
     // Middleware function (optional, Lambda@Edge)
     // Lambda@Edge MUST be deployed in us-east-1
     let edgeFunction: cloudfront.experimental.EdgeFunction | undefined;
-    if (existsSync(middlewarePath)) {
+    if (middlewarePath && existsSync(middlewarePath)) {
       if (region !== 'us-east-1') {
         throw new Error('Lambda@Edge must be deployed in us-east-1. Current region: ' + region);
       }

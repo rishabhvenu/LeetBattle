@@ -41,12 +41,24 @@ jobs:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: npm run build:opennext
 
+      - name: Verify OpenNext build output
+        run: |
+          if [ ! -d "client/.open-next" ]; then
+            echo "❌ Error: .open-next directory not found after build"
+            exit 1
+          fi
+          echo "✅ OpenNext build output verified at client/.open-next"
+          ls -la client/.open-next/ | head -20
+
       - name: Upload OpenNext build artifacts
         uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: open-next-artifacts
           path: client/.open-next
+          include-hidden-files: true
           retention-days: 1
+          if-no-files-found: warn
 
       - name: Install CDK dependencies
         working-directory: ./client/infra
