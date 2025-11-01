@@ -41,14 +41,15 @@
   },
   "include": [
     "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
+    "src/**/*.ts",
+    "src/**/*.tsx",
     ".next/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     ".sst",
-    "sst.config.ts"
+    "sst.config.ts",
+    "infra/**/*"
   ],
   "ts-node": {
     "transpileOnly": true

@@ -33,7 +33,20 @@ const nextConfig: NextConfig = {
     NEXTAUTH_URL: process.env.NEXTAUTH_URL,
     INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET,
   },
+  typescript: {
+    // Skip type checking during build (you can run it separately with tsc --noEmit)
+    ignoreBuildErrors: false, // Set to true if you want to skip, but better to fix the exclude
+  },
   webpack: (config, { isServer }) => {
+    // Ignore infra directory completely - it's CDK infrastructure code, not part of Next.js app
+    const { IgnorePlugin } = require('webpack');
+    config.plugins = config.plugins || [];
+    config.plugins.push(
+      new IgnorePlugin({
+        resourceRegExp: /infra/,
+      })
+    );
+
     // Exclude MongoDB from client bundle completely
     if (!isServer) {
       config.resolve.fallback = {
