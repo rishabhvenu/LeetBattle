@@ -27,6 +27,17 @@ async function getNextServer() {
         console.error('Directory contents:', await fs.readdir('.').catch(() => []));
       }
       
+      // Check if server.js exists before importing
+      try {
+        const serverJsStat = await fs.stat(NEXT_SERVER_PATH);
+        console.log(`✓ server.js found at ${NEXT_SERVER_PATH}, size: ${serverJsStat.size} bytes`);
+      } catch (statError) {
+        console.error(`✗ server.js not found at ${NEXT_SERVER_PATH}!`);
+        console.error('Current directory:', process.cwd());
+        console.error('Directory contents:', await fs.readdir('.').catch(() => []));
+        throw new Error(`Next.js server.js not found at ${NEXT_SERVER_PATH}. Make sure the standalone build is copied correctly.`);
+      }
+      
       // Import the Next.js server from standalone build
       // Next.js standalone server.js can export in different ways depending on version
       let serverModule: any;
@@ -74,10 +85,12 @@ async function getNextServer() {
       if (typeof handler !== 'function') {
         console.log('Handler is not a function, checking for request handler methods...');
         console.log('Handler object keys:', Object.keys(handler));
-        console.log('Handler object:', JSON.stringify(Object.keys(handler).reduce((acc, key) => {
-          acc[key] = typeof handler[key];
-          return acc;
-        }, {} as Record<string, string>)));
+        console.log('Handler object type:', typeof handler);
+        console.log('Handler value:', handler);
+        
+        // Check for Symbol properties
+        const symbolKeys = Object.getOwnPropertySymbols(handler);
+        console.log('Handler symbol keys:', symbolKeys.length);
         
         // Check if handler is a Promise that resolves to a function
         if (handler && typeof handler.then === 'function') {
@@ -89,29 +102,66 @@ async function getNextServer() {
         // If still not a function after awaiting, try object patterns
         if (typeof handler !== 'function') {
           // Next.js standalone might export an object with a request handler
-          // Try common patterns:
-          if (handler.handle && typeof handler.handle === 'function') {
-            console.log('Found handler.handle method');
-            handler = handler.handle.bind(handler);
-          } else if (handler.request && typeof handler.request === 'function') {
-            console.log('Found handler.request method');
-            handler = handler.request.bind(handler);
-          } else if (handler.listener && typeof handler.listener === 'function') {
-            console.log('Found handler.listener method');
-            handler = handler.listener.bind(handler);
-          } else if (handler.default && typeof handler.default === 'function') {
-            // Nested default export
-            console.log('Found nested default export');
+          // Try common patterns - check all possible property names
+          const possibleMethods = ['handle', 'request', 'listener', 'default', 'handler', 'app', 'server', 'createServer', 'getRequestHandler'];
+          
+          for (const methodName of possibleMethods) {
+            if (handler[methodName] && typeof handler[methodName] === 'function') {
+              console.log(`Found handler.${methodName} method`);
+              handler = handler[methodName].bind(handler);
+              break;
+            }
+          }
+          
+          // If we still don't have a function, try checking all enumerable properties
+          if (typeof handler !== 'function') {
+            console.log('Checking all enumerable properties...');
+            for (const key in handler) {
+              console.log(`  Checking property: ${key}, type: ${typeof handler[key]}`);
+              if (typeof handler[key] === 'function') {
+                console.log(`Found function property: ${key}`);
+                handler = handler[key].bind(handler);
+                break;
+              }
+            }
+          }
+          
+          // Last resort: check if it has a __esModule flag and default export
+          if (typeof handler !== 'function' && handler.__esModule && handler.default) {
+            console.log('Found ESM module with default export');
             handler = handler.default;
-          } else {
-            // Last resort: check if it has a __esModule flag and default export
-            if (handler.__esModule && handler.default) {
-              console.log('Found ESM module with default export');
-              handler = handler.default;
+          }
+          
+          // If still not a function, try using it as a request listener with http.createServer
+          if (typeof handler !== 'function') {
+            console.log('Attempting to use handler as request listener...');
+            const http = await import('http');
+            
+            // In Next.js standalone, the export might be a request listener function
+            // that needs to be wrapped. But if handler is empty, this won't work.
+            // Let's check if we can inspect the constructor or prototype
+            console.log('Handler constructor:', handler.constructor?.name);
+            console.log('Handler prototype:', Object.getPrototypeOf(handler)?.constructor?.name);
+            
+            // If handler is an empty object or has no usable properties, try importing differently
+            if (Object.keys(handler).length === 0 && !handler.constructor || handler.constructor === Object) {
+              console.log('Handler appears to be an empty object, trying alternative import...');
+              
+              // Try importing with explicit .default or check if serverModule itself is the handler
+              if (serverModule && typeof serverModule === 'function') {
+                console.log('Using serverModule directly as function');
+                handler = serverModule;
+              } else {
+                // Final error with all diagnostic info
+                const allKeys = [
+                  ...Object.keys(handler),
+                  ...Object.getOwnPropertyNames(handler),
+                  ...symbolKeys.map(s => s.toString())
+                ];
+                throw new Error(`Next.js handler must be a function. Got empty object. Module keys: ${Object.keys(serverModule).join(', ')}, Handler keys: ${allKeys.join(', ') || 'none'}`);
+              }
             } else {
-              // If it's still an object, throw a detailed error
-              const handlerStr = JSON.stringify(Object.keys(handler), null, 2);
-              throw new Error(`Next.js handler must be a function or have a handle/request/listener/default method. Got type: ${typeof handler}, keys: ${handlerStr}`);
+              throw new Error(`Next.js handler must be a function or have a handle/request/listener/default method. Got type: ${typeof handler}, keys: ${Object.keys(handler).join(', ') || 'none'}`);
             }
           }
         }
