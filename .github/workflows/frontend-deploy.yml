@@ -39,7 +39,8 @@ jobs:
           cache: npm
           cache-dependency-path: client/infra/package-lock.json
 
-      - name: Download OpenNext build artifacts
+      - name: Download OpenNext build artifacts (from workflow_run)
+        if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
         uses: actions/download-artifact@v4
         with:
           name: open-next-artifacts-${{ github.event.workflow_run.head_sha }}
@@ -53,13 +54,13 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: client/.open-next
 
-      - name: Guard: Verify .open-next directory
+      - name: 'Guard: Verify .open-next directory'
         run: |
           if [ ! -d "client/.open-next" ]; then
-            echo "❌ .open-next missing. For manual runs, set 'artifact_name' to a valid artifact name."
+            echo "Error: .open-next missing. For manual runs, set 'artifact_name' to a valid artifact name."
             exit 1
           fi
-          echo "✅ Verified .open-next artifacts"
+          echo "Verified .open-next artifacts"
 
       - name: Install CDK dependencies
         working-directory: ./client/infra
@@ -75,11 +76,11 @@ jobs:
       - name: Validate required secrets
         run: |
           if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
-            echo "❌ Error: AWS_ROLE_ARN secret is required for OIDC authentication"
+            echo "Error: AWS_ROLE_ARN secret is required for OIDC authentication"
             exit 1
           fi
           if [ -z "${{ secrets.AWS_ACCOUNT_ID }}" ]; then
-            echo "❌ Error: AWS_ACCOUNT_ID secret is required"
+            echo "Error: AWS_ACCOUNT_ID secret is required"
             exit 1
           fi
 
@@ -130,42 +131,37 @@ jobs:
             --output text \
             --region us-east-1)
           echo "url=$DISTRIBUTION_URL" >> $GITHUB_OUTPUT
-          echo "🌐 CloudFront URL: $DISTRIBUTION_URL"
+          echo "CloudFront URL: $DISTRIBUTION_URL"
 
       - name: Post-deploy validation
         if: success()
         run: |
           URL="${{ steps.cloudfront-url.outputs.url }}"
           if [ -z "$URL" ]; then
-            echo "⚠️  Warning: Could not retrieve CloudFront URL for validation"
+            echo "Warning: Could not retrieve CloudFront URL for validation"
             exit 0
           fi
-          echo "🔍 Validating deployment at $URL"
+          echo "Validating deployment at $URL"
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --fail --max-time 30 "$URL" || echo "000")
           if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "301" ] || [ "$HTTP_CODE" = "302" ]; then
-            echo "✅ Deployment validation successful (HTTP $HTTP_CODE)"
+            echo "Deployment validation successful (HTTP $HTTP_CODE)"
           else
-            echo "⚠️  Warning: Deployment validation returned HTTP $HTTP_CODE (may still be propagating)"
-            # Don't fail the workflow - CloudFront may still be propagating
+            echo "Warning: Deployment validation returned HTTP $HTTP_CODE (may still be propagating)"
           fi
 
       - name: Optional rollback on failure
         if: failure()
         run: |
-          echo "⚠️  Deployment failed - rollback option available"
+          echo "Deployment failed - rollback option available"
           echo "To rollback manually, run: cd client/infra && npx cdk destroy --force"
-          # Automatic rollback is disabled by default to prevent accidental data loss
-          # Uncomment the following to enable automatic rollback:
-          # cd client/infra && npx cdk destroy --force || true
 
       - name: Output deployment summary
         if: always()
         run: |
           if [ "${{ job.status }}" = "success" ]; then
-            echo "✅ Infrastructure deployed successfully!"
-            echo "🌐 CloudFront URL: ${{ steps.cloudfront-url.outputs.url }}"
-            echo "📊 Check CloudFormation console for full details"
+            echo "Infrastructure deployed successfully!"
+            echo "CloudFront URL: ${{ steps.cloudfront-url.outputs.url }}"
+            echo "Check CloudFormation console for full details"
           else
-            echo "❌ Deployment failed - check logs above"
+            echo "Deployment failed - check logs above"
           fi
-
