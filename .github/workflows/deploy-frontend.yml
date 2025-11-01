@@ -67,23 +67,112 @@ jobs:
           echo "✅ All required secrets are present"
         working-directory: ./client/infra
 
-      - name: Bootstrap CDK (if needed)
-        run: |
-          npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1 || echo "Bootstrap already done or failed"
+      - name: Ensure CDK Bootstrap is configured
+        working-directory: ./client/infra
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-        working-directory: ./client/infra
+          AWS_REGION: us-east-1
+          BOOTSTRAP_BUCKET: cdk-hnb659fds-assets-${{ secrets.AWS_ACCOUNT_ID }}-us-east-1
+          CDK_TOOLKIT_STACK: CDKToolkit
+        run: |
+          set -e
+          
+          echo "🔍 Checking CDK bootstrap status..."
+          echo "   Account: $AWS_ACCOUNT_ID"
+          echo "   Region: $AWS_REGION"
+          echo "   Expected bucket: $BOOTSTRAP_BUCKET"
+          
+          # Check if CDKToolkit CloudFormation stack exists
+          echo ""
+          echo "📋 Step 1: Checking for CDKToolkit CloudFormation stack..."
+          if aws cloudformation describe-stacks \
+            --stack-name "$CDK_TOOLKIT_STACK" \
+            --region "$AWS_REGION" \
+            >/dev/null 2>&1; then
+            echo "   ✅ CDKToolkit stack exists"
+            STACK_EXISTS=true
+          else
+            echo "   ❌ CDKToolkit stack not found"
+            STACK_EXISTS=false
+          fi
+          
+          # Check if bootstrap S3 bucket exists
+          echo ""
+          echo "🪣 Step 2: Checking for bootstrap S3 bucket..."
+          if aws s3api head-bucket \
+            --bucket "$BOOTSTRAP_BUCKET" \
+            --region "$AWS_REGION" \
+            >/dev/null 2>&1; then
+            echo "   ✅ Bootstrap bucket exists: $BOOTSTRAP_BUCKET"
+            BUCKET_EXISTS=true
+          else
+            echo "   ❌ Bootstrap bucket not found: $BOOTSTRAP_BUCKET"
+            BUCKET_EXISTS=false
+          fi
+          
+          # Determine if bootstrap is needed
+          echo ""
+          if [ "$STACK_EXISTS" = true ] && [ "$BUCKET_EXISTS" = true ]; then
+            echo "✅ CDK bootstrap is already configured"
+            echo "   Both CDKToolkit stack and bootstrap bucket exist"
+            echo "   Skipping bootstrap step"
+          else
+            if [ "$STACK_EXISTS" = false ]; then
+              echo "⚠️  CDKToolkit stack is missing - bootstrap required"
+            fi
+            if [ "$BUCKET_EXISTS" = false ]; then
+              echo "⚠️  Bootstrap bucket was deleted - bootstrap required"
+            fi
+            
+            echo ""
+            echo "🚀 Running CDK bootstrap..."
+            echo "   This will create/update the CDKToolkit stack and bootstrap bucket"
+            npx cdk bootstrap \
+              aws://$AWS_ACCOUNT_ID/$AWS_REGION \
+              --require-approval never \
+              --output-file /tmp/bootstrap-output.json || {
+              echo "❌ Bootstrap failed!"
+              exit 1
+            }
+            
+            echo ""
+            echo "✅ CDK bootstrap completed successfully"
+            
+            # Verify bootstrap after completion
+            echo ""
+            echo "🔍 Verifying bootstrap configuration..."
+            if aws cloudformation describe-stacks \
+              --stack-name "$CDK_TOOLKIT_STACK" \
+              --region "$AWS_REGION" \
+              >/dev/null 2>&1; then
+              echo "   ✅ CDKToolkit stack verified"
+            else
+              echo "   ⚠️  Warning: CDKToolkit stack verification failed"
+            fi
+            
+            if aws s3api head-bucket \
+              --bucket "$BOOTSTRAP_BUCKET" \
+              --region "$AWS_REGION" \
+              >/dev/null 2>&1; then
+              echo "   ✅ Bootstrap bucket verified: $BOOTSTRAP_BUCKET"
+            else
+              echo "   ⚠️  Warning: Bootstrap bucket verification failed"
+            fi
+          fi
+          
+          echo ""
+          echo "✅ CDK bootstrap check complete"
 
       - name: Deploy infrastructure with CDK
         working-directory: ./client/infra
         env:
           CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
           CDK_DEFAULT_REGION: us-east-1
-          S3_BUCKET_NAME: ${{ secrets.S3_BUCKET_NAME }}
+          S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME }}
           ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
-        run: npm run deploy
+        run: npx cdk deploy --all --require-approval never --context account=${{ secrets.AWS_ACCOUNT_ID }} --context region=us-east-1
 
       - name: Output deployment URLs
         run: |
