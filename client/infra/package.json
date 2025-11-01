@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "build": "tsc",
-    "deploy": "cdk deploy --all",
-    "diff": "cdk diff",
-    "synth": "cdk synth"
+    "deploy": "npx cdk deploy --all",
+    "diff": "npx cdk diff",
+    "synth": "npx cdk synth"
   },
   "dependencies": {
     "aws-cdk-lib": "^2.140.0",

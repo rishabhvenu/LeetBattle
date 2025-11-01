@@ -41,9 +41,26 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.AWS_ACCOUNT_ID }}" ]; then
+            echo "❌ Error: AWS_ACCOUNT_ID secret is required"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then
+            echo "❌ Error: AWS_ACCESS_KEY_ID secret is required"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_SECRET_ACCESS_KEY }}" ]; then
+            echo "❌ Error: AWS_SECRET_ACCESS_KEY secret is required"
+            exit 1
+          fi
+          echo "✅ All required secrets are present"
+        working-directory: ./client/infra
+
       - name: Bootstrap CDK (if needed)
         run: |
-          cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1 || echo "Bootstrap already done or failed"
+          npx cdk bootstrap aws://${{ secrets.AWS_ACCOUNT_ID }}/us-east-1 || echo "Bootstrap already done or failed"
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         working-directory: ./client/infra
