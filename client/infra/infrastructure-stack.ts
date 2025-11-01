@@ -147,7 +147,7 @@ export class InfrastructureStack extends cdk.Stack {
         NODE_ENV: 'production',
         NEXT_PUBLIC_PFP_BUCKET_URL: `https://${avatarBucket.bucketName}.s3.${region}.amazonaws.com/`,
         S3_BUCKET_NAME: avatarBucket.bucketName,
-        AWS_REGION: region,
+        // Note: AWS_REGION is automatically provided by Lambda runtime - don't set it manually
         // Add all required environment variables
         MONGODB_URI: process.env.MONGODB_URI || '',
         NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
