@@ -70,15 +70,58 @@ jobs:
           pattern: open-next-artifacts-*
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
-          path: client/.open-next
+          path: .open-next-temp
           merge-multiple: false
+          
+      - name: Move artifacts to correct location
+        if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
+        run: |
+          echo "=== Checking temp download location ==="
+          if [ -d ".open-next-temp" ]; then
+            ls -la .open-next-temp/ || true
+            echo ""
+            # Handle nested structure (artifact might contain .open-next directory)
+            if [ -d ".open-next-temp/.open-next" ]; then
+              echo "Found nested .open-next structure, moving contents"
+              rm -rf client/.open-next || true
+              mv .open-next-temp/.open-next client/.open-next
+            elif [ -d ".open-next-temp/client/.open-next" ]; then
+              echo "Found nested client/.open-next structure, moving contents"
+              rm -rf client/.open-next || true
+              mv .open-next-temp/client/.open-next client/.open-next
+            else
+              echo "Artifact is at root level, moving to client/"
+              rm -rf client/.open-next || true
+              mkdir -p client
+              mv .open-next-temp client/.open-next
+            fi
+            rm -rf .open-next-temp
+          fi
 
       - name: Download artifact (manual dispatch)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_name != '' }}
         uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.artifact_name }}
-          path: client/.open-next
+          path: .open-next-temp
+          
+      - name: Move artifacts to correct location (manual)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_name != '' }}
+        run: |
+          if [ -d ".open-next-temp" ]; then
+            if [ -d ".open-next-temp/.open-next" ]; then
+              rm -rf client/.open-next || true
+              mv .open-next-temp/.open-next client/.open-next
+            elif [ -d ".open-next-temp/client/.open-next" ]; then
+              rm -rf client/.open-next || true
+              mv .open-next-temp/client/.open-next client/.open-next
+            else
+              rm -rf client/.open-next || true
+              mkdir -p client
+              mv .open-next-temp client/.open-next
+            fi
+            rm -rf .open-next-temp
+          fi
 
       - name: 'Guard: Verify .open-next directory structure'
         run: |
