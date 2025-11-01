@@ -219,9 +219,21 @@ export class InfrastructureStack extends cdk.Stack {
     const domainNameOnly = cdk.Fn.select(0, cdk.Fn.split('/', hostAndPath));
     
     // Create HttpOrigin with extracted domain
+    // Important: Lambda Function URLs require specific origin settings
     // The origin ID will be auto-generated from the construct ID, not the domain
     const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(domainNameOnly, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+      // Lambda Function URLs need the full URL path preserved
+      httpPort: 443,
+      httpsPort: 443,
+      // Don't set custom headers that might interfere
+      // The origin request policy will forward all viewer headers
+    });
+    
+    // Output the Lambda Function URL for debugging
+    new cdk.CfnOutput(this, 'NextJsLambdaFunctionUrl', {
+      value: lambdaFunctionUrl.url,
+      description: 'Lambda Function URL (for debugging)',
     });
 
     // Determine domain names for Next.js app
@@ -267,7 +279,9 @@ export class InfrastructureStack extends cdk.Stack {
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED, // No cache for SSR
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+        // Use ALL_VIEWER_EXCEPT_HOST_HEADER so CloudFront sets the correct Host for Lambda Function URL
+        // The Lambda handler will reconstruct the original host from x-forwarded-host or other headers
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       },
       comment: 'Next.js serverless deployment',
       additionalBehaviors: {
@@ -290,7 +304,7 @@ export class InfrastructureStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         },
         // Server actions endpoint - no cache
         '/_next/data/*': {
@@ -298,7 +312,7 @@ export class InfrastructureStack extends cdk.Stack {
           allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
           cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
         },
       },
       certificate: certificate,

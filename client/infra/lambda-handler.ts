@@ -28,29 +28,44 @@ async function getNextServer() {
       }
       
       // Import the Next.js server from standalone build
-      // Next.js 15 standalone server.js typically exports a handler function
+      // Next.js standalone server.js can export in different ways depending on version
       const serverModule = await import(NEXT_SERVER_PATH);
       console.log('Next.js server module loaded successfully');
       console.log('Module keys:', Object.keys(serverModule));
       
-      // Next.js 15 standalone exports the handler as default
-      // The handler is a function that takes (req, res) for Node.js HTTP
-      // But we need to adapt it for Lambda Function URL format
-      const defaultExport = serverModule.default;
+      // Try different export patterns
+      let handler: any = null;
       
-      if (!defaultExport) {
-        throw new Error('Next.js server.js does not have a default export');
+      // Pattern 1: Default export (most common)
+      if (serverModule.default) {
+        handler = serverModule.default;
+        console.log('Using default export');
+      }
+      // Pattern 2: Named export 'handler'
+      else if (serverModule.handler) {
+        handler = serverModule.handler;
+        console.log('Using named handler export');
+      }
+      // Pattern 3: Direct function (if module.exports = function)
+      else if (typeof serverModule === 'function') {
+        handler = serverModule;
+        console.log('Using direct function export');
       }
       
-      console.log('Default export type:', typeof defaultExport);
+      if (!handler) {
+        throw new Error(`Next.js server.js does not export a handler. Available keys: ${Object.keys(serverModule).join(', ')}`);
+      }
       
-      // Next.js standalone server is typically an HTTP server handler
-      // We need to wrap it to work with Lambda Function URLs
-      // The handler expects Node.js IncomingMessage/ServerResponse, but we have Lambda events
+      if (typeof handler !== 'function') {
+        throw new Error(`Next.js handler must be a function, got: ${typeof handler}`);
+      }
       
-      // For Next.js 15, the standalone server.js exports a handler that expects
-      // Node.js-style request/response objects. We'll need to adapt them.
-      nextServer = defaultExport;
+      console.log('Handler type:', typeof handler);
+      console.log('Handler name:', handler.name || 'anonymous');
+      
+      // Next.js standalone server exports a request handler function
+      // that expects Node.js IncomingMessage/ServerResponse
+      nextServer = handler;
       
       console.log('Next.js server initialized');
     } catch (error) {
@@ -73,8 +88,13 @@ export const handler = async (
     const server = await getNextServer();
     
     // Build request URL
+    // CloudFront forwards original host in x-forwarded-host when using ALL_VIEWER_EXCEPT_HOST_HEADER
+    // Prefer x-forwarded-host over other sources for the original viewer domain
     const protocol = event.headers['x-forwarded-proto'] || 'https';
-    const host = event.requestContext.domainName || event.headers.host || 'localhost';
+    const host = event.headers['x-forwarded-host'] || 
+                 event.requestContext.domainName || 
+                 event.headers.host || 
+                 'localhost';
     const path = event.rawPath || event.requestContext.http.path || '/';
     const query = event.rawQueryString ? `?${event.rawQueryString}` : '';
     const url = `${protocol}://${host}${path}${query}`;
@@ -182,22 +202,48 @@ export const handler = async (
         }
       }, 55000);
       
-      nodeResponse.on('finish', () => {
+      let finished = false;
+      const finish = (error?: Error) => {
+        if (finished) return;
+        finished = true;
         clearTimeout(timeout);
-        resolve();
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      };
+      
+      nodeResponse.on('finish', () => {
+        console.log(`Response finished for ${method} ${path}`);
+        finish();
       });
       
       nodeResponse.on('close', () => {
-        clearTimeout(timeout);
-        resolve();
+        console.log(`Response closed for ${method} ${path}`);
+        finish();
+      });
+      
+      nodeResponse.on('error', (err) => {
+        console.error(`Response error for ${method} ${path}:`, err);
+        finish(err);
       });
       
       try {
         // Next.js standalone handler signature: (req, res) => void
-        server(nodeRequest, nodeResponse);
+        // Handle both sync and async handlers
+        const result = server(nodeRequest, nodeResponse);
+        
+        // If handler returns a Promise, wait for it
+        if (result && typeof result.then === 'function') {
+          result.catch((err: unknown) => {
+            console.error(`Next.js handler promise rejected for ${method} ${path}:`, err);
+            finish(err instanceof Error ? err : new Error(String(err)));
+          });
+        }
       } catch (error) {
-        clearTimeout(timeout);
-        reject(error);
+        console.error(`Error calling Next.js handler for ${method} ${path}:`, error);
+        finish(error as Error);
       }
     });
     
@@ -304,10 +350,19 @@ export const handler = async (
     };
   } catch (error) {
     console.error('Lambda handler error:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error('Error details:', {
+      message: error instanceof Error ? error.message : String(error),
+      name: error instanceof Error ? error.name : typeof error,
+    });
     return {
       statusCode: 500,
-      headers: { 'content-type': 'text/plain' },
-      body: 'Internal Server Error',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ 
+        error: 'Internal Server Error',
+        message: error instanceof Error ? error.message : String(error),
+      }),
+      isBase64Encoded: false,
     };
   }
 };
