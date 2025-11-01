@@ -118,23 +118,44 @@ export class InfrastructureStack extends cdk.Stack {
       handler: 'handler',
       entry: join(currentDir, 'lambda-handler.ts'),
       bundling: {
-        // Bundle the Lambda handler but don't bundle Next.js - it will be included as a layer
-        externalModules: [],
+        // Bundle the Lambda handler but don't bundle Next.js dependencies
+        // Next.js standalone build will be copied alongside the handler
+        externalModules: [
+          // Exclude Next.js and its dependencies from bundling - they're in standalone build
+          'next',
+          '@next/env',
+          '@swc/helpers',
+        ],
         minify: true,
         sourceMap: true,
-        // Copy the standalone build to the Lambda's /opt directory
+        // Copy the entire Next.js standalone build to the Lambda package
         commandHooks: {
           beforeBundling(inputDir: string, outputDir: string): string[] {
             const standalonePath = join(clientDir, '.next', 'standalone');
             if (existsSync(standalonePath)) {
+              // Copy contents of standalone directory to outputDir (Lambda package root)
+              // This ensures server.js, .next/, node_modules/, public/ are all at /var/task/
               return [
-                `cp -r ${standalonePath} ${outputDir}/.next/`,
+                `echo "Copying Next.js standalone build from ${standalonePath} to ${outputDir}"`,
+                `cp -r ${standalonePath}/* ${outputDir}/ || cp -r ${standalonePath}/. ${outputDir}/`,
+                `echo "Verifying server.js exists:"`,
+                `ls -la ${outputDir}/server.js || echo "ERROR: server.js not found!"`,
+              ];
+            } else {
+              return [
+                `echo "ERROR: Next.js standalone build not found at ${standalonePath}"`,
+                `echo "Make sure you run 'npm run build' in the client directory first"`,
               ];
             }
-            return [];
           },
-          afterBundling(): string[] {
-            return [];
+          afterBundling(inputDir: string, outputDir: string): string[] {
+            // Verify the standalone files are in place after bundling
+            return [
+              `echo "Verifying Next.js standalone files after bundling:"`,
+              `ls -la ${outputDir}/server.js && echo "✓ server.js found" || echo "✗ server.js missing"`,
+              `ls -d ${outputDir}/.next && echo "✓ .next directory found" || echo "✗ .next directory missing"`,
+              `ls -d ${outputDir}/node_modules && echo "✓ node_modules found" || echo "✗ node_modules missing"`,
+            ];
           },
           beforeInstall(): string[] {
             return [];
