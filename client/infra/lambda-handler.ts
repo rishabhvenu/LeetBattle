@@ -582,16 +582,29 @@ export const handler = async (
     // server.js initialization might try to connect to databases
     let server: any;
     try {
-      console.log('Calling getNextServer()...');
+      console.log('[HANDLER] Calling getNextServer()...');
       const serverPromise = getNextServer();
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('getNextServer timeout after 30s')), 30000);
+        setTimeout(() => reject(new Error('getNextServer timeout after 25s')), 25000);
       });
       server = await Promise.race([serverPromise, timeoutPromise]);
-      console.log('getNextServer() completed successfully');
+      console.log('[HANDLER] ✓ getNextServer() completed successfully');
     } catch (serverError) {
-      console.error('Failed to get Next.js server:', serverError);
-      throw new Error(`Next.js server initialization failed: ${serverError instanceof Error ? serverError.message : String(serverError)}`);
+      console.error('[HANDLER] ✗ Failed to get Next.js server:', serverError);
+      const errorMsg = serverError instanceof Error ? serverError.message : String(serverError);
+      console.error('[HANDLER] Error stack:', serverError instanceof Error ? serverError.stack : 'No stack');
+      
+      // Return a proper error response instead of throwing
+      return {
+        statusCode: 500,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          error: 'Server Initialization Failed',
+          message: `Next.js server initialization failed: ${errorMsg}`,
+          details: 'The server is still initializing or encountered an error during startup. Please try again in a moment.',
+        }),
+        isBase64Encoded: false,
+      };
     }
     
     // Build request URL
