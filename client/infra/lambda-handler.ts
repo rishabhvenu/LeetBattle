@@ -513,7 +513,21 @@ export const handler = async (
       console.warn('Could not verify node_modules:', checkError);
     }
     
-    const server = await getNextServer();
+    // Get Next.js server with timeout protection
+    // server.js initialization might try to connect to databases
+    let server: any;
+    try {
+      console.log('Calling getNextServer()...');
+      const serverPromise = getNextServer();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('getNextServer timeout after 30s')), 30000);
+      });
+      server = await Promise.race([serverPromise, timeoutPromise]);
+      console.log('getNextServer() completed successfully');
+    } catch (serverError) {
+      console.error('Failed to get Next.js server:', serverError);
+      throw new Error(`Next.js server initialization failed: ${serverError instanceof Error ? serverError.message : String(serverError)}`);
+    }
     
     // Build request URL
     // CloudFront forwards original host in x-forwarded-host when using ALL_VIEWER_EXCEPT_HOST_HEADER
