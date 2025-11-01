@@ -46,33 +46,20 @@
         },
       });
 
-      // Create A record for Colyseus backend if domain is configured
-      // Must be after site is created so hosted zone exists
-      let colyseusRecord;
-      if (process.env.COLYSEUS_DOMAIN && process.env.COLYSEUS_HOST_IP) {
-        console.log(`Creating A record for ${process.env.COLYSEUS_DOMAIN} -> ${process.env.COLYSEUS_HOST_IP}`);
-        
-        // Use the hosted zone ID from environment variable (or hardcoded)
-        // To find your hosted zone ID: aws route53 list-hosted-zones-by-name --dns-name leetbattle.net
-        const zoneId = process.env.ROUTE53_HOSTED_ZONE_ID || "";
-        
-        if (!zoneId) {
-          console.error("ERROR: ROUTE53_HOSTED_ZONE_ID environment variable is required");
-          throw new Error("ROUTE53_HOSTED_ZONE_ID not set");
-        }
-        
-        console.log(`Using hosted zone: ${zoneId}`);
-        
-        colyseusRecord = new sst.aws.Record("colyseus", {
-          zone: zoneId,
-          type: "A",
-          name: process.env.COLYSEUS_DOMAIN,
-          values: [process.env.COLYSEUS_HOST_IP],
-          ttl: 300,
-        });
-        
-        console.log(`Created A record: ${colyseusRecord.url}`);
-      }
+      // Note: SST v3 doesn't have a Record component in sst.aws namespace
+      // Create A record manually using AWS CLI or Console:
+      // aws route53 change-resource-record-sets --hosted-zone-id <ZONE_ID> --change-batch '{
+      //   "Changes": [{
+      //     "Action": "UPSERT",
+      //     "ResourceRecordSet": {
+      //       "Name": "matchmaker.leetbattle.net",
+      //       "Type": "A",
+      //       "TTL": 300,
+      //       "ResourceRecords": [{"Value": "40.233.103.179"}]
+      //     }
+      //   }]
+      // }'
+      let colyseusRecord = null;
 
       return {
         siteUrl: site.url,
