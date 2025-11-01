@@ -235,7 +235,9 @@ export class InfrastructureStack extends cdk.Stack {
       },
       timeout: cdk.Duration.seconds(60),
       memorySize: 2048,
+      // Set working directory to Lambda package root so server.js can find node_modules
       environment: {
+        NODE_PATH: '/var/task:/var/task/node_modules',
         NODE_ENV: 'production',
         NEXT_PUBLIC_PFP_BUCKET_URL: `https://${avatarBucket.bucketName}.s3.${region}.amazonaws.com/`,
         S3_BUCKET_NAME: avatarBucket.bucketName,
