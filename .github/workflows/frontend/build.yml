@@ -1,0 +1,62 @@
+name: Build Frontend (OpenNext)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'client/**'
+      - '.github/workflows/frontend/build.yml'
+  workflow_dispatch:
+
+# Allow concurrent builds (no concurrency needed for build-only)
+# Build artifacts are versioned by commit SHA
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./client
+        run: npm ci
+
+      - name: Build Next.js with OpenNext
+        working-directory: ./client
+        env:
+          NODE_ENV: production
+          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: npm run build:opennext
+
+      - name: Verify OpenNext build output
+        run: |
+          if [ ! -d "client/.open-next" ]; then
+            echo "❌ Error: .open-next directory not found after build"
+            exit 1
+          fi
+          echo "✅ OpenNext build output verified at client/.open-next"
+          ls -la client/.open-next/ | head -20
+
+      - name: Upload OpenNext build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: open-next-artifacts-${{ github.sha }}
+          path: client/.open-next
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: error
+          
+      - name: Upload summary
+        run: echo "✅ Build complete for commit ${{ github.sha }}"
+

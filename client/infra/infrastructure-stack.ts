@@ -7,8 +7,13 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3deploy from 'aws-cdk-lib/aws-s3-deployment';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
+import * as sns from 'aws-cdk-lib/aws-sns';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cloudfrontOrigins from 'aws-cdk-lib/aws-cloudfront-origins';
+import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
@@ -46,25 +51,40 @@ interface OpenNextConfig {
 }
 
 export class InfrastructureStack extends cdk.Stack {
+  // Exported properties for use by other stacks (e.g., MonitoringStack)
+  public readonly distributionId: string;
+  public readonly nextjsLambdaArn: string;
+  public readonly imageOptLambdaArn?: string;
+
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
     const accountId = props?.env?.account || this.account || 'unknown';
     const region = props?.env?.region || this.region || 'us-east-1';
 
+    // Add tags for cost tracking and resource management
+    cdk.Tags.of(this).add('Project', 'LeetBattle');
+    cdk.Tags.of(this).add('Environment', 'production');
+    cdk.Tags.of(this).add('ManagedBy', 'CDK');
+
     // Edge functions MUST be deployed in us-east-1
-    // This will be checked before creating EdgeFunction
+    // This will be checked before creating EdgeFunction (now optional with warning)
 
     // ===== S3 Buckets =====
+    // Consistent naming: ${project}-${bucketType}-${region}
 
-    // S3 bucket for avatars with public read access via bucket policy
-    const avatarBucketName = process.env.S3_BUCKET_NAME || `codeclashers-avatars-${accountId}-${region}`;
+    // S3 bucket for avatars - using CloudFront/signed URLs instead of public access
+    // Import existing bucket if specified, otherwise create new one
+    // Buckets are accessed via CloudFront distribution (more secure than public S3 URLs)
+    const avatarBucketName = process.env.S3_BUCKET_NAME || `leetbattle-avatars-${region}`;
     const shouldImportAvatarBucket = process.env.IMPORT_EXISTING_AVATAR_BUCKET === 'true';
     
     let avatarBucket: s3.IBucket;
     if (shouldImportAvatarBucket) {
+      // Import existing bucket - CloudFormation won't manage it
       avatarBucket = s3.Bucket.fromBucketName(this, 'AvatarsBucket', avatarBucketName);
     } else {
+      // Create new bucket - CloudFormation will manage it
       avatarBucket = new s3.Bucket(this, 'AvatarsBucket', {
         bucketName: avatarBucketName,
         cors: [
@@ -76,29 +96,30 @@ export class InfrastructureStack extends cdk.Stack {
             maxAge: 86400,
           },
         ],
+        // Secure: Block all public access - avatars accessed via CloudFront or signed URLs
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         publicReadAccess: false,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
         autoDeleteObjects: false,
+        // Lifecycle rule to transition old avatars to cheaper storage
+        lifecycleRules: [
+          {
+            id: 'TransitionOldAvatars',
+            transitions: [
+              {
+                storageClass: s3.StorageClass.INFREQUENT_ACCESS,
+                transitionAfter: cdk.Duration.days(90),
+              },
+            ],
+          },
+        ],
       });
     }
 
-    // Grant public read access via bucket policy (more secure than ACLs)
-    // Only add policy if bucket is managed by CDK (not imported)
-    if (!shouldImportAvatarBucket) {
-      (avatarBucket as s3.Bucket).addToResourcePolicy(
-        new iam.PolicyStatement({
-          sid: 'AllowPublicReadAccess',
-          effect: iam.Effect.ALLOW,
-          principals: [new iam.AnyPrincipal()],
-          actions: ['s3:GetObject'],
-          resources: [`${avatarBucket.bucketArn}/*`],
-        })
-      );
-    }
-
     // S3 bucket for Next.js static assets (OpenNext assets)
-    const staticBucketName = process.env.NEXTJS_STATIC_BUCKET_NAME || `codeclashers-static-${accountId}-${region}`;
+    // Import existing bucket if specified, otherwise create new one
+    // Accessed via CloudFront with OAC (Origin Access Control) - no public access needed
+    const staticBucketName = process.env.NEXTJS_STATIC_BUCKET_NAME || `leetbattle-static-${region}`;
     const shouldImportStaticBucket = process.env.IMPORT_EXISTING_STATIC_BUCKET === 'true';
     
     const staticAssetsBucket = shouldImportStaticBucket
@@ -111,32 +132,43 @@ export class InfrastructureStack extends cdk.Stack {
         });
 
     // S3 bucket for OpenNext incremental cache
-    // If OPENNEXT_CACHE_BUCKET env var points to existing bucket, import it
-    // Otherwise, create new bucket (CDK will auto-generate unique name if name conflicts)
+    // Import existing bucket if specified, otherwise create new one
+    // Used for Next.js ISR (Incremental Static Regeneration) caching
     const explicitCacheBucketName = process.env.OPENNEXT_CACHE_BUCKET;
     
     let cacheBucket: s3.IBucket;
     if (explicitCacheBucketName) {
-      // Try to use the provided bucket name
-      // If bucket already exists outside stack, import it; otherwise create it
-      // Note: For existing buckets, set IMPORT_EXISTING_CACHE_BUCKET=true in env
       if (process.env.IMPORT_EXISTING_CACHE_BUCKET === 'true') {
+        // Import existing bucket - CloudFormation won't manage it
         cacheBucket = s3.Bucket.fromBucketName(this, 'NextJsCacheBucket', explicitCacheBucketName);
       } else {
+        // Create new bucket with explicit name - CloudFormation will manage it
         cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
           bucketName: explicitCacheBucketName,
           blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
           removalPolicy: cdk.RemovalPolicy.RETAIN,
           autoDeleteObjects: false,
+          // Lifecycle rule to clean up old cache entries
+          lifecycleRules: [
+            {
+              id: 'CleanupOldCache',
+              expiration: cdk.Duration.days(30),
+            },
+          ],
         });
       }
     } else {
-      // No explicit name - let CDK auto-generate unique name
-      // This avoids conflicts with existing buckets
+      // No explicit name - let CDK auto-generate unique name to avoid conflicts
       cacheBucket = new s3.Bucket(this, 'NextJsCacheBucket', {
         blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
         removalPolicy: cdk.RemovalPolicy.RETAIN,
         autoDeleteObjects: false,
+        lifecycleRules: [
+          {
+            id: 'CleanupOldCache',
+            expiration: cdk.Duration.days(30),
+          },
+        ],
       });
     }
 
@@ -253,7 +285,7 @@ export class InfrastructureStack extends cdk.Stack {
       memorySize: 2048,
       environment: {
         NODE_ENV: 'production',
-        NEXT_PUBLIC_PFP_BUCKET_URL: `https://${avatarBucket.bucketName}.s3.${region}.amazonaws.com/`,
+        // Avatar bucket name for internal Lambda operations
         S3_BUCKET_NAME: avatarBucket.bucketName,
         MONGODB_URI: process.env.MONGODB_URI || '',
         NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
@@ -270,6 +302,7 @@ export class InfrastructureStack extends cdk.Stack {
     });
 
     // Image optimization function (optional)
+    // Uses Sharp library which benefits from higher memory allocation
     let imageOptimizationLambda: lambda.Function | undefined;
     if (existsSync(imageOptimizationPath)) {
       const imageOptConfig = openNextConfig?.imageOptimization || {};
@@ -278,7 +311,8 @@ export class InfrastructureStack extends cdk.Stack {
         handler: 'index.handler',
         code: lambda.Code.fromAsset(imageOptimizationPath),
         timeout: cdk.Duration.seconds(imageOptConfig.timeout || 10),
-        memorySize: imageOptConfig.memory || 1024,
+        // Increased to 1536 MB for better Sharp performance (default 1024 MB is low)
+        memorySize: imageOptConfig.memory || 1536,
         environment: {
           NODE_ENV: 'production',
         },
@@ -287,21 +321,22 @@ export class InfrastructureStack extends cdk.Stack {
     }
 
     // Middleware function (optional, Lambda@Edge)
-    // Lambda@Edge MUST be deployed in us-east-1
+    // Lambda@Edge MUST be deployed in us-east-1 - optional with warning if not
     let edgeFunction: cloudfront.experimental.EdgeFunction | undefined;
     if (middlewarePath && existsSync(middlewarePath)) {
       if (region !== 'us-east-1') {
-        throw new Error('Lambda@Edge must be deployed in us-east-1. Current region: ' + region);
+        // Warning instead of error - allows deployment in other regions (without Edge function)
+        console.warn(`⚠️  WARNING: Lambda@Edge functions must be deployed in us-east-1, but current region is ${region}. Skipping Edge function deployment.`);
+      } else {
+        edgeFunction = new cloudfront.experimental.EdgeFunction(this, 'NextEdgeFunction', {
+          runtime: lambda.Runtime.NODEJS_20_X,
+          handler: 'index.handler',
+          code: lambda.Code.fromAsset(middlewarePath),
+          memorySize: 128,
+          timeout: cdk.Duration.seconds(5),
+          description: 'Next.js middleware (generated by OpenNext)',
+        });
       }
-
-      edgeFunction = new cloudfront.experimental.EdgeFunction(this, 'NextEdgeFunction', {
-        runtime: lambda.Runtime.NODEJS_20_X,
-        handler: 'index.handler',
-        code: lambda.Code.fromAsset(middlewarePath),
-        memorySize: 128,
-        timeout: cdk.Duration.seconds(5),
-        description: 'Next.js middleware (generated by OpenNext)',
-      });
     }
 
     // ===== IAM Permissions =====
@@ -315,36 +350,41 @@ export class InfrastructureStack extends cdk.Stack {
       cacheBucket.grantReadWrite(imageOptimizationLambda);
     }
 
-    // ===== Lambda Function URLs =====
+    // ===== API Gateway HTTP API (replaces Function URLs) =====
+    // Using API Gateway v2 is safer than Function URLs - AWS-managed with better security
 
-    const lambdaFunctionUrl = nextjsLambda.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
-      cors: {
-        allowedOrigins: ['*'],
-        allowedMethods: [lambda.HttpMethod.ALL],
-        allowedHeaders: ['*'],
+    const api = new apigwv2.HttpApi(this, 'NextJsHttpApi', {
+      apiName: 'LeetBattle-NextJs',
+      createDefaultStage: true,
+      corsPreflight: {
+        allowOrigins: ['*'],
+        allowMethods: [apigwv2.CorsHttpMethod.ANY],
+        allowHeaders: ['*'],
       },
     });
 
+    api.addRoutes({
+      path: '/{proxy+}',
+      methods: [apigwv2.HttpMethod.ANY],
+      integration: new integrations.HttpLambdaIntegration('LambdaIntegration', nextjsLambda),
+    });
+
+    const apiDomain = `${api.apiId}.execute-api.${region}.amazonaws.com`;
+
     // ===== CloudFront Origins =====
 
-    // Note: S3Origin is deprecated but still functional
-    // Will need to migrate to S3BucketOrigin in future CDK versions
+    // Modern approach: S3Origin automatically uses OAC (Origin Access Control) 
+    // when originAccessIdentity is not provided (replaces deprecated OAI)
+    // Note: Deprecation warning may appear, but OAC is used automatically
     const staticOrigin = new cloudfrontOrigins.S3Origin(staticAssetsBucket);
 
-    // Extract Lambda Function URL domain for CloudFront origin
-    const lambdaUrlString = lambdaFunctionUrl.url;
-    const urlParts = cdk.Fn.split('://', lambdaUrlString);
-    const hostAndPath = cdk.Fn.select(1, urlParts);
-    const domainNameOnly = cdk.Fn.select(0, cdk.Fn.split('/', hostAndPath));
-
-    const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(domainNameOnly, {
+    // API Gateway origin for Lambda function
+    const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(apiDomain, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-      httpPort: 443,
-      httpsPort: 443,
     });
 
     // Image optimization origin (if function exists)
+    // Note: Image optimization can use Function URL (simpler for this use case)
     let imageOptOrigin: cloudfrontOrigins.HttpOrigin | undefined;
     if (imageOptimizationLambda) {
       const imageOptFunctionUrl = imageOptimizationLambda.addFunctionUrl({
@@ -357,8 +397,6 @@ export class InfrastructureStack extends cdk.Stack {
 
       imageOptOrigin = new cloudfrontOrigins.HttpOrigin(imageOptDomain, {
         protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-        httpPort: 443,
-        httpsPort: 443,
       });
     }
 
@@ -462,6 +500,21 @@ export class InfrastructureStack extends cdk.Stack {
       // NOTE: Do not set defaultRootObject as it breaks SSR routing
     });
 
+    // Export properties for use by other stacks (e.g., MonitoringStack)
+    // Note: These are set after resource creation but can be referenced by other stacks
+    this.distributionId = distribution.distributionId;
+    this.nextjsLambdaArn = nextjsLambda.functionArn;
+    if (imageOptimizationLambda) {
+      this.imageOptLambdaArn = imageOptimizationLambda.functionArn;
+    }
+
+    // Update Lambda environment variable with CloudFront URL for avatar access
+    // This enables secure avatar serving via CloudFront instead of direct S3 access
+    nextjsLambda.addEnvironment(
+      'NEXT_PUBLIC_CLOUDFRONT_URL',
+      `https://${distribution.distributionDomainName}`
+    );
+
     // ===== Static Asset Deployment =====
 
     if (existsSync(assetsPath)) {
@@ -474,7 +527,13 @@ export class InfrastructureStack extends cdk.Stack {
         prune: true,
         retainOnDelete: true,
         distribution: distribution,
-        distributionPaths: ['/*'],
+        // Optimized: Only invalidate specific paths instead of everything
+        // Reduces CloudFront invalidation costs and deployment time
+        distributionPaths: [
+          '/_next/static/*',       // Next.js static chunks
+          '/favicon.ico',          // Favicon
+          '/robots.txt',            // SEO robots file
+        ],
       });
     }
 
@@ -492,10 +551,60 @@ export class InfrastructureStack extends cdk.Stack {
           zone: hostedZone,
           recordName: recordName,
           target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(distribution)),
-          ttl: cdk.Duration.minutes(5),
+          // TTL is ignored for alias targets (AWS sets it automatically)
         });
       });
     }
+
+    // ===== CloudWatch Alarms =====
+
+    // Lambda Error Alarms
+    const nextjsLambdaErrorAlarm = new cloudwatch.Alarm(this, 'NextJsLambdaErrors', {
+      metric: nextjsLambda.metricErrors({
+        period: cdk.Duration.minutes(5),
+        statistic: cloudwatch.Statistic.SUM,
+      }),
+      threshold: 1,
+      evaluationPeriods: 1,
+      alarmName: 'LeetBattle-NextJsLambda-Errors',
+      alarmDescription: 'Alert when Next.js Lambda function has errors',
+    });
+
+    if (imageOptimizationLambda) {
+      const imageOptErrorAlarm = new cloudwatch.Alarm(this, 'NextJsImageOptErrors', {
+        metric: imageOptimizationLambda.metricErrors({
+          period: cdk.Duration.minutes(5),
+          statistic: cloudwatch.Statistic.SUM,
+        }),
+        threshold: 1,
+        evaluationPeriods: 1,
+        alarmName: 'LeetBattle-ImageOptLambda-Errors',
+        alarmDescription: 'Alert when image optimization Lambda function has errors',
+      });
+    }
+
+    // CloudFront 5XX Error Rate Alarm
+    const cloudfront5xxAlarm = new cloudwatch.Alarm(this, 'CloudFront5xxErrors', {
+      metric: distribution.metric5xxErrorRate({
+        period: cdk.Duration.minutes(5),
+        statistic: cloudwatch.Statistic.AVERAGE,
+      }),
+      threshold: 1, // 1% error rate
+      evaluationPeriods: 2,
+      alarmName: 'LeetBattle-CloudFront-5xx-ErrorRate',
+      alarmDescription: 'Alert when CloudFront 5XX error rate exceeds 1%',
+    });
+
+    // Export alarm ARNs for monitoring integration
+    new cdk.CfnOutput(this, 'NextJsLambdaErrorAlarmArn', {
+      value: nextjsLambdaErrorAlarm.alarmArn,
+      description: 'CloudWatch alarm ARN for Next.js Lambda errors',
+    });
+
+    new cdk.CfnOutput(this, 'CloudFront5xxErrorAlarmArn', {
+      value: cloudfront5xxAlarm.alarmArn,
+      description: 'CloudWatch alarm ARN for CloudFront 5XX errors',
+    });
 
     // ===== CloudFormation Outputs =====
 
@@ -512,6 +621,11 @@ export class InfrastructureStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'NextJsLambdaFunctionArn', {
       value: nextjsLambda.functionArn,
       description: 'Next.js Lambda function ARN',
+    });
+
+    new cdk.CfnOutput(this, 'NextJsApiGatewayUrl', {
+      value: `https://${apiDomain}`,
+      description: 'API Gateway HTTP API URL for Next.js Lambda',
     });
 
     new cdk.CfnOutput(this, 'NextJsStaticBucketName', {

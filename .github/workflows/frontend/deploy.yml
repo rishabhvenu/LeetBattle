@@ -1,0 +1,171 @@
+name: Deploy Frontend to AWS (CDK)
+
+on:
+  workflow_run:
+    workflows: ["Build Frontend (OpenNext)"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      artifact_name:
+        description: 'OpenNext artifact name (from build workflow)'
+        required: false
+        default: ''
+
+# Ensure only one deployment runs at a time
+concurrency:
+  group: frontend-deployment
+  cancel-in-progress: false
+
+# Permissions for OIDC authentication
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only deploy if build workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/infra/package-lock.json
+
+      - name: Download OpenNext build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: open-next-artifacts-${{ github.event.workflow_run.head_sha }}
+          run-id: ${{ github.event.workflow_run.id }}
+          path: client/.open-next
+
+      - name: Download artifact (manual dispatch)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.artifact_name != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: client/.open-next
+
+      - name: Guard: Verify .open-next directory
+        run: |
+          if [ ! -d "client/.open-next" ]; then
+            echo "❌ .open-next missing. For manual runs, set 'artifact_name' to a valid artifact name."
+            exit 1
+          fi
+          echo "✅ Verified .open-next artifacts"
+
+      - name: Install CDK dependencies
+        working-directory: ./client/infra
+        run: npm ci
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: GitHubActions-FrontendDeploy
+          aws-region: us-east-1
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "❌ Error: AWS_ROLE_ARN secret is required for OIDC authentication"
+            exit 1
+          fi
+          if [ -z "${{ secrets.AWS_ACCOUNT_ID }}" ]; then
+            echo "❌ Error: AWS_ACCOUNT_ID secret is required"
+            exit 1
+          fi
+
+      - name: Bootstrap CDK
+        working-directory: ./client/infra
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+        run: npx cdk bootstrap aws://$AWS_ACCOUNT_ID/us-east-1 || echo "Bootstrap already done"
+
+      - name: Deploy infrastructure with CDK
+        working-directory: ./client/infra
+        id: deploy
+        env:
+          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          CDK_DEFAULT_REGION: us-east-1
+          AWS_REGION: us-east-1
+          S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME }}
+          ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
+          ROUTE53_HOSTED_ZONE_NAME: ${{ vars.ROUTE53_HOSTED_ZONE_NAME }}
+          NEXTJS_DOMAIN_NAME: ${{ vars.NEXTJS_DOMAIN_NAME }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          REDIS_HOST: ${{ vars.REDIS_HOST }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
+          NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
+          NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
+          OPENNEXT_CACHE_BUCKET: ${{ vars.OPENNEXT_CACHE_BUCKET }}
+          OPENNEXT_CACHE_REGION: us-east-1
+          IMPORT_EXISTING_CACHE_BUCKET: 'true'
+          NEXTJS_STATIC_BUCKET_NAME: ${{ vars.NEXTJS_STATIC_BUCKET_NAME }}
+          IMPORT_EXISTING_STATIC_BUCKET: 'true'
+          IMPORT_EXISTING_AVATAR_BUCKET: 'true'
+          COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
+          COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
+        run: |
+          npx cdk deploy --all --require-approval never --context account=${{ secrets.AWS_ACCOUNT_ID }} --context region=us-east-1
+
+      - name: Get CloudFront URL
+        working-directory: ./client/infra
+        if: success()
+        id: cloudfront-url
+        run: |
+          DISTRIBUTION_URL=$(aws cloudformation describe-stacks \
+            --stack-name FrontendStack \
+            --query 'Stacks[0].Outputs[?OutputKey==`NextJsDistributionUrl`].OutputValue' \
+            --output text \
+            --region us-east-1)
+          echo "url=$DISTRIBUTION_URL" >> $GITHUB_OUTPUT
+          echo "🌐 CloudFront URL: $DISTRIBUTION_URL"
+
+      - name: Post-deploy validation
+        if: success()
+        run: |
+          URL="${{ steps.cloudfront-url.outputs.url }}"
+          if [ -z "$URL" ]; then
+            echo "⚠️  Warning: Could not retrieve CloudFront URL for validation"
+            exit 0
+          fi
+          echo "🔍 Validating deployment at $URL"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --fail --max-time 30 "$URL" || echo "000")
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "301" ] || [ "$HTTP_CODE" = "302" ]; then
+            echo "✅ Deployment validation successful (HTTP $HTTP_CODE)"
+          else
+            echo "⚠️  Warning: Deployment validation returned HTTP $HTTP_CODE (may still be propagating)"
+            # Don't fail the workflow - CloudFront may still be propagating
+          fi
+
+      - name: Optional rollback on failure
+        if: failure()
+        run: |
+          echo "⚠️  Deployment failed - rollback option available"
+          echo "To rollback manually, run: cd client/infra && npx cdk destroy --force"
+          # Automatic rollback is disabled by default to prevent accidental data loss
+          # Uncomment the following to enable automatic rollback:
+          # cd client/infra && npx cdk destroy --force || true
+
+      - name: Output deployment summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Infrastructure deployed successfully!"
+            echo "🌐 CloudFront URL: ${{ steps.cloudfront-url.outputs.url }}"
+            echo "📊 Check CloudFormation console for full details"
+          else
+            echo "❌ Deployment failed - check logs above"
+          fi
+
