@@ -183,8 +183,8 @@ jobs:
             --from-literal=COLYSEUS_RESERVATION_SECRET="${{ secrets.COLYSEUS_RESERVATION_SECRET }}" \
             --from-literal=AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
             --from-literal=AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-            --from-literal=S3_BUCKET_NAME="${{ secrets.S3_BUCKET_NAME }}" \
-            --from-literal=AWS_REGION="${{ secrets.AWS_REGION }}" \
+            --from-literal=S3_BUCKET_NAME="${{ vars.S3_BUCKET_NAME }}" \
+            --from-literal=AWS_REGION="${{ vars.AWS_REGION }}" \
             --dry-run=client -o yaml | k3s kubectl apply -f -
 
       - name: Clean up old failing pods before deployment

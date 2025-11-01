@@ -56,11 +56,10 @@ jobs:
         working-directory: ./client
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
-          NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ secrets.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
-          NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ secrets.NEXT_PUBLIC_COLYSEUS_WS_URL }}
-          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
+          NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
+          NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION: ${{vars.AWS_REGION}}
