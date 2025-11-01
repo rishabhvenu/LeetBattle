@@ -1,6 +1,6 @@
 import { getSession, getUserStatsCached, getOngoingMatchesCount } from '@/lib/actions';
 import { redirect } from 'next/navigation';
-import Play from "@/pages/Play";
+import Play from "@/components/pages/Play";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 

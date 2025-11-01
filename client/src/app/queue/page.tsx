@@ -1,11 +1,11 @@
 import { getSession, getUserStatsCached } from '@/lib/actions';
 import { redirect } from 'next/navigation';
-import MatchQueue from "@/pages/match/MatchQueue";
+import MatchQueue from "@/components/pages/match/MatchQueue";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 import { getRedis, RedisKeys } from '@/lib/redis';
 import { getGuestSession, hasGuestPlayed } from '@/lib/guest-actions';
-import GuestQueue from '../../pages/match/GuestQueue';
+import GuestQueue from '@/components/pages/match/GuestQueue';
 
 export default async function QueuePage() {
   const session = await getSession();

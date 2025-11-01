@@ -1,6 +1,6 @@
 'use client';
 
-import Home from "@/pages/Home";
+import Home from "@/components/pages/Home";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 

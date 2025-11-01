@@ -1,7 +1,5 @@
 'use server';
 
-export const runtime = 'nodejs';
-
 import { ObjectId } from 'mongodb';
 import connectDB, { getMongoClient } from './mongodb';
 

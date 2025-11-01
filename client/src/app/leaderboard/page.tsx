@@ -1,6 +1,6 @@
 import { getSession } from '@/lib/actions';
 import { redirect } from 'next/navigation';
-import Leaderboard from "@/pages/Leaderboard";
+import Leaderboard from "@/components/pages/Leaderboard";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 

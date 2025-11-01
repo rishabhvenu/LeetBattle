@@ -1,7 +1,3 @@
-'use server';
-
-export const runtime = 'edge';
-
 // Re-export Node runtime functions
 export {
   generalLimiter,

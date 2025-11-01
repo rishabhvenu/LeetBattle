@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 200" fill="none">
+  <!-- Blade -->
+  <path d="M35 20L50 10L65 20L65 100L35 100L35 20Z" fill="#D1D5DB" stroke="#9CA3AF" stroke-width="2"/>
+  <line x1="50" y1="20" x2="50" y2="100" stroke="#9CA3AF" stroke-width="2"/>
+  
+  <!-- Cross Guard -->
+  <rect x="20" y="100" width="60" height="10" fill="#D1D5DB" stroke="#9CA3AF" stroke-width="2"/>
+  
+  <!-- Handle -->
+  <rect x="40" y="110" width="20" height="30" fill="#1D4ED8"/>
+  <!-- Handle Stripes -->
+  <line x1="40" y1="115" x2="60" y2="115" stroke="#60A5FA" stroke-width="2"/>
+  <line x1="40" y1="120" x2="60" y2="120" stroke="#60A5FA" stroke-width="2"/>
+  <line x1="40" y1="125" x2="60" y2="125" stroke="#60A5FA" stroke-width="2"/>
+  <line x1="40" y1="130" x2="60" y2="130" stroke="#60A5FA" stroke-width="2"/>
+  <line x1="40" y1="135" x2="60" y2="135" stroke="#60A5FA" stroke-width="2"/>
+  
+  <!-- Pommel -->
+  <rect x="35" y="140" width="30" height="10" fill="#D1D5DB" stroke="#9CA3AF" stroke-width="2"/>
+</svg>
+

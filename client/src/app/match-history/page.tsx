@@ -1,6 +1,6 @@
 import { getSession, getMatchHistory } from '@/lib/actions';
 import { redirect } from 'next/navigation';
-import MatchHistory from "@/pages/match-history/MatchHistory";
+import MatchHistory from "@/components/pages/match-history/MatchHistory";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 

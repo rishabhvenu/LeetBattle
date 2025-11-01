@@ -9,7 +9,7 @@ import CountdownTimer from '@/components/CountdownTimer';
 import Running, { TestCaseResult } from '@/components/Running';
 import MatchupAnimation from '@/components/MatchupAnimation';
 import MatchResultAnimation from '@/components/MatchResultAnimation';
-import GuestSignUpModal from '../../components/GuestSignUpModal';
+import GuestSignUpModal from '@/components/GuestSignUpModal';
 import Editor from "@monaco-editor/react";
 import { getAvatarUrl } from '@/lib/utils';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';

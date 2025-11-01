@@ -1,7 +1,5 @@
 'use server';
 
-export const runtime = 'edge';
-
 import { cookies } from 'next/headers';
 
 export async function getSessionCookieName(): Promise<string> {

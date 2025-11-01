@@ -1,6 +1,6 @@
 import { getSession } from '@/lib/actions';
 import { redirect } from 'next/navigation';
-import Settings from "@/pages/Settings";
+import Settings from "@/components/pages/Settings";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 

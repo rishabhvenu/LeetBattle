@@ -1,7 +1,5 @@
 'use server';
 
-export const runtime = 'nodejs';
-
 import { getRedis } from './redis';
 
 export interface GuestMatchData {

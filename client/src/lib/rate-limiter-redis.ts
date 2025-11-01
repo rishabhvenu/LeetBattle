@@ -1,10 +1,6 @@
-'use server';
-
-export const runtime = 'nodejs';
-
 import { RateLimiterRedis } from 'rate-limiter-flexible';
 import { getRedis } from './redis';
-import { RATE_LIMITER_CONFIG } from './rate-limiter-edge';
+import { RATE_LIMITER_CONFIG } from './rate-limiter-config';
 
 // Create different rate limiters for different types of operations
 const redis = getRedis();

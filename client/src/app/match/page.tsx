@@ -1,6 +1,6 @@
 import { getSession } from '@/lib/actions';
 import { redirect } from 'next/navigation';
-import MatchClient from '@/pages/match/MatchClient';
+import MatchClient from '@/components/pages/match/MatchClient';
 import { getGuestSession, getGuestMatchData } from '@/lib/guest-actions';
 
 export default async function MatchPage() {

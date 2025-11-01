@@ -1,7 +1,5 @@
 'use server';
 
-export const runtime = 'nodejs';
-
 import { redirect } from 'next/navigation';
 // Note: cookies() usage moved to session-edge.ts for Edge compatibility
 import connectDB, { getMongoClient } from './mongodb';
