@@ -17,10 +17,11 @@ concurrency:
   group: frontend-deployment
   cancel-in-progress: false
 
-# Permissions for OIDC authentication
+# Permissions for OIDC authentication and artifact access
 permissions:
   id-token: write
   contents: read
+  actions: read  # Required to download artifacts from other workflow runs
 
 jobs:
   deploy:
