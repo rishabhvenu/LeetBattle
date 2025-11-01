@@ -25,7 +25,7 @@ export class InfrastructureStack extends cdk.Stack {
         },
       ],
       objectOwnership: s3.ObjectOwnership.OBJECT_WRITER,
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_NONE,
+      blockPublicAccess: s3.BlockPublicAccess.NONE,
       publicReadAccess: true,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
