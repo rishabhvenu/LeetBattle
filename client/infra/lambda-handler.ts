@@ -17,530 +17,89 @@ async function getNextServer() {
       console.log(`[INIT] Starting Next.js server initialization...`);
       console.log(`[INIT] Current working directory: ${process.cwd()}`);
       
-      // Check if .next directory exists
       const fs = await import('fs/promises');
       const pathModule = await import('path');
-      
-      try {
-        const nextDirStat = await fs.stat('./.next');
-        console.log('[INIT] ✓ .next directory exists');
-      } catch (statError) {
-        console.error('[INIT] ✗ .next directory not found!');
-        const dirContents = await fs.readdir('.').catch(() => []);
-        console.error('[INIT] Directory contents:', dirContents.slice(0, 10));
-      }
-      
-      // Try to use Next.js programmatically instead of requiring server.js
-      // This avoids blocking issues with server.js initialization
-      console.log('[INIT] Attempting to use Next.js programmatically...');
-      
-      // First verify we can require 'next'
       const { createRequire } = await import('module');
       const cjsRequire = createRequire(import.meta.url || __filename);
       
-      console.log('[INIT] Testing module resolution...');
-      let nextApp: any;
+      // Verify .next exists
       try {
-        const nextModule = cjsRequire('next');
-        console.log('[INIT] ✓ Successfully required "next" module');
-        
-        // Initialize Next.js app in production mode
-        // Point it to the standalone build directory
-        const nextDir = pathModule.resolve(process.cwd(), '.next');
-        console.log('[INIT] Initializing Next.js app with dir:', process.cwd());
-        
-        // Initialize Next.js - don't specify custom config, let it auto-detect
-        nextApp = nextModule.default({
-          dev: false,
-          dir: process.cwd(),
-        });
-        
-        console.log('[INIT] Next.js app created, calling prepare() with timeout...');
-        
-        // Wrap prepare() with timeout to detect if it's hanging
-        const preparePromise = nextApp.prepare();
-        const prepareTimeout = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('nextApp.prepare() timeout after 20s')), 20000);
-        });
-        
-        await Promise.race([preparePromise, prepareTimeout]);
-        console.log('[INIT] ✓ Next.js app prepared successfully');
-        
-        // Get the request handler
-        nextServer = nextApp.getRequestHandler();
-        console.log('[INIT] ✓ Got request handler from Next.js app');
-        
+        await fs.stat('./.next');
+        console.log('[INIT] ✓ .next directory exists');
+      } catch {
+        console.error('[INIT] ✗ .next directory not found!');
+      }
+      
+      // Test module resolution first
+      console.log('[INIT] Testing module resolution...');
+      try {
+        cjsRequire('next');
+        console.log('[INIT] ✓ "next" module resolvable');
       } catch (nextError) {
-        console.error('[INIT] Failed to use Next.js programmatically:', nextError);
-        console.error('[INIT] Error details:', {
-          message: nextError instanceof Error ? nextError.message : String(nextError),
-          stack: nextError instanceof Error ? nextError.stack : undefined,
-        });
-        console.error('[INIT] Falling back to requiring server.js...');
-        
-        // Fallback: try to require server.js
-        let serverModule: any;
+        console.error('[INIT] ✗ Cannot require "next":', nextError);
+        throw new Error(`Module resolution failed: ${nextError}`);
+      }
       
-        // Try CommonJS require first (Next.js standalone typically uses CommonJS)
-        // Use absolute path to ensure module resolution works correctly
+      // Strategy 1: Require server.js with timeout
+      console.log('[INIT] Strategy 1: Requiring server.js...');
+      try {
+        const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
+        console.log('[INIT] Path:', absoluteServerPath);
+        
+        // Wrap require in timeout
+        const requireWithTimeout = Promise.race([
+          Promise.resolve(cjsRequire(absoluteServerPath)),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('require timeout')), 10000)
+          ),
+        ]);
+        
+        const serverModule = await requireWithTimeout as any;
+        console.log('[INIT] ✓ server.js loaded');
+        console.log('[INIT] Exports:', Object.keys(serverModule));
+        
+        // Extract handler from serverModule
+        let handler = serverModule.default || serverModule.handler || serverModule;
+        
+        if (typeof handler === 'function') {
+          nextServer = handler;
+          console.log('[INIT] ✓ Handler extracted from server.js');
+          return nextServer;
+        } else if (handler && typeof handler.getRequestHandler === 'function') {
+          nextServer = handler.getRequestHandler();
+          console.log('[INIT] ✓ Handler via getRequestHandler()');
+          return nextServer;
+        } else {
+          throw new Error(`server.js exports unusable handler. Type: ${typeof handler}`);
+        }
+      } catch (requireError) {
+        console.error('[INIT] Strategy 1 failed:', requireError);
+        console.log('[INIT] Strategy 2: Programmatic Next.js...');
+        
+        // Strategy 2: Use Next.js programmatically
         try {
-          const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
-        console.log(`Attempting to require server.js from: ${absoluteServerPath}`);
-        
-        // Test if 'next' can be required before requiring server.js
-        // This ensures module resolution is working
-        console.log('Testing module resolution by requiring "next"...');
-        try {
-          const { createRequire } = await import('module');
-          const testRequire = createRequire(import.meta.url || __filename);
-          const nextModule = testRequire('next');
-          console.log('✓ Successfully required "next" module, module resolution is working');
-          console.log('Next module keys:', Object.keys(nextModule).slice(0, 10));
-        } catch (nextError) {
-          console.error('✗ Failed to require "next" module:', nextError);
-          console.error('This means server.js will also fail. Checking NODE_PATH and paths...');
-          console.error('NODE_PATH:', process.env.NODE_PATH);
-          console.error('process.cwd():', process.cwd());
-          const fs = await import('fs/promises');
-          const nodeModulesPath = pathModule.join(process.cwd(), 'node_modules', 'next');
-          try {
-            await fs.access(nodeModulesPath);
-            console.error('node_modules/next exists at:', nodeModulesPath);
-            throw new Error('Module resolution failed even though next exists. Check NODE_PATH or module resolution.');
-          } catch (accessError) {
-            throw new Error(`Cannot find next module and node_modules/next doesn't exist at ${nodeModulesPath}`);
-          }
-        }
-        
-        const { createRequire } = await import('module');
-        const cjsRequire = createRequire(import.meta.url || __filename);
-        console.log('Requiring server.js (this may take a moment if it initializes Next.js)...');
-        serverModule = cjsRequire(absoluteServerPath);
-        console.log('Next.js server module loaded successfully (CommonJS)');
-        console.log('CJS module keys:', Object.keys(serverModule));
-        console.log('CJS module type:', typeof serverModule);
-      } catch (cjsError) {
-        // Fallback to ESM import if CommonJS fails
-        console.log('CommonJS require failed, trying ESM import...');
-        try {
-          serverModule = await import(NEXT_SERVER_PATH);
-          console.log('Next.js server module loaded successfully (ESM)');
-        } catch (esmError) {
-          console.error('Both CJS and ESM imports failed');
-          throw new Error(`Failed to import Next.js server.js: CJS error: ${cjsError}, ESM error: ${esmError}`);
-        }
-      }
-      
-      console.log('Module keys:', Object.keys(serverModule));
-      console.log('Module type:', typeof serverModule);
-      console.log('Module has default:', 'default' in serverModule);
-      
-      // If default exists, log its details
-      if (serverModule.default !== undefined) {
-        console.log('Default export exists, type:', typeof serverModule.default);
-        console.log('Default export keys:', typeof serverModule.default === 'object' && serverModule.default !== null ? Object.keys(serverModule.default) : 'N/A');
-      }
-      
-      // Try different export patterns
-      let handler: any = null;
-      
-      // Check if default is an empty object (Next.js 15 might use this pattern)
-      const defaultExport = serverModule.default;
-      const defaultIsEmptyObject = defaultExport && typeof defaultExport === 'object' && Object.keys(defaultExport).length === 0;
-      
-      console.log('Default export:', {
-        exists: !!defaultExport,
-        type: typeof defaultExport,
-        isEmptyObject: defaultIsEmptyObject,
-        keys: defaultExport && typeof defaultExport === 'object' ? Object.keys(defaultExport) : 'N/A'
-      });
-      
-      // Pattern 1: Check all named exports first (Next.js 15 might export handler as named export)
-      // Common Next.js 15 standalone exports: handler, server, createServer, getRequestHandler, app
-      const namedExports = ['handler', 'server', 'createServer', 'getRequestHandler', 'app', 'render', 'prepare'];
-      for (const exportName of namedExports) {
-        if (serverModule[exportName] && typeof serverModule[exportName] === 'function') {
-          handler = serverModule[exportName];
-          console.log(`Using named export: ${exportName}`);
-          break;
-        }
-      }
-      
-      // Pattern 2: If default is empty object, check if serverModule itself is a function
-      if (!handler && defaultIsEmptyObject && typeof serverModule === 'function') {
-        handler = serverModule;
-        console.log('Using serverModule directly as function (default was empty)');
-      }
-      // Pattern 3: Default export (if not empty)
-      else if (!handler && defaultExport && !defaultIsEmptyObject) {
-        handler = defaultExport;
-        console.log('Using default export');
-        console.log('Default export type:', typeof handler);
-        console.log('Default export keys:', typeof handler === 'object' ? Object.keys(handler) : 'N/A');
-      }
-      // Pattern 4: Try to call default if it exists (might be a factory function)
-      else if (!handler && defaultExport && typeof defaultExport === 'function') {
-        handler = defaultExport;
-        console.log('Using default export as function');
-      }
-      // Pattern 5: Try all non-default exports
-      else if (!handler) {
-        console.log('Checking all module exports for functions...');
-        for (const key of Object.keys(serverModule)) {
-          if (key !== 'default' && typeof serverModule[key] === 'function') {
-            handler = serverModule[key];
-            console.log(`Found function export: ${key}`);
-            break;
-          }
-        }
-      }
-      
-      // Pattern 6: If default is empty object, try reading the actual server.js file to understand structure
-      if (!handler && defaultIsEmptyObject) {
-        console.log('Default is empty object, attempting to read server.js file directly...');
-        try {
-          const fs = await import('fs/promises');
-          const serverJsContent = await fs.readFile(NEXT_SERVER_PATH, 'utf-8');
-          console.log(`server.js file size: ${serverJsContent.length} bytes`);
-          console.log(`server.js first 500 chars: ${serverJsContent.substring(0, 500)}`);
+          const nextModule = cjsRequire('next');
+          const nextApp = nextModule.default({ dev: false, dir: process.cwd() });
           
-          // Check if it's a CommonJS module that exports differently
-          if (serverJsContent.includes('module.exports') || serverJsContent.includes('exports.')) {
-            console.log('Detected CommonJS exports, trying require()...');
-            try {
-              const { createRequire } = await import('module');
-              const cjsRequire = createRequire(import.meta.url || __filename);
-              const cjsModule = cjsRequire(NEXT_SERVER_PATH);
-              console.log('CJS module keys:', Object.keys(cjsModule));
-              console.log('CJS module type:', typeof cjsModule);
-              
-              // Try to get handler from CJS module - check all exports
-              if (typeof cjsModule === 'function') {
-                handler = cjsModule;
-                console.log('CJS module is a function');
-              } else if (cjsModule && typeof cjsModule === 'object') {
-                // Check all properties of CJS module
-                for (const key of Object.keys(cjsModule)) {
-                  const value = cjsModule[key];
-                  console.log(`CJS module.${key}: type=${typeof value}`);
-                  if (typeof value === 'function') {
-                    handler = value;
-                    console.log(`Using CJS module.${key} as handler`);
-                    break;
-                  }
-                }
-              }
-            } catch (cjsError) {
-              console.warn('CJS require failed:', cjsError);
-            }
-          }
+          const prepareWithTimeout = Promise.race([
+            nextApp.prepare(),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('prepare timeout')), 15000)
+            ),
+          ]);
           
-          // Also try checking if file uses a different export pattern
-          // Next.js 15 might export handler differently
-          if (!handler && serverJsContent) {
-            // Look for export patterns
-            const exportPatterns = [
-              /export\s+default\s+function\s+(\w+)/,
-              /module\.exports\s*=\s*function/,
-              /module\.exports\s*=\s*(\w+)/,
-              /exports\.(\w+)\s*=/,
-            ];
-            
-            for (const pattern of exportPatterns) {
-              const match = serverJsContent.match(pattern);
-              if (match) {
-                console.log(`Found export pattern: ${pattern}`);
-                // Try requiring again with better error handling
-                try {
-                  const { createRequire } = await import('module');
-                  const cjsRequire = createRequire(import.meta.url || __filename);
-                  const cjsResult = cjsRequire(NEXT_SERVER_PATH);
-                  // Try all exports one more time
-                  if (typeof cjsResult === 'function') {
-                    handler = cjsResult;
-                    break;
-                  }
-                  for (const key of Object.keys(cjsResult)) {
-                    if (typeof cjsResult[key] === 'function') {
-                      handler = cjsResult[key];
-                      break;
-                    }
-                  }
-                } catch (e) {
-                  // Ignore
-                }
-                break;
-              }
-            }
-          }
-        } catch (fileError) {
-          console.warn('Could not read server.js file:', fileError);
+          await prepareWithTimeout;
+          nextServer = nextApp.getRequestHandler();
+          console.log('[INIT] ✓ Handler via programmatic Next.js');
+          return nextServer;
+        } catch (progError) {
+          console.error('[INIT] Strategy 2 failed:', progError);
+          throw new Error(`Both strategies failed. require error: ${requireError}, programmatic error: ${progError}`);
         }
-      }
-      
-      // Pattern 7: Check if we need to try alternative file paths
-      if (!handler) {
-        console.log('No handler found, trying alternative import paths...');
-        
-        // Try server-handler.js or other common patterns
-        const alternativePaths = [
-          './server-handler.js', 
-          './server-handler', 
-          './index.js',
-          './.next/server/server.js',
-          './server/server.js',
-          // Try with absolute path resolution
-          require.resolve ? require.resolve('./server.js') : './server.js',
-        ];
-        
-        for (const altPath of alternativePaths) {
-          try {
-            console.log(`Attempting to import: ${altPath}`);
-            const altModule = await import(altPath);
-            console.log(`Successfully imported ${altPath}, keys:`, Object.keys(altModule));
-            
-            // Check default export
-            if (altModule.default) {
-              if (typeof altModule.default === 'function') {
-                handler = altModule.default;
-                console.log(`Found handler.default function in ${altPath}`);
-                break;
-              } else if (altModule.default.getRequestHandler && typeof altModule.default.getRequestHandler === 'function') {
-                handler = altModule.default.getRequestHandler();
-                console.log(`Found handler via getRequestHandler() in ${altPath}`);
-                break;
-              }
-            }
-            
-            // Check named exports
-            if (!handler && altModule.handler && typeof altModule.handler === 'function') {
-              handler = altModule.handler;
-              console.log(`Found handler.handler in ${altPath}`);
-              break;
-            }
-            
-            // Check all exports
-            for (const key of Object.keys(altModule)) {
-              if (key !== 'default' && typeof altModule[key] === 'function') {
-                handler = altModule[key];
-                console.log(`Found handler.${key} in ${altPath}`);
-                break;
-              }
-            }
-            
-            if (handler) break;
-          } catch (e) {
-            console.log(`Import failed for ${altPath}:`, (e as Error).message);
-            // Ignore import errors for alternative paths
-          }
-        }
-        
-          // Last resort: Try using file:// protocol with absolute path
-          if (!handler) {
-            try {
-              const pathModule = await import('path');
-              const fs = await import('fs/promises');
-              const absolutePath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
-            console.log(`Trying absolute path: ${absolutePath}`);
-            
-            // Check if file exists
-            try {
-              await fs.access(absolutePath);
-              const fileUrl = `file://${absolutePath}`;
-              console.log(`Trying file:// import: ${fileUrl}`);
-              const fileModule = await import(fileUrl);
-              console.log(`File import keys:`, Object.keys(fileModule));
-              
-              if (fileModule.default && typeof fileModule.default === 'function') {
-                handler = fileModule.default;
-              } else {
-                // Check all exports
-                for (const key of Object.keys(fileModule)) {
-                  if (typeof fileModule[key] === 'function') {
-                    handler = fileModule[key];
-                    break;
-                  }
-                }
-              }
-            } catch (accessError) {
-              console.warn(`File does not exist at ${absolutePath}`);
-            }
-          } catch (fileError) {
-            console.warn('File:// import failed:', fileError);
-          }
-        }
-      }
-      
-      if (!handler) {
-        const allExports = Object.keys(serverModule).map(key => {
-          const value = serverModule[key];
-          return `${key}(${typeof value})${typeof value === 'object' && value !== null ? `:${Object.keys(value).join(',')}` : ''}`;
-        }).join(', ');
-        throw new Error(`Next.js server.js does not export a handler. Available exports: ${allExports}`);
-      }
-      
-      // Handle case where handler is an object (Next.js 15 standalone sometimes exports server instance)
-      if (typeof handler !== 'function') {
-        console.log('Handler is not a function, checking for request handler methods...');
-        console.log('Handler object keys:', Object.keys(handler));
-        console.log('Handler object type:', typeof handler);
-        console.log('Handler value:', handler);
-        
-        // Check for Symbol properties
-        const symbolKeys = Object.getOwnPropertySymbols(handler);
-        console.log('Handler symbol keys:', symbolKeys.length);
-        
-        // Check if handler is a Promise that resolves to a function
-        if (handler && typeof handler.then === 'function') {
-          console.log('Handler is a Promise, awaiting...');
-          handler = await handler;
-          console.log('Promise resolved to type:', typeof handler);
-        }
-        
-        // If still not a function after awaiting, try object patterns
-        if (typeof handler !== 'function') {
-          // Next.js standalone might export an object with a request handler
-          // Try common patterns - check all possible property names
-          const possibleMethods = ['handle', 'request', 'listener', 'default', 'handler', 'app', 'server', 'createServer', 'getRequestHandler'];
-          
-          for (const methodName of possibleMethods) {
-            if (handler[methodName] && typeof handler[methodName] === 'function') {
-              console.log(`Found handler.${methodName} method`);
-              handler = handler[methodName].bind(handler);
-              break;
-            }
-          }
-          
-          // If we still don't have a function, try checking all enumerable properties
-          if (typeof handler !== 'function') {
-            console.log('Checking all enumerable properties...');
-            for (const key in handler) {
-              console.log(`  Checking property: ${key}, type: ${typeof handler[key]}`);
-              if (typeof handler[key] === 'function') {
-                console.log(`Found function property: ${key}`);
-                handler = handler[key].bind(handler);
-                break;
-              }
-            }
-          }
-          
-          // Last resort: check if it has a __esModule flag and default export
-          if (typeof handler !== 'function' && handler.__esModule && handler.default) {
-            console.log('Found ESM module with default export');
-            handler = handler.default;
-          }
-          
-          // If still not a function, try using it as a request listener with http.createServer
-          if (typeof handler !== 'function') {
-            console.log('Attempting to use handler as request listener...');
-            const http = await import('http');
-            
-            // In Next.js standalone, the export might be a request listener function
-            // that needs to be wrapped. But if handler is empty, this won't work.
-            // Let's check if we can inspect the constructor or prototype
-            console.log('Handler constructor:', handler.constructor?.name);
-            console.log('Handler prototype:', Object.getPrototypeOf(handler)?.constructor?.name);
-            
-            // If handler is an empty object or has no usable properties, try alternative approaches
-            if (Object.keys(handler).length === 0 && (!handler.constructor || handler.constructor === Object)) {
-              console.log('Handler appears to be an empty object, trying alternative approaches...');
-              
-              // Try 1: Check if serverModule itself is a function (bypass default)
-              if (serverModule && typeof serverModule === 'function') {
-                console.log('Using serverModule directly as function');
-                handler = serverModule;
-              }
-              // Try 2: Check all non-default exports in serverModule
-              else {
-                console.log('Checking all non-default exports in serverModule...');
-                for (const key of Object.keys(serverModule)) {
-                  if (key !== 'default') {
-                    const value = serverModule[key];
-                    console.log(`  Checking ${key}: type=${typeof value}`);
-                    if (typeof value === 'function') {
-                      handler = value;
-                      console.log(`  Found function export: ${key}`);
-                      break;
-                    } else if (value && typeof value === 'object' && value.getRequestHandler && typeof value.getRequestHandler === 'function') {
-                      // Next.js app instance
-                      console.log(`  Found Next.js app instance: ${key}`);
-                      handler = value.getRequestHandler();
-                      console.log(`  Got request handler from app instance`);
-                      break;
-                    }
-                  }
-                }
-              }
-              
-              // Try 3: If still not a function handler, read the actual server.js content to understand export structure
-              if (typeof handler !== 'function') {
-                try {
-                  const fs = await import('fs/promises');
-                  const serverJsContent = await fs.readFile(NEXT_SERVER_PATH, 'utf-8');
-                  
-                  // Look for patterns like: export default function, module.exports = function, etc.
-                  if (serverJsContent.includes('export default') || serverJsContent.includes('module.exports')) {
-                    // Try requiring it as CommonJS if ESM import gave empty object
-                    try {
-                      const { createRequire } = await import('module');
-                      const cjsRequire = createRequire(import.meta.url || __filename);
-                      const cjsResult = cjsRequire(NEXT_SERVER_PATH);
-                      console.log('CJS require result keys:', Object.keys(cjsResult));
-                      if (typeof cjsResult === 'function') {
-                        handler = cjsResult;
-                        console.log('CJS require returned function');
-                      } else if (cjsResult && typeof cjsResult === 'object') {
-                        // Try to find handler in CJS result
-                        for (const key of Object.keys(cjsResult)) {
-                          if (typeof cjsResult[key] === 'function') {
-                            handler = cjsResult[key];
-                            console.log(`Found function in CJS result: ${key}`);
-                            break;
-                          }
-                        }
-                      }
-                    } catch (cjsError) {
-                      console.warn('CJS require failed:', cjsError);
-                    }
-                  }
-                } catch (readError) {
-                  console.warn('Could not read server.js for analysis:', readError);
-                }
-              }
-              
-              // Final error if still no handler function
-              if (typeof handler !== 'function') {
-                const allKeys = [
-                  ...Object.keys(handler || {}),
-                  ...Object.getOwnPropertyNames(handler || {}),
-                  ...symbolKeys.map(s => s.toString())
-                ];
-                throw new Error(`Next.js handler must be a function. Got empty object. Module keys: ${Object.keys(serverModule).join(', ')}, Handler keys: ${allKeys.join(', ') || 'none'}. Try checking if server.js is correctly copied to Lambda.`);
-              }
-            } else {
-              throw new Error(`Next.js handler must be a function or have a handle/request/listener/default method. Got type: ${typeof handler}, keys: ${Object.keys(handler).join(', ') || 'none'}`);
-            }
-          }
-        }
-      }
-      
-        // Final check after all processing
-        if (typeof handler !== 'function') {
-          throw new Error(`Next.js handler processing failed. Final type: ${typeof handler}, value: ${JSON.stringify(handler ? Object.keys(handler) : 'null')}`);
-        }
-        
-        console.log('[INIT] Handler type after processing:', typeof handler);
-        console.log('[INIT] Handler name:', handler.name || 'anonymous');
-        
-        // Next.js standalone server exports a request handler function
-        // that expects Node.js IncomingMessage/ServerResponse
-        nextServer = handler;
-        
-        console.log('[INIT] ✓ Next.js server initialized via server.js');
       }
     } catch (error) {
-      console.error('Failed to load Next.js server:', error);
-      console.error('Error details:', {
+      console.error('[INIT] ✗ Failed to load Next.js server:', error);
+      console.error('[INIT] Error details:', {
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         code: (error as any)?.code,
