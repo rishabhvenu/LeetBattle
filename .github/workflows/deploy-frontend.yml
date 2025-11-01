@@ -96,17 +96,33 @@ jobs:
             STACK_EXISTS=false
           fi
           
-          # Check if bootstrap S3 bucket exists
+          # Check if bootstrap S3 bucket exists (try multiple methods)
           echo ""
           echo "🪣 Step 2: Checking for bootstrap S3 bucket..."
-          if aws s3api head-bucket \
+          BUCKET_EXISTS=false
+          
+          # Method 1: Try s3 ls (works even without permissions to list objects)
+          if aws s3 ls "s3://$BOOTSTRAP_BUCKET/" \
+            --region "$AWS_REGION" \
+            >/dev/null 2>&1; then
+            echo "   ✅ Bootstrap bucket exists (verified via s3 ls): $BOOTSTRAP_BUCKET"
+            BUCKET_EXISTS=true
+          # Method 2: Try s3api head-bucket
+          elif aws s3api head-bucket \
             --bucket "$BOOTSTRAP_BUCKET" \
             --region "$AWS_REGION" \
             >/dev/null 2>&1; then
-            echo "   ✅ Bootstrap bucket exists: $BOOTSTRAP_BUCKET"
+            echo "   ✅ Bootstrap bucket exists (verified via head-bucket): $BOOTSTRAP_BUCKET"
+            BUCKET_EXISTS=true
+          # Method 3: Try checking bucket location
+          elif aws s3api get-bucket-location \
+            --bucket "$BOOTSTRAP_BUCKET" \
+            >/dev/null 2>&1; then
+            echo "   ✅ Bootstrap bucket exists (verified via get-bucket-location): $BOOTSTRAP_BUCKET"
             BUCKET_EXISTS=true
           else
             echo "   ❌ Bootstrap bucket not found: $BOOTSTRAP_BUCKET"
+            echo "      Tried: s3 ls, s3api head-bucket, s3api get-bucket-location"
             BUCKET_EXISTS=false
           fi
           
@@ -121,22 +137,220 @@ jobs:
               echo "⚠️  CDKToolkit stack is missing - bootstrap required"
             fi
             if [ "$BUCKET_EXISTS" = false ]; then
-              echo "⚠️  Bootstrap bucket was deleted - bootstrap required"
+              echo "⚠️  Bootstrap bucket was deleted or inaccessible - bootstrap required"
+              # If stack exists but bucket doesn't, we need to force re-bootstrap
+              if [ "$STACK_EXISTS" = true ]; then
+                echo "   ⚠️  Stack exists but bucket missing - this indicates a corrupted bootstrap"
+                echo "   ⚠️  We'll try to bootstrap which should fix the missing bucket"
+              fi
             fi
             
             echo ""
             echo "🚀 Running CDK bootstrap..."
-            echo "   This will create/update the CDKToolkit stack and bootstrap bucket"
-            npx cdk bootstrap \
-              aws://$AWS_ACCOUNT_ID/$AWS_REGION \
-              --require-approval never \
-              --output-file /tmp/bootstrap-output.json || {
-              echo "❌ Bootstrap failed!"
-              exit 1
-            }
+            echo "   Command: npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION --require-approval never"
+            
+            # Check CDKToolkit stack status before bootstrap
+            echo ""
+            echo "📊 Checking CDKToolkit stack status BEFORE bootstrap..."
+            if [ "$STACK_EXISTS" = true ]; then
+              echo "   Stack exists, checking details..."
+              STACK_STATUS=$(aws cloudformation describe-stacks \
+                --stack-name "$CDK_TOOLKIT_STACK" \
+                --region "$AWS_REGION" \
+                --query 'Stacks[0].StackStatus' \
+                --output text 2>/dev/null || echo "UNKNOWN")
+              echo "   Stack Status: $STACK_STATUS"
+              
+              # Get all stack outputs
+              echo "   Stack Outputs:"
+              aws cloudformation describe-stacks \
+                --stack-name "$CDK_TOOLKIT_STACK" \
+                --region "$AWS_REGION" \
+                --query 'Stacks[0].Outputs' \
+                --output table 2>/dev/null || echo "   (Could not retrieve outputs)"
+              
+              # Get stack resources
+              echo ""
+              echo "   Stack Resources:"
+              aws cloudformation describe-stack-resources \
+                --stack-name "$CDK_TOOLKIT_STACK" \
+                --region "$AWS_REGION" \
+                --query 'StackResources[*].[LogicalResourceId,ResourceType,PhysicalResourceId,ResourceStatus]' \
+                --output table 2>/dev/null || echo "   (Could not retrieve resources)"
+              
+              # Check for S3 bucket resource
+              echo ""
+              echo "   Looking for S3 bucket resource in stack..."
+              S3_BUCKET_RESOURCE=$(aws cloudformation describe-stack-resources \
+                --stack-name "$CDK_TOOLKIT_STACK" \
+                --region "$AWS_REGION" \
+                --query 'StackResources[?ResourceType==`AWS::S3::Bucket`].[LogicalResourceId,PhysicalResourceId,ResourceStatus]' \
+                --output text 2>/dev/null || echo "")
+              
+              if [ -n "$S3_BUCKET_RESOURCE" ]; then
+                echo "   Found S3 bucket resource:"
+                echo "$S3_BUCKET_RESOURCE" | while read -r line; do
+                  echo "      $line"
+                done
+              else
+                echo "   ⚠️  No S3 bucket resource found in stack!"
+              fi
+            fi
+            
+            # Check IAM permissions for S3
+            echo ""
+            echo "🔐 Checking IAM permissions for S3 operations..."
+            echo "   Testing s3:CreateBucket permission..."
+            if aws s3api head-bucket --bucket "test-bucket-$(date +%s)" --region "$AWS_REGION" 2>&1 | grep -q "403\|Forbidden\|AccessDenied"; then
+              echo "   ⚠️  Permission check inconclusive (expected for non-existent bucket)"
+            fi
             
             echo ""
-            echo "✅ CDK bootstrap completed successfully"
+            echo "   Testing s3:ListBuckets permission..."
+            if aws s3 ls --region "$AWS_REGION" >/dev/null 2>&1; then
+              echo "   ✅ Can list S3 buckets"
+            else
+              echo "   ⚠️  Cannot list S3 buckets (may not have permission)"
+            fi
+            
+            # Run bootstrap with verbose output
+            echo ""
+            echo "🔄 Executing CDK bootstrap (capturing full output)..."
+            set +e  # Temporarily disable exit on error to capture output
+            BOOTSTRAP_OUTPUT=$(npx cdk bootstrap \
+              aws://$AWS_ACCOUNT_ID/$AWS_REGION \
+              --require-approval never \
+              --verbose 2>&1)
+            BOOTSTRAP_EXIT_CODE=$?
+            set -e  # Re-enable exit on error
+            
+            echo ""
+            echo "════════════════════════════════════════"
+            echo "CDK Bootstrap Output:"
+            echo "════════════════════════════════════════"
+            echo "$BOOTSTRAP_OUTPUT"
+            echo "════════════════════════════════════════"
+            echo "Exit Code: $BOOTSTRAP_EXIT_CODE"
+            echo ""
+            
+            if [ $BOOTSTRAP_EXIT_CODE -ne 0 ]; then
+              echo "❌ Bootstrap failed with exit code $BOOTSTRAP_EXIT_CODE"
+              exit 1
+            fi
+            
+            # Check if bootstrap said "no changes"
+            BOOTSTRAP_NO_CHANGES=false
+            if echo "$BOOTSTRAP_OUTPUT" | grep -qi "no changes"; then
+              BOOTSTRAP_NO_CHANGES=true
+              echo "⚠️  Bootstrap reported 'no changes'"
+            fi
+            
+            # Check CDKToolkit stack status after bootstrap
+            echo ""
+            echo "📊 Checking CDKToolkit stack status AFTER bootstrap..."
+            sleep 2  # Wait a moment for stack updates to propagate
+            
+            STACK_AFTER_STATUS=$(aws cloudformation describe-stacks \
+              --stack-name "$CDK_TOOLKIT_STACK" \
+              --region "$AWS_REGION" \
+              --query 'Stacks[0].StackStatus' \
+              --output text 2>/dev/null || echo "UNKNOWN")
+            echo "   Stack Status: $STACK_AFTER_STATUS"
+            
+            # Get stack outputs after bootstrap
+            echo ""
+            echo "   Stack Outputs after bootstrap:"
+            aws cloudformation describe-stacks \
+              --stack-name "$CDK_TOOLKIT_STACK" \
+              --region "$AWS_REGION" \
+              --query 'Stacks[0].Outputs' \
+              --output table 2>/dev/null || echo "   (Could not retrieve outputs)"
+            
+            # Get the bucket name from stack outputs
+            BUCKET_FROM_STACK=$(aws cloudformation describe-stacks \
+              --stack-name "$CDK_TOOLKIT_STACK" \
+              --region "$AWS_REGION" \
+              --query 'Stacks[0].Outputs[?OutputKey==`BucketName`].OutputValue' \
+              --output text 2>/dev/null || echo "")
+            
+            if [ -n "$BUCKET_FROM_STACK" ] && [ "$BUCKET_FROM_STACK" != "None" ]; then
+              echo ""
+              echo "   ✅ Found bucket name in stack outputs: $BUCKET_FROM_STACK"
+              echo "   Expected bucket name: $BOOTSTRAP_BUCKET"
+              
+              if [ "$BUCKET_FROM_STACK" != "$BOOTSTRAP_BUCKET" ]; then
+                echo "   ⚠️  WARNING: Bucket name mismatch!"
+                echo "      Stack says: $BUCKET_FROM_STACK"
+                echo "      We expect: $BOOTSTRAP_BUCKET"
+              fi
+              
+              echo ""
+              echo "   Checking if bucket from stack exists..."
+              if aws s3 ls "s3://$BUCKET_FROM_STACK/" --region "$AWS_REGION" >/dev/null 2>&1; then
+                echo "   ✅ Bucket from stack exists and is accessible: $BUCKET_FROM_STACK"
+                BUCKET_EXISTS=true
+                BOOTSTRAP_BUCKET="$BUCKET_FROM_STACK"  # Update to use actual bucket name
+              else
+                echo "   ❌ Bucket from stack does not exist or is not accessible: $BUCKET_FROM_STACK"
+                echo "   Attempting to check bucket location..."
+                aws s3api get-bucket-location --bucket "$BUCKET_FROM_STACK" 2>&1 || true
+              fi
+            else
+              echo ""
+              echo "   ⚠️  No bucket name found in stack outputs"
+              echo "   Listing all stack outputs:"
+              aws cloudformation describe-stacks \
+                --stack-name "$CDK_TOOLKIT_STACK" \
+                --region "$AWS_REGION" \
+                --query 'Stacks[0].Outputs' \
+                --output json 2>/dev/null || echo "{}"
+            fi
+            
+            # Check stack resources after bootstrap
+            echo ""
+            echo "   Stack Resources after bootstrap:"
+            aws cloudformation describe-stack-resources \
+              --stack-name "$CDK_TOOLKIT_STACK" \
+              --region "$AWS_REGION" \
+              --query 'StackResources[*].[LogicalResourceId,ResourceType,PhysicalResourceId,ResourceStatus]' \
+              --output table 2>/dev/null || echo "   (Could not retrieve resources)"
+            
+            # Check for recent stack events that might show what happened
+            echo ""
+            echo "   Recent stack events (last 10):"
+            aws cloudformation describe-stack-events \
+              --stack-name "$CDK_TOOLKIT_STACK" \
+              --region "$AWS_REGION" \
+              --max-items 10 \
+              --query 'StackEvents[*].[Timestamp,ResourceStatus,ResourceType,LogicalResourceId,ResourceStatusReason]' \
+              --output table 2>/dev/null || echo "   (Could not retrieve events)"
+            
+            # If bootstrap said "no changes" but bucket is missing, provide diagnostic info
+            if [ "$BOOTSTRAP_NO_CHANGES" = true ] && [ "$BUCKET_EXISTS" = false ]; then
+              echo ""
+              echo "════════════════════════════════════════"
+              echo "⚠️  DIAGNOSTIC: Bootstrap reported 'no changes' but bucket is missing"
+              echo "════════════════════════════════════════"
+              echo "This indicates the CDKToolkit stack thinks everything is up to date,"
+              echo "but the expected S3 bucket does not exist."
+              echo ""
+              echo "Possible causes:"
+              echo "1. Bucket was manually deleted but stack wasn't updated"
+              echo "2. Stack has incorrect bucket reference"
+              echo "3. Permissions issue preventing bucket creation"
+              echo "4. Bootstrap version mismatch"
+              echo ""
+              echo "Recommended actions:"
+              echo "1. Check CloudFormation console for CDKToolkit stack"
+              echo "2. Verify stack resources and outputs"
+              echo "3. Try deleting and recreating CDKToolkit stack:"
+              echo "   aws cloudformation delete-stack --stack-name CDKToolkit --region us-east-1"
+              echo "   (Then let this workflow re-bootstrap)"
+              echo "════════════════════════════════════════"
+            fi
+            
+            echo ""
+            echo "✅ CDK bootstrap process completed"
             
             # Verify bootstrap after completion
             echo ""
@@ -147,16 +361,24 @@ jobs:
               >/dev/null 2>&1; then
               echo "   ✅ CDKToolkit stack verified"
             else
-              echo "   ⚠️  Warning: CDKToolkit stack verification failed"
+              echo "   ❌ ERROR: CDKToolkit stack verification failed"
+              exit 1
             fi
             
-            if aws s3api head-bucket \
-              --bucket "$BOOTSTRAP_BUCKET" \
-              --region "$AWS_REGION" \
-              >/dev/null 2>&1; then
-              echo "   ✅ Bootstrap bucket verified: $BOOTSTRAP_BUCKET"
+            # Re-check bucket with all methods
+            VERIFIED=false
+            if aws s3 ls "s3://$BOOTSTRAP_BUCKET/" --region "$AWS_REGION" >/dev/null 2>&1; then
+              echo "   ✅ Bootstrap bucket verified (s3 ls): $BOOTSTRAP_BUCKET"
+              VERIFIED=true
+            elif aws s3api head-bucket --bucket "$BOOTSTRAP_BUCKET" --region "$AWS_REGION" >/dev/null 2>&1; then
+              echo "   ✅ Bootstrap bucket verified (head-bucket): $BOOTSTRAP_BUCKET"
+              VERIFIED=true
             else
-              echo "   ⚠️  Warning: Bootstrap bucket verification failed"
+              echo "   ❌ ERROR: Bootstrap bucket verification failed"
+              echo "      Bucket: $BOOTSTRAP_BUCKET"
+              echo "      This will cause deployment to fail"
+              echo "      Manual intervention may be required"
+              exit 1
             fi
           fi
           
