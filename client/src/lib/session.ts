@@ -14,10 +14,8 @@ import {
   type SessionData,
 } from './session-db';
 
-// Re-export types and cookie name function
+// Re-export cookie name function
 export { getSessionCookieName };
-export type { SessionData } from './session-db';
-export type { SessionUser } from './session-db';
 
 /**
  * Get session - Edge runtime orchestrator
