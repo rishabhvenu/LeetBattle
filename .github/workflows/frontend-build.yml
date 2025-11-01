@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'client/**'
-      - '.github/workflows/frontend/build.yml'
+      - '.github/workflows/frontend-build.yml'
   workflow_dispatch:
 
 # Allow concurrent builds (no concurrency needed for build-only)
