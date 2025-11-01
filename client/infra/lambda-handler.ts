@@ -41,20 +41,46 @@ async function getNextServer() {
       }
       
       // Strategy 1: Require server.js with timeout
+      // Note: require() is synchronous, but we can wrap it to detect hangs
       console.log('[INIT] Strategy 1: Requiring server.js...');
       try {
         const absoluteServerPath = pathModule.resolve(process.cwd(), NEXT_SERVER_PATH);
         console.log('[INIT] Path:', absoluteServerPath);
         
-        // Wrap require in timeout
-        const requireWithTimeout = Promise.race([
-          Promise.resolve(cjsRequire(absoluteServerPath)),
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('require timeout')), 10000)
-          ),
-        ]);
+        // Defer require to next tick so we can race it with timeout
+        // This allows timeout to fire if require blocks too long
+        let requireDone = false;
+        let serverModule: any;
+        let requireError: any;
         
-        const serverModule = await requireWithTimeout as any;
+        const requirePromise = new Promise<void>((resolve) => {
+          setImmediate(() => {
+            try {
+              serverModule = cjsRequire(absoluteServerPath);
+              requireDone = true;
+              resolve();
+            } catch (err) {
+              requireError = err;
+              requireDone = true;
+              resolve();
+            }
+          });
+        });
+        
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => {
+            if (!requireDone) {
+              reject(new Error('require timeout after 10s - server.js may be hanging'));
+            }
+          }, 10000);
+        });
+        
+        await Promise.race([requirePromise, timeoutPromise]);
+        
+        if (requireError) {
+          throw requireError;
+        }
+        
         console.log('[INIT] ✓ server.js loaded');
         console.log('[INIT] Exports:', Object.keys(serverModule));
         
