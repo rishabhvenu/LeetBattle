@@ -196,6 +196,38 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: npx cdk bootstrap aws://$AWS_ACCOUNT_ID/us-east-1 || echo "Bootstrap already done"
 
+      - name: Debug domain configuration
+        run: |
+          echo "=== Domain Configuration Debug ==="
+          echo "ROUTE53_HOSTED_ZONE_NAME: ${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
+          echo "NEXTJS_DOMAIN_NAME: ${{ vars.NEXTJS_DOMAIN_NAME }}"
+          echo ""
+          echo "Expected CloudFront CNAMEs will be:"
+          if [ -n "${{ vars.NEXTJS_DOMAIN_NAME }}" ]; then
+            DOMAIN="${{ vars.NEXTJS_DOMAIN_NAME }}"
+            HOSTED_ZONE="${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
+            # Logic matches infrastructure-stack.ts
+            if [[ "$DOMAIN" == *".$HOSTED_ZONE" ]]; then
+              ROOT_DOMAIN="${DOMAIN%.$HOSTED_ZONE}"
+              ROOT_DOMAIN_FULL="$DOMAIN"
+            elif [[ "$DOMAIN" == *"."* ]]; then
+              ROOT_DOMAIN=$(echo "$DOMAIN" | rev | cut -d'.' -f1-2 | rev)
+              ROOT_DOMAIN_FULL="$ROOT_DOMAIN"
+            else
+              ROOT_DOMAIN="$DOMAIN"
+              ROOT_DOMAIN_FULL="$ROOT_DOMAIN.$HOSTED_ZONE"
+            fi
+            echo "  1. $ROOT_DOMAIN_FULL"
+            if [ "$ROOT_DOMAIN_FULL" != "www.$HOSTED_ZONE" ]; then
+              echo "  2. www.$HOSTED_ZONE"
+            fi
+          else
+            echo "  1. ${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
+            echo "  2. www.${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
+          fi
+          echo ""
+          echo "⚠️  If deployment fails with 'CNAME already associated', check existing CloudFront distributions for these domains"
+
       - name: Deploy infrastructure with CDK
         working-directory: ./client/infra
         id: deploy
