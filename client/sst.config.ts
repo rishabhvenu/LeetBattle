@@ -52,14 +52,19 @@
       if (process.env.COLYSEUS_DOMAIN && process.env.COLYSEUS_HOST_IP) {
         console.log(`Creating A record for ${process.env.COLYSEUS_DOMAIN} -> ${process.env.COLYSEUS_HOST_IP}`);
         
-        const zone = await sst.aws.HostedZone.lookup({
-          domain: "leetbattle.net",
-        });
+        // Use the hosted zone ID from environment variable (or hardcoded)
+        // To find your hosted zone ID: aws route53 list-hosted-zones-by-name --dns-name leetbattle.net
+        const zoneId = process.env.ROUTE53_HOSTED_ZONE_ID || "";
         
-        console.log(`Found hosted zone: ${zone.zoneId}`);
+        if (!zoneId) {
+          console.error("ERROR: ROUTE53_HOSTED_ZONE_ID environment variable is required");
+          throw new Error("ROUTE53_HOSTED_ZONE_ID not set");
+        }
+        
+        console.log(`Using hosted zone: ${zoneId}`);
         
         colyseusRecord = new sst.aws.Record("colyseus", {
-          zone: zone.zoneId,
+          zone: zoneId,
           type: "A",
           name: process.env.COLYSEUS_DOMAIN,
           values: [process.env.COLYSEUS_HOST_IP],
