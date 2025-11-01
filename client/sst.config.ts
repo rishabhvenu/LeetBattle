@@ -52,13 +52,13 @@
       if (process.env.COLYSEUS_DOMAIN && process.env.COLYSEUS_HOST_IP) {
         console.log(`Creating A record for ${process.env.COLYSEUS_DOMAIN} -> ${process.env.COLYSEUS_HOST_IP}`);
         
-        const zone = await sst.aws.dns.HostedZone.lookup({
+        const zone = await sst.aws.HostedZone.lookup({
           domain: "leetbattle.net",
         });
         
         console.log(`Found hosted zone: ${zone.zoneId}`);
         
-        colyseusRecord = new sst.aws.dns.Record("colyseus", {
+        colyseusRecord = new sst.aws.Record("colyseus", {
           zone: zone.zoneId,
           type: "A",
           name: process.env.COLYSEUS_DOMAIN,
