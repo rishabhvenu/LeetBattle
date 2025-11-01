@@ -180,9 +180,17 @@ export class InfrastructureStack extends cdk.Stack {
     const staticOrigin = new cloudfrontOrigins.S3BucketOrigin(staticAssetsBucket);
 
     // CloudFront origin for Lambda (SSR + API)
-    // Extract hostname from Lambda Function URL
-    const lambdaUrlHost = lambdaFunctionUrl.url.replace('https://', '').split('/')[0];
-    const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(lambdaUrlHost, {
+    // Lambda Function URLs format: https://{id}.lambda-url.{region}.on.aws
+    // Extract domain name using CDK Fn functions
+    // Split URL to extract just the hostname (domain) part
+    const lambdaUrlString = lambdaFunctionUrl.url;
+    const urlParts = cdk.Fn.split('://', lambdaUrlString);
+    const hostAndPath = cdk.Fn.select(1, urlParts);
+    const domainNameOnly = cdk.Fn.select(0, cdk.Fn.split('/', hostAndPath));
+    
+    // Create HttpOrigin with extracted domain
+    // The origin ID will be auto-generated from the construct ID, not the domain
+    const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(domainNameOnly, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
     });
 
@@ -222,6 +230,7 @@ export class InfrastructureStack extends cdk.Stack {
     }
 
     // CloudFront distribution with proper cache behaviors
+    // Create distribution with explicit origin configuration
     const distribution = new cloudfront.Distribution(this, 'NextJsDistribution', {
       defaultBehavior: {
         origin: lambdaOrigin, // SSR handler (all routes except static assets)
@@ -230,6 +239,7 @@ export class InfrastructureStack extends cdk.Stack {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       },
+      comment: 'Next.js serverless deployment',
       additionalBehaviors: {
         // Static assets - heavily cached
         '_next/static/*': {
