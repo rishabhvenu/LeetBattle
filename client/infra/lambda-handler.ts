@@ -43,10 +43,15 @@ async function getNextServer() {
       let serverModule: any;
       
       // Try CommonJS require first (Next.js standalone typically uses CommonJS)
+      // Use absolute path to ensure module resolution works correctly
       try {
+        const path = await import('path');
+        const absoluteServerPath = path.resolve(process.cwd(), NEXT_SERVER_PATH);
+        console.log(`Attempting to require server.js from: ${absoluteServerPath}`);
+        
         const { createRequire } = await import('module');
         const cjsRequire = createRequire(import.meta.url || __filename);
-        serverModule = cjsRequire(NEXT_SERVER_PATH);
+        serverModule = cjsRequire(absoluteServerPath);
         console.log('Next.js server module loaded successfully (CommonJS)');
         console.log('CJS module keys:', Object.keys(serverModule));
         console.log('CJS module type:', typeof serverModule);
