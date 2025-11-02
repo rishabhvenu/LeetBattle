@@ -19,8 +19,9 @@ export default {
       s3Region: cacheRegion,
     },
     tagCache: {
-      kind: "s3",
-      s3Region: cacheRegion,
+      kind: "dynamodb-lite",
+      // Note: dynamodb-lite doesn't require a DynamoDB table (no persistence between cold starts)
+      // If you use revalidateTag() in your app, change to "dynamodb" and provision the table in CDK
     },
   },
   imageOptimization: { 
