@@ -314,8 +314,10 @@ export class InfrastructureStack extends cdk.Stack {
         S3_BUCKET_NAME: avatarBucket.bucketName,
         MONGODB_URI: process.env.MONGODB_URI || '',
         NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
-        NEXTAUTH_URL: process.env.NEXTAUTH_URL || '',
+        AUTH_TRUST_HOST: 'true',
+        NEXTAUTH_URL: 'https://leetbattle.net',
         REDIS_HOST: process.env.REDIS_HOST || '',
+        REDIS_PORT: process.env.REDIS_PORT || '',
         REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
         NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE || '',
         NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '',
@@ -467,15 +469,12 @@ export class InfrastructureStack extends cdk.Stack {
     // ===== CloudFront Distribution =====
 
     // Default behavior configuration
-    // CRITICAL: Use ALL_VIEWER (not ALL_VIEWER_EXCEPT_HOST_HEADER) to forward Host header
-    // Next.js/OpenNext requires Host header for routing and redirect generation
-    // Without it, CloudFront returns 500 errors even though Lambda works correctly
     const defaultBehaviorConfig: cloudfront.BehaviorOptions = {
       origin: lambdaOrigin,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
       cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER, // ✅ Forward Host header
+      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS_WITH_PREFLIGHT,
       ...(edgeFunction ? {
         edgeLambdas: [
@@ -496,21 +495,21 @@ export class InfrastructureStack extends cdk.Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
-      // API routes - no cache, forward Host header
+      // API routes - no cache
       '/api/*': {
         origin: lambdaOrigin,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER, // ✅ Forward Host header
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       },
-      // Server actions endpoint - no cache, forward Host header
+      // Server actions endpoint - no cache
       '/_next/data/*': {
         origin: lambdaOrigin,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER, // ✅ Forward Host header
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       },
     };
 

@@ -352,6 +352,7 @@ jobs:
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           REDIS_HOST: ${{ vars.REDIS_HOST }}
+          REDIS_PORT: ${{ vars.REDIS_PORT }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
           NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
