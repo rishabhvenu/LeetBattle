@@ -33,7 +33,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (for client build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Setup Node.js (for CDK)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -144,10 +151,12 @@ jobs:
           fi
 
       - name: 'Guard: Verify .open-next directory structure'
+        id: verify-artifacts
         run: |
           if [ ! -d "client/.open-next" ]; then
-            echo "Error: .open-next missing. For manual runs, set 'artifact_name' to a valid artifact name."
-            exit 1
+            echo "❌ .open-next directory not found"
+            echo "exists=false" >> $GITHUB_OUTPUT
+            exit 0  # Don't fail yet - we'll build it
           fi
           echo "=== .open-next directory structure ==="
           ls -la client/.open-next/ || true
@@ -156,17 +165,39 @@ jobs:
           if [ -d "client/.open-next/server-functions/default" ]; then
             echo "✅ Found: client/.open-next/server-functions/default"
             ls -la client/.open-next/server-functions/default/ | head -10 || true
+            echo "exists=true" >> $GITHUB_OUTPUT
           elif [ -d "client/.open-next/server-function" ]; then
             echo "✅ Found: client/.open-next/server-function"
             ls -la client/.open-next/server-function/ | head -10 || true
+            echo "exists=true" >> $GITHUB_OUTPUT
           else
-            echo "❌ Error: Neither server-functions/default nor server-function found"
+            echo "❌ Invalid structure: Neither server-functions/default nor server-function found"
             echo "Available directories:"
             find client/.open-next -maxdepth 2 -type d | head -20
-            exit 1
+            echo "exists=false" >> $GITHUB_OUTPUT
           fi
           echo ""
-          echo "✅ Verified .open-next artifacts structure"
+          if [ "$(cat $GITHUB_OUTPUT | grep '^exists=' | cut -d'=' -f2)" = "true" ]; then
+            echo "✅ Verified .open-next artifacts structure"
+          fi
+
+      - name: Clean old OpenNext build
+        if: steps.verify-artifacts.outputs.exists != 'true'
+        run: rm -rf client/.open-next
+
+      - name: Build OpenNext
+        if: steps.verify-artifacts.outputs.exists != 'true'
+        working-directory: ./client
+        env:
+          NODE_ENV: production
+          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          CACHE_BUCKET_NAME: ${{ secrets.CACHE_BUCKET_NAME }}
+          CACHE_BUCKET_REGION: us-east-1
+        run: |
+          npm ci
+          npx open-next build
 
       - name: Install CDK dependencies
         working-directory: ./client/infra
