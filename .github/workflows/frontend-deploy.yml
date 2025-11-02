@@ -193,7 +193,8 @@ jobs:
           NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          CACHE_BUCKET_NAME: ${{ secrets.CACHE_BUCKET_NAME }}
+          # Note: CACHE_BUCKET_NAME is set at runtime via Lambda environment variables
+          # The bucket is created by CDK during deployment, so we don't know its name at build time
           CACHE_BUCKET_REGION: us-east-1
         run: |
           npm ci
