@@ -177,6 +177,44 @@ jobs:
           echo ""
           echo "✅ Verified .open-next artifacts structure"
 
+      - name: 'Verify OpenNext config (tagCache kind)'
+        run: |
+          CONFIG_FILE="client/.open-next/open-next.config.json"
+          if [ -f "$CONFIG_FILE" ]; then
+            echo "=== Checking OpenNext config ==="
+            cat "$CONFIG_FILE" | python3 -m json.tool 2>/dev/null || cat "$CONFIG_FILE"
+            echo ""
+            
+            # Check if tagCache.kind is set correctly
+            TAG_CACHE_KIND=$(python3 -c "
+import json, sys
+try:
+    with open('$CONFIG_FILE', 'r') as f:
+        config = json.load(f)
+        tag_kind = config.get('default', {}).get('tagCache', {}).get('kind', 'NOT_SET')
+        print(tag_kind)
+except Exception as e:
+    print('ERROR: ' + str(e))
+    sys.exit(1)
+" 2>/dev/null || echo "NOT_FOUND")
+            
+            echo "Found tagCache.kind: $TAG_CACHE_KIND"
+            if [ "$TAG_CACHE_KIND" = "dynamodb-lite" ]; then
+              echo "✅ Config is correct: tagCache.kind = dynamodb-lite"
+            elif [ "$TAG_CACHE_KIND" = "dynamodb" ] || [ "$TAG_CACHE_KIND" = "s3" ]; then
+              echo "❌ ERROR: Config has wrong tagCache.kind: $TAG_CACHE_KIND"
+              echo "   This will cause DynamoDB errors at runtime!"
+              echo "   The build artifacts are stale - trigger a fresh build."
+              exit 1
+            else
+              echo "⚠️  Warning: Could not determine tagCache.kind (got: $TAG_CACHE_KIND)"
+              echo "   Continuing anyway, but verify the config is correct."
+            fi
+          else
+            echo "⚠️  Warning: open-next.config.json not found"
+            echo "   OpenNext may use default config or read from env vars"
+          fi
+
       - name: Install CDK dependencies
         working-directory: ./client/infra
         run: npm ci
