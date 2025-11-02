@@ -292,14 +292,18 @@ jobs:
           fi
 
       - name: Force rebuild OpenNext (always fresh)
+        working-directory: ./client
         run: |
           echo "🔄 Force rebuilding OpenNext to ensure latest config and code..."
           echo "⚠️  This rebuild runs unconditionally to prevent stale artifacts"
-          rm -rf client/.open-next
-          cd client
+          rm -rf .open-next
           npm ci
+          # Ensure TypeScript is available for next.config.ts
+          if ! npm list typescript &>/dev/null; then
+            echo "Installing TypeScript as dev dependency..."
+            npm install --save-dev typescript @types/node @types/react @types/react-dom || true
+          fi
           npx open-next build
-          cd ..
           echo "✅ OpenNext build complete - ready for deployment"
         env:
           NODE_ENV: production
