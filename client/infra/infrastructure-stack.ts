@@ -13,8 +13,6 @@ import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as sns from 'aws-cdk-lib/aws-sns';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as cloudfrontOrigins from 'aws-cdk-lib/aws-cloudfront-origins';
-import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
-import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as acm from 'aws-cdk-lib/aws-certificatemanager';
@@ -386,26 +384,12 @@ export class InfrastructureStack extends cdk.Stack {
       cacheBucket.grantReadWrite(imageOptimizationLambda);
     }
 
-    // ===== API Gateway HTTP API (replaces Function URLs) =====
-    // Using API Gateway v2 is safer than Function URLs - AWS-managed with better security
-
-    const api = new apigwv2.HttpApi(this, 'NextJsHttpApi', {
-      apiName: 'LeetBattle-NextJs',
-      createDefaultStage: true,
-      corsPreflight: {
-        allowOrigins: ['*'],
-        allowMethods: [apigwv2.CorsHttpMethod.ANY],
-        allowHeaders: ['*'],
-      },
+    // ===== Lambda Function URL =====
+    // Function URL with streaming for Next.js serverless deployment
+    const functionUrl = nextjsLambda.addFunctionUrl({
+      authType: lambda.FunctionUrlAuthType.NONE,
+      invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
     });
-
-    api.addRoutes({
-      path: '/{proxy+}',
-      methods: [apigwv2.HttpMethod.ANY],
-      integration: new integrations.HttpLambdaIntegration('LambdaIntegration', nextjsLambda),
-    });
-
-    const apiDomain = `${api.apiId}.execute-api.${region}.amazonaws.com`;
 
     // ===== CloudFront Origins =====
 
@@ -414,8 +398,13 @@ export class InfrastructureStack extends cdk.Stack {
     // Note: Deprecation warning may appear, but OAC is used automatically
     const staticOrigin = new cloudfrontOrigins.S3Origin(staticAssetsBucket);
 
-    // API Gateway origin for Lambda function
-    const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(apiDomain, {
+    // Lambda Function URL origin for Next.js server function
+    // Extract domain from Function URL: https://<id>.lambda-url.<region>.on.aws/
+    const functionUrlParts = cdk.Fn.split('://', functionUrl.url);
+    const functionUrlHostAndPath = cdk.Fn.select(1, functionUrlParts);
+    const functionUrlDomain = cdk.Fn.select(0, cdk.Fn.split('/', functionUrlHostAndPath));
+
+    const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(functionUrlDomain, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
     });
 
@@ -675,9 +664,9 @@ export class InfrastructureStack extends cdk.Stack {
       description: 'Next.js Lambda function ARN',
     });
 
-    new cdk.CfnOutput(this, 'NextJsApiGatewayUrl', {
-      value: `https://${apiDomain}`,
-      description: 'API Gateway HTTP API URL for Next.js Lambda',
+    new cdk.CfnOutput(this, 'NextJsFunctionUrl', {
+      value: functionUrl.url,
+      description: 'Lambda Function URL for Next.js server function',
     });
 
     new cdk.CfnOutput(this, 'NextJsStaticBucketName', {
