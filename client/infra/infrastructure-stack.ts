@@ -391,6 +391,15 @@ export class InfrastructureStack extends cdk.Stack {
       invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
     });
 
+    // Grant CloudFront permission to invoke the Function URL
+    // CloudFront needs explicit permission even though the Function URL has authType.NONE
+    // Without this, CloudFront gets 403 AccessDeniedException when trying to invoke
+    nextjsLambda.addPermission('AllowCloudFrontInvoke', {
+      action: 'lambda:InvokeFunctionUrl',
+      principal: new iam.ServicePrincipal('cloudfront.amazonaws.com'),
+      functionUrlAuthType: lambda.FunctionUrlAuthType.NONE,
+    });
+
     // ===== CloudFront Origins =====
 
     // Modern approach: S3Origin automatically uses OAC (Origin Access Control) 
