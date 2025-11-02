@@ -177,37 +177,73 @@ jobs:
           echo ""
           echo "✅ Verified .open-next artifacts structure"
 
-      - name: 'Verify OpenNext config (tagCache kind)'
+      - name: 'Verify OpenNext build artifacts are fresh'
         run: |
-          CONFIG_FILE="client/.open-next/open-next.config.json"
-          if [ -f "$CONFIG_FILE" ]; then
-            echo "=== Checking OpenNext config ==="
-            cat "$CONFIG_FILE" | python3 -m json.tool 2>/dev/null || cat "$CONFIG_FILE"
-            echo ""
-            
-            # Check if tagCache.kind is set correctly using jq or python
-            if command -v jq &> /dev/null; then
-              TAG_CACHE_KIND=$(jq -r '.default.tagCache.kind // "NOT_SET"' "$CONFIG_FILE" 2>/dev/null || echo "NOT_FOUND")
-            else
-              TAG_CACHE_KIND=$(python3 -c "import json; f=open('$CONFIG_FILE'); c=json.load(f); print(c.get('default',{}).get('tagCache',{}).get('kind','NOT_SET'))" 2>/dev/null || echo "NOT_FOUND")
-            fi
-            
-            echo "Found tagCache.kind: $TAG_CACHE_KIND"
-            if [ "$TAG_CACHE_KIND" = "dynamodb-lite" ]; then
-              echo "✅ Config is correct: tagCache.kind = dynamodb-lite"
-            elif [ "$TAG_CACHE_KIND" = "dynamodb" ] || [ "$TAG_CACHE_KIND" = "s3" ]; then
-              echo "❌ ERROR: Config has wrong tagCache.kind: $TAG_CACHE_KIND"
-              echo "   This will cause DynamoDB errors at runtime!"
-              echo "   The build artifacts are stale - trigger a fresh build."
-              exit 1
-            else
-              echo "⚠️  Warning: Could not determine tagCache.kind (got: $TAG_CACHE_KIND)"
-              echo "   Continuing anyway, but verify the config is correct."
-            fi
-          else
-            echo "⚠️  Warning: open-next.config.json not found"
-            echo "   OpenNext may use default config or read from env vars"
+          echo "=== Verifying OpenNext build artifacts ==="
+          
+          # OpenNext v3 embeds config in Lambda code, not in separate JSON
+          # Verify artifacts exist and are from recent build
+          if [ ! -d "client/.open-next" ]; then
+            echo "❌ Error: .open-next directory not found"
+            exit 1
           fi
+          
+          # Check for server function (where config is embedded)
+          SERVER_PATH=""
+          if [ -d "client/.open-next/server-functions/default" ]; then
+            SERVER_PATH="client/.open-next/server-functions/default"
+            echo "✅ Found server function at: $SERVER_PATH"
+          elif [ -d "client/.open-next/server-function" ]; then
+            SERVER_PATH="client/.open-next/server-function"
+            echo "✅ Found server function at: $SERVER_PATH"
+          else
+            echo "❌ Error: Server function not found"
+            exit 1
+          fi
+          
+          # Check open-next.output.json for build metadata (if exists)
+          OUTPUT_FILE="client/.open-next/open-next.output.json"
+          if [ -f "$OUTPUT_FILE" ]; then
+            echo "=== OpenNext build output ==="
+            cat "$OUTPUT_FILE" | python3 -m json.tool 2>/dev/null | head -50 || cat "$OUTPUT_FILE" | head -50
+            echo ""
+          fi
+          
+          # Verify source config file has correct settings
+          SOURCE_CONFIG="client/open-next.config.ts"
+          if [ -f "$SOURCE_CONFIG" ]; then
+            echo "=== Checking source config (open-next.config.ts) ==="
+            if grep -q 'tagCache.*kind.*dynamodb-lite' "$SOURCE_CONFIG" 2>/dev/null; then
+              echo "✅ Source config has tagCache.kind = dynamodb-lite"
+            elif grep -q 'tagCache.*kind.*dynamodb' "$SOURCE_CONFIG" 2>/dev/null; then
+              echo "⚠️  Warning: Source config may have tagCache.kind = dynamodb (check manually)"
+            else
+              echo "⚠️  Warning: Could not verify tagCache.kind in source config"
+            fi
+            echo ""
+          fi
+          
+          # Check artifact timestamp (should be recent if from fresh build)
+          ARTIFACT_MTIME=$(find "$SERVER_PATH" -type f -name "*.js" | head -1 | xargs stat -c %Y 2>/dev/null || find "$SERVER_PATH" -type f -name "*.js" | head -1 | xargs stat -f %m 2>/dev/null || echo "0")
+          CURRENT_TIME=$(date +%s)
+          AGE_SECONDS=$((CURRENT_TIME - ARTIFACT_MTIME))
+          AGE_HOURS=$((AGE_SECONDS / 3600))
+          
+          if [ "$AGE_SECONDS" -lt 3600 ]; then
+            echo "✅ Artifacts are fresh (< 1 hour old)"
+          elif [ "$AGE_SECONDS" -lt 86400 ]; then
+            echo "⚠️  Warning: Artifacts are $AGE_HOURS hours old"
+            echo "   They should be from the latest build workflow run"
+          else
+            echo "❌ ERROR: Artifacts are more than 24 hours old!"
+            echo "   These are likely stale. Trigger a fresh build."
+            exit 1
+          fi
+          
+          echo ""
+          echo "✅ Artifact verification complete"
+          echo "   NOTE: OpenNext v3 embeds cache config in Lambda code at build time."
+          echo "   If DynamoDB errors persist, the Lambda bundle needs to be rebuilt."
 
       - name: Install CDK dependencies
         working-directory: ./client/infra
