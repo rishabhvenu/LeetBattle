@@ -469,12 +469,15 @@ export class InfrastructureStack extends cdk.Stack {
     // ===== CloudFront Distribution =====
 
     // Default behavior configuration
+    // CRITICAL: Use ALL_VIEWER (not ALL_VIEWER_EXCEPT_HOST_HEADER) to forward Host header
+    // Next.js/OpenNext requires Host header for routing and redirect generation
+    // Without it, CloudFront returns 500 errors even though Lambda works correctly
     const defaultBehaviorConfig: cloudfront.BehaviorOptions = {
       origin: lambdaOrigin,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
       cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER, // ✅ Forward Host header
       responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS_WITH_PREFLIGHT,
       ...(edgeFunction ? {
         edgeLambdas: [
@@ -495,21 +498,21 @@ export class InfrastructureStack extends cdk.Stack {
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
       },
-      // API routes - no cache
+      // API routes - no cache, forward Host header
       '/api/*': {
         origin: lambdaOrigin,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER, // ✅ Forward Host header
       },
-      // Server actions endpoint - no cache
+      // Server actions endpoint - no cache, forward Host header
       '/_next/data/*': {
         origin: lambdaOrigin,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER, // ✅ Forward Host header
       },
     };
 
