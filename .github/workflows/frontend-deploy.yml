@@ -190,7 +190,7 @@ jobs:
         working-directory: ./client
         env:
           NODE_ENV: production
-          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           # Note: CACHE_BUCKET_NAME is set at runtime via Lambda environment variables
@@ -303,7 +303,7 @@ jobs:
           echo "✅ OpenNext build complete - ready for deployment"
         env:
           NODE_ENV: production
-          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           # Note: CACHE_BUCKET_NAME will be set at runtime by CDK via Lambda env vars
@@ -329,7 +329,8 @@ jobs:
           NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
           NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
           NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
-          NEXTJS_STATIC_BUCKET_NAME: ${{ vars.NEXTJS_STATIC_BUCKET_NAME }}
+          # NEXTJS_STATIC_BUCKET_NAME: Optional - only set if you want to reuse an existing bucket
+          # If not set, CDK will create a new bucket with auto-generated name
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
         run: |
