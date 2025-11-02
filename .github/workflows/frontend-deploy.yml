@@ -297,12 +297,14 @@ jobs:
           echo "🔄 Force rebuilding OpenNext to ensure latest config and code..."
           echo "⚠️  This rebuild runs unconditionally to prevent stale artifacts"
           rm -rf .open-next
-          npm ci
-          # Ensure TypeScript is available for next.config.ts
-          if ! npm list typescript &>/dev/null; then
-            echo "Installing TypeScript as dev dependency..."
-            npm install --save-dev typescript @types/node @types/react @types/react-dom || true
+          # Install dependencies including devDependencies (TypeScript needed for next.config.ts)
+          npm ci --include=dev
+          # Verify TypeScript is available
+          if ! command -v npx typescript &>/dev/null && ! npm list typescript &>/dev/null; then
+            echo "⚠️  TypeScript not found, installing..."
+            npm install --save-dev typescript @types/node @types/react @types/react-dom
           fi
+          echo "✅ Dependencies installed, starting OpenNext build..."
           npx open-next build
           echo "✅ OpenNext build complete - ready for deployment"
         env:
