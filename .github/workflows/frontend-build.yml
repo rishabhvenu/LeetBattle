@@ -35,7 +35,7 @@ jobs:
         working-directory: ./client
         env:
           NODE_ENV: production
-          NEXTAUTH_URL: ${{ secrets.NEXTAUTH_URL }}
+          NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: npm run build:opennext
