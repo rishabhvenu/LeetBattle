@@ -38,6 +38,11 @@ jobs:
           NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          # NEXT_PUBLIC_* variables must be available at build time
+          # They are embedded into the client-side bundle during next build
+          NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
+          NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
+          NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
         run: npm run build:opennext
 
       - name: Verify OpenNext build output
