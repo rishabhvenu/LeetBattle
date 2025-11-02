@@ -536,12 +536,10 @@ export class InfrastructureStack extends cdk.Stack {
       this.imageOptLambdaArn = imageOptimizationLambda.functionArn;
     }
 
-    // Update Lambda environment variable with CloudFront URL for avatar access
-    // This enables secure avatar serving via CloudFront instead of direct S3 access
-    nextjsLambda.addEnvironment(
-      'NEXT_PUBLIC_CLOUDFRONT_URL',
-      `https://${distribution.distributionDomainName}`
-    );
+    // Note: NEXT_PUBLIC_CLOUDFRONT_URL removed to avoid circular dependency
+    // The dependency chain would be: Lambda → Function URL → CloudFront → Lambda (env var)
+    // If you need the CloudFront URL in the app, set it as a build-time environment
+    // variable or use the distribution domain name directly where needed.
 
     // ===== Static Asset Deployment =====
     // Note: BucketDeployment requires the bucket to exist before deployment
