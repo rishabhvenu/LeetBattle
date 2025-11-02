@@ -185,18 +185,12 @@ jobs:
             cat "$CONFIG_FILE" | python3 -m json.tool 2>/dev/null || cat "$CONFIG_FILE"
             echo ""
             
-            # Check if tagCache.kind is set correctly
-            TAG_CACHE_KIND=$(python3 -c "
-import json, sys
-try:
-    with open('$CONFIG_FILE', 'r') as f:
-        config = json.load(f)
-        tag_kind = config.get('default', {}).get('tagCache', {}).get('kind', 'NOT_SET')
-        print(tag_kind)
-except Exception as e:
-    print('ERROR: ' + str(e))
-    sys.exit(1)
-" 2>/dev/null || echo "NOT_FOUND")
+            # Check if tagCache.kind is set correctly using jq or python
+            if command -v jq &> /dev/null; then
+              TAG_CACHE_KIND=$(jq -r '.default.tagCache.kind // "NOT_SET"' "$CONFIG_FILE" 2>/dev/null || echo "NOT_FOUND")
+            else
+              TAG_CACHE_KIND=$(python3 -c "import json; f=open('$CONFIG_FILE'); c=json.load(f); print(c.get('default',{}).get('tagCache',{}).get('kind','NOT_SET'))" 2>/dev/null || echo "NOT_FOUND")
+            fi
             
             echo "Found tagCache.kind: $TAG_CACHE_KIND"
             if [ "$TAG_CACHE_KIND" = "dynamodb-lite" ]; then
