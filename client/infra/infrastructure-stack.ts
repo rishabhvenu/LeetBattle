@@ -269,6 +269,20 @@ export class InfrastructureStack extends cdk.Stack {
     // ===== Lambda Functions =====
 
     // Main server function (required)
+    // 
+    // ⚠️ CRITICAL: OpenNext Cache Configuration Issue
+    // OpenNext reads cache config (tagCache.kind, incrementalCache.kind) from open-next.config.ts
+    // at BUILD TIME and embeds it directly into the Lambda bundle code.
+    // Environment variables (INCREMENTAL_CACHE_KIND, TAG_CACHE_KIND) do NOT override this!
+    //
+    // If you see DynamoDB "TableName: undefined" errors, the Lambda was built with old artifacts
+    // that have the wrong cache config embedded. The solution is:
+    // 1. Ensure open-next.config.ts has tagCache: { kind: "dynamodb-lite" }
+    // 2. Trigger a fresh build workflow (frontend-build.yml) to create new artifacts
+    // 3. The deploy workflow will verify the config and deploy fresh artifacts
+    // 
+    // Simply redeploying CDK won't help - you MUST rebuild OpenNext first!
+    //
     const nextjsLambda = new lambda.Function(this, 'NextJsLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
