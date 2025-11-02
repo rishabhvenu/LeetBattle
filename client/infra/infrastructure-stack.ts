@@ -164,6 +164,14 @@ export class InfrastructureStack extends cdk.Stack {
       timeToLiveAttribute: 'ttl', // Optional: enable TTL for automatic cleanup
     });
 
+    // Add Global Secondary Index (GSI) required by OpenNext for revalidation queries
+    // This index allows querying by path and revalidatedAt timestamp
+    tagCacheTable.addGlobalSecondaryIndex({
+      indexName: 'revalidate',
+      partitionKey: { name: 'path', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'revalidatedAt', type: dynamodb.AttributeType.NUMBER },
+    });
+
     // S3 bucket for CloudFront logs
     // CloudFront logs require ACLs to be enabled (legacy requirement)
     const cloudFrontLogsBucket = new s3.Bucket(this, 'CloudFrontLogs', {
