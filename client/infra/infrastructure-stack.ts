@@ -416,16 +416,16 @@
       const functionUrlDomain = cdk.Fn.select(0, cdk.Fn.split('/', functionUrlHostAndPath));
 
       // Determine the public domain name for custom headers
-      // This spoofs the Host header so Next.js thinks requests came from the public domain
-      // (Function URLs always use their own host, which causes redirect issues)
+      // CloudFront blocks 'host' as a custom header, but we can set x-forwarded-host
+      // Next.js checks x-forwarded-host to determine the original host
       const publicDomain = process.env.NEXTJS_DOMAIN_NAME || hostedZoneName || 'leetbattle.net';
 
       const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(functionUrlDomain, {
         protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
         customHeaders: {
-          // Trick Next.js into believing requests came from your public domain
-          // This prevents 307 redirects that occur when Next.js sees the Function URL host
-          'host': publicDomain,
+          // Set x-forwarded-host so Next.js knows the original public domain
+          // This helps Next.js generate correct URLs and prevents redirect issues
+          // Note: CloudFront does not allow 'host' as a custom header
           'x-forwarded-host': publicDomain,
         },
       });
