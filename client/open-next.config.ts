@@ -11,13 +11,10 @@ export default {
       converter: "aws-apigw-v2"
     },
     minifyHandlers: true,
-    incrementalCache: {
-      kind: "s3",
-      // Bucket name is provided at runtime via Lambda env vars (CACHE_BUCKET_NAME)
-      // CDK creates the bucket and sets this env var automatically
-      s3BucketName: process.env.CACHE_BUCKET_NAME,
-      s3Region: cacheRegion,
-    },
+    // Cache configurations - both must be strings, not objects
+    // incrementalCache: "s3" uses S3 for ISR/SSG caching (bucket name from env at runtime)
+    // tagCache: "dynamodb-lite" uses in-memory tag cache (no DynamoDB table needed)
+    incrementalCache: "s3",
     tagCache: "dynamodb-lite",
     // Note: dynamodb-lite doesn't require a DynamoDB table (no persistence between cold starts)
     // If you use revalidateTag() in your app, change to "dynamodb" and provision the table in CDK
