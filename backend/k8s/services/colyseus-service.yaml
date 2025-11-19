@@ -4,12 +4,13 @@ metadata:
   name: colyseus
   namespace: codeclashers
 spec:
-  type: LoadBalancer
+  type: ClusterIP  # Use ClusterIP with externalIPs for direct binding
+  externalIPs:
+    - ${ORACLE_VM_IP}  # Will be substituted by kustomize or envsubst
   selector:
     app: colyseus
   ports:
-    - port: 2567
-      targetPort: 2567
-      protocol: TCP
-  loadBalancerIP: ""
+  - port: 2567  # Must match COLYSEUS_PORT in app-secrets
+    targetPort: 2567
+    protocol: TCP
 

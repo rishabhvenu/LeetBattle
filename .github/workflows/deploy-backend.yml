@@ -187,10 +187,15 @@ jobs:
           k3s kubectl create secret generic app-secrets \
             --namespace=codeclashers \
             --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
+            --from-literal=REDIS_HOST="${{ vars.REDIS_HOST || 'redis-cluster' }}" \
+            --from-literal=REDIS_PORT="${{ vars.REDIS_PORT || '6379' }}" \
+            --from-literal=JUDGE0_PORT="${{ vars.JUDGE0_PORT || '2358' }}" \
+            --from-literal=MONGODB_PORT="${{ vars.MONGODB_PORT || '27017' }}" \
+            --from-literal=COLYSEUS_PORT="${{ vars.COLYSEUS_PORT || '2567' }}" \
             --from-literal=JUDGE0_POSTGRES_USER="${{ secrets.JUDGE0_POSTGRES_USER }}" \
             --from-literal=JUDGE0_POSTGRES_PASSWORD="${{ secrets.JUDGE0_POSTGRES_PASSWORD }}" \
             --from-literal=JUDGE0_POSTGRES_DB="${{ secrets.JUDGE0_POSTGRES_DB }}" \
-            --from-literal=MONGODB_URI_INTERNAL="mongodb://mongodb:27017/codeclashers" \
+            --from-literal=MONGODB_URI_INTERNAL="mongodb://mongodb.codeclashers.svc.cluster.local:${{ vars.MONGODB_PORT || '27017' }}/codeclashers?replicaSet=rs0&authSource=admin" \
             --from-literal=MONGODB_URI="${{ secrets.MONGODB_URI }}" \
             --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
             --from-literal=INTERNAL_SERVICE_SECRET="${{ secrets.INTERNAL_SERVICE_SECRET }}" \
@@ -280,8 +285,7 @@ jobs:
           # Apply storage
           k3s kubectl apply -f storage/
           
-          # Apply services
-          k3s kubectl apply -f services/
+          # Services will be applied with env substitution below (after extracting VM IP)
           
           # Apply statefulsets with env substitution
           for file in statefulsets/*.yaml; do
@@ -294,6 +298,30 @@ jobs:
           
           # Apply PodDisruptionBudgets before deployments
           k3s kubectl apply -f pdbs/
+          
+          # Get VM IP from COLYSEUS_HOST_IP variable
+          export ORACLE_VM_IP="${{ vars.COLYSEUS_HOST_IP }}"
+          
+          if [ -z "$ORACLE_VM_IP" ]; then
+            echo "⚠️  Warning: COLYSEUS_HOST_IP not set. Services will use ClusterIP only."
+            echo "   Set COLYSEUS_HOST_IP variable with your Oracle VM IP address"
+          else
+            echo "✓ Using Oracle VM IP: $ORACLE_VM_IP"
+            export ORACLE_VM_IP
+          fi
+          
+          # Apply services with env substitution (for externalIPs)
+          echo "Applying services..."
+          for file in services/*.yaml; do
+            if [ -f "$file" ]; then
+              envsubst < "$file" | k3s kubectl apply -f -
+            fi
+          done
+          
+          # Apply MongoDB service if it exists
+          if [ -f mongodb/service.yaml ]; then
+            envsubst < mongodb/service.yaml | k3s kubectl apply -f -
+          fi
           
           # Apply deployments with env substitution
           for file in deployments/*.yaml; do
@@ -372,24 +400,206 @@ jobs:
             k3s kubectl logs -n codeclashers mongodb-0 --tail=50 || echo "No logs available yet"
           fi
           
-      - name: Health check
+      - name: Pre-deployment validation
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
-          echo "Performing health checks..."
+          echo "=== Pre-deployment Validation ==="
           
-          # Wait for Colyseus to be ready
-          for i in {1..30}; do
-            if k3s kubectl exec -n codeclashers deployment/colyseus -- sh -c "nc -z localhost 2567" 2>/dev/null; then
-              echo "✓ Colyseus is healthy"
-              break
+          # Check if required secrets exist (check each one individually)
+          echo "Checking required secrets..."
+          MISSING_SECRETS=()
+          
+          # Check each secret individually
+          if [ -z "${{ secrets.REDIS_PASSWORD }}" ]; then
+            MISSING_SECRETS+=("REDIS_PASSWORD")
+          fi
+          if [ -z "${{ secrets.MONGODB_URI }}" ]; then
+            MISSING_SECRETS+=("MONGODB_URI")
+          fi
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
+            MISSING_SECRETS+=("OPENAI_API_KEY")
+          fi
+          if [ -z "${{ secrets.INTERNAL_SERVICE_SECRET }}" ]; then
+            MISSING_SECRETS+=("INTERNAL_SERVICE_SECRET")
+          fi
+          if [ -z "${{ secrets.BOT_SERVICE_SECRET }}" ]; then
+            MISSING_SECRETS+=("BOT_SERVICE_SECRET")
+          fi
+          
+          if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
+            echo "❌ Missing required secrets: ${MISSING_SECRETS[*]}"
+            exit 1
+          fi
+          
+          echo "✓ All required secrets present"
+          
+          # Validate image tags
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "❌ IMAGE_TAG is not set"
+            exit 1
+          fi
+          
+          echo "✓ Image tag: $IMAGE_TAG"
+          
+          # Check cluster connectivity
+          if ! k3s kubectl cluster-info &>/dev/null; then
+            echo "❌ Cannot connect to Kubernetes cluster"
+            exit 1
+          fi
+          
+          echo "✓ Cluster connectivity verified"
+          
+      - name: Health check with rollback
+        id: health_check
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
+        run: |
+          echo "=== Performing Enhanced Health Checks ==="
+          
+          HEALTH_CHECK_FAILED=false
+          
+          # Function to check HTTP endpoint
+          check_http_endpoint() {
+            local service=$1
+            local port=$2
+            local path=${3:-/}
+            local max_attempts=${4:-30}
+            
+            echo "Checking $service HTTP endpoint (port $port, path $path)..."
+            for i in $(seq 1 $max_attempts); do
+              # Try to exec into pod and curl the endpoint
+              if k3s kubectl exec -n codeclashers deployment/$service -- sh -c "curl -sf http://localhost:$port$path > /dev/null 2>&1" 2>/dev/null; then
+                echo "✓ $service HTTP endpoint is healthy"
+                return 0
+              fi
+              if [ $i -lt $max_attempts ]; then
+                sleep 2
+              fi
+            done
+            echo "❌ $service HTTP endpoint health check failed"
+            return 1
+          }
+          
+          # Function to check port connectivity
+          check_port() {
+            local service=$1
+            local port=$2
+            local max_attempts=${3:-30}
+            
+            echo "Checking $service port $port connectivity..."
+            for i in $(seq 1 $max_attempts); do
+              if k3s kubectl exec -n codeclashers deployment/$service -- sh -c "nc -z localhost $port" 2>/dev/null; then
+                echo "✓ $service port $port is open"
+                return 0
+              fi
+              if [ $i -lt $max_attempts ]; then
+                sleep 2
+              fi
+            done
+            echo "❌ $service port $port connectivity check failed"
+            return 1
+          }
+          
+          # Wait for deployments to be ready
+          echo "Waiting for deployments to be ready..."
+          k3s kubectl wait --for=condition=available --timeout=300s deployment/colyseus -n codeclashers || HEALTH_CHECK_FAILED=true
+          k3s kubectl wait --for=condition=available --timeout=300s deployment/bots -n codeclashers || HEALTH_CHECK_FAILED=true
+          
+          if [ "$HEALTH_CHECK_FAILED" = true ]; then
+            echo "❌ Deployments failed to become available"
+            echo "false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check Colyseus port connectivity
+          if ! check_port "colyseus" "2567" 30; then
+            HEALTH_CHECK_FAILED=true
+          fi
+          
+          # Check Colyseus HTTP endpoint (if available)
+          # Note: Colyseus may not have a /health endpoint, so we check port only
+          
+          # Check Judge0 server if it exists
+          if k3s kubectl get deployment judge0-server -n codeclashers &>/dev/null; then
+            if ! check_http_endpoint "judge0-server" "2358" "/" 30; then
+              HEALTH_CHECK_FAILED=true
             fi
-            sleep 2
-          done
+          fi
           
-          echo "✓ Health checks passed"
+          # Check MongoDB if accessible
+          if k3s kubectl get statefulset mongodb -n codeclashers &>/dev/null; then
+            echo "Checking MongoDB connectivity..."
+            for i in {1..30}; do
+              if k3s kubectl exec -n codeclashers mongodb-0 -- mongosh --quiet --eval "db.adminCommand('ping')" 2>/dev/null | grep -q "ok.*1"; then
+                echo "✓ MongoDB is healthy"
+                break
+              fi
+              if [ $i -eq 30 ]; then
+                echo "⚠️  MongoDB health check timeout (may still be initializing)"
+              else
+                sleep 2
+              fi
+            done
+          fi
+          
+          if [ "$HEALTH_CHECK_FAILED" = true ]; then
+            echo "❌ Health checks failed"
+            echo "false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✓ All health checks passed"
+          echo "true" >> $GITHUB_OUTPUT
+          
+      - name: Rollback on health check failure
+        if: steps.health_check.outputs.result == 'false'
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
+        run: |
+          echo "=== Rolling back deployment due to health check failure ==="
+          
+          # Get previous ReplicaSet
+          PREVIOUS_RS=$(k3s kubectl get replicaset -n codeclashers -l app=colyseus --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-2].metadata.name}' 2>/dev/null || echo "")
+          
+          if [ -n "$PREVIOUS_RS" ]; then
+            echo "Rolling back Colyseus to previous ReplicaSet: $PREVIOUS_RS"
+            k3s kubectl rollout undo deployment/colyseus -n codeclashers || true
+          else
+            echo "No previous ReplicaSet found for Colyseus"
+          fi
+          
+          PREVIOUS_RS=$(k3s kubectl get replicaset -n codeclashers -l app=bots --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-2].metadata.name}' 2>/dev/null || echo "")
+          
+          if [ -n "$PREVIOUS_RS" ]; then
+            echo "Rolling back Bots to previous ReplicaSet: $PREVIOUS_RS"
+            k3s kubectl rollout undo deployment/bots -n codeclashers || true
+          else
+            echo "No previous ReplicaSet found for Bots"
+          fi
+          
+          echo "=== Rollback complete ==="
+          echo "Please check pod logs and events for details:"
+          k3s kubectl get pods -n codeclashers
+          k3s kubectl get events -n codeclashers --sort-by='.lastTimestamp' | tail -20
+          
+          exit 1
           
       - name: Deployment complete
+        if: steps.health_check.outputs.result == 'true'
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           echo "🚀 Deployment complete!"
           echo "Image tag: $IMAGE_TAG"
+          echo ""
+          echo "=== Service Status ==="
+          k3s kubectl get svc -n codeclashers
+          echo ""
+          echo "✓ Services are bound to Oracle VM IP with predefined ports:"
+          echo "   - Colyseus: Port 2567"
+          echo "   - Redis: Port 6379"
+          echo "   - MongoDB: Port 27017"
+          echo "   - Judge0: Port 2358"
+          echo ""
+          echo "✓ No variable updates needed - using predefined IPs and ports from GitHub Variables"
