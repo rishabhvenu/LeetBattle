@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: codeclashers
+  labels:
+    app: mongodb
+spec:
+  serviceName: mongodb-headless
+  replicas: 3  # Override via kustomize replicas transformer or patch
+  selector:
+    matchLabels:
+      app: mongodb
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      containers:
+      - name: mongodb
+        image: mongo:7.0
+        command:
+        - mongod
+        - --replSet
+        - $(REPLICA_SET_NAME)
+        - --bind_ip_all
+        - --dbpath
+        - /data/db
+        - --keyFile
+        - /etc/mongodb-keyfile/keyfile
+        ports:
+        - containerPort: 27017
+          name: mongodb
+        env:
+        - name: REPLICA_SET_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: mongodb-config
+              key: REPLICA_SET_NAME
+              optional: false
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secrets
+              key: MONGO_INITDB_ROOT_USERNAME
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secrets
+              key: MONGO_INITDB_ROOT_PASSWORD
+        volumeMounts:
+        - name: data
+          mountPath: /data/db
+        - name: mongodb-keyfile
+          mountPath: /etc/mongodb-keyfile
+          readOnly: true
+        resources:
+          requests:
+            memory: 2Gi
+            cpu: 500m
+          limits:
+            memory: 4Gi
+            cpu: 1000m
+        livenessProbe:
+          exec:
+            command:
+            - mongosh
+            - --quiet
+            - --eval
+            - "db.adminCommand('ping')"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - |
+              # Check if MongoDB is up
+              mongosh --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1 || exit 1
+              
+              # Check if replica set is initialized
+              STATUS=$(mongosh --quiet --eval "try { rs.status().ok } catch(e) { 0 }" 2>/dev/null | tr -d '[:space:]' || echo "0")
+              
+              if [ "$STATUS" != "1" ]; then
+                # Replica set not initialized yet - check if we're the first pod (mongodb-0)
+                HOSTNAME=$(hostname)
+                # Extract pod index from hostname (mongodb-N)
+                POD_INDEX=$(echo "$HOSTNAME" | sed 's/mongodb-//')
+                if [ "$POD_INDEX" = "0" ]; then
+                  # First pod is ready for initialization
+                  exit 0
+                else
+                  # Other pods wait for replica set to be initialized
+                  exit 1
+                fi
+              fi
+              
+              # Check if this pod is a member of the replica set
+              HOSTNAME=$(hostname)
+              MY_HOSTNAME="${HOSTNAME}.mongodb-headless.codeclashers.svc.cluster.local:27017"
+              MEMBER=$(mongosh --quiet --eval "try { rs.status().members.find(m => m.name === '$MY_HOSTNAME') ? 1 : 0 } catch(e) { 0 }" 2>/dev/null | tr -d '[:space:]' || echo "0")
+              
+              if [ "$MEMBER" != "1" ]; then
+                exit 1
+              fi
+              
+              exit 0
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: mongodb-keyfile
+        secret:
+          secretName: mongodb-keyfile
+          defaultMode: 0400
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: local-path
+      resources:
+        requests:
+          storage: 8Gi
+

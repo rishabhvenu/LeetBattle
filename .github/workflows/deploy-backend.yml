@@ -508,7 +508,7 @@ jobs:
           
           if [ "$HEALTH_CHECK_FAILED" = true ]; then
             echo "❌ Deployments failed to become available"
-            echo "false" >> $GITHUB_OUTPUT
+            echo "result=false" >> $GITHUB_OUTPUT
             exit 1
           fi
           
@@ -554,12 +554,12 @@ jobs:
           
           if [ "$HEALTH_CHECK_FAILED" = true ]; then
             echo "❌ Health checks failed"
-            echo "false" >> $GITHUB_OUTPUT
+            echo "result=false" >> $GITHUB_OUTPUT
             exit 1
           fi
           
           echo "✓ All health checks passed"
-          echo "true" >> $GITHUB_OUTPUT
+          echo "result=true" >> $GITHUB_OUTPUT
           
       - name: Rollback on health check failure
         if: steps.health_check.outputs.result == 'false'
