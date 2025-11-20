@@ -26,13 +26,15 @@ spec:
           # Generate redis.conf with password from env var in persistent data directory
           # This ensures password persists across restarts
           if [ ! -f /data/redis.conf ]; then
-            cat > /data/redis.conf << EOF
-          appendonly yes
-          requirepass ${REDIS_PASSWORD}
-          EOF
+            echo "appendonly yes" > /data/redis.conf
+            echo "requirepass ${REDIS_PASSWORD}" >> /data/redis.conf
           else
             # Update password in existing config if it changed
-            sed -i "s/^requirepass .*/requirepass ${REDIS_PASSWORD}/" /data/redis.conf
+            if grep -q "^requirepass" /data/redis.conf; then
+              sed -i "s/^requirepass .*/requirepass ${REDIS_PASSWORD}/" /data/redis.conf
+            else
+              echo "requirepass ${REDIS_PASSWORD}" >> /data/redis.conf
+            fi
           fi
           # Start Redis with config file
           exec redis-server /data/redis.conf
