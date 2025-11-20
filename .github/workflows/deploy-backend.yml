@@ -392,6 +392,14 @@ jobs:
                 continue
               fi
               echo "Applying $(basename $file)..."
+              # Check if this StatefulSet is MongoDB and delete it first if it exists
+              STATEFULSET_NAME=$(grep -E "^name:|^  name:" "$file" | head -1 | sed 's/.*name: *//' | tr -d ' "')
+              if [ "$STATEFULSET_NAME" = "mongodb" ]; then
+                echo "⚠️  Found MongoDB StatefulSet in $(basename $file), deleting existing one first..."
+                k3s kubectl delete statefulset mongodb -n codeclashers --cascade=orphan --ignore-not-found=true || true
+                k3s kubectl delete pods -n codeclashers -l app=mongodb --ignore-not-found=true || true
+                sleep 5
+              fi
               envsubst < "$file" | k3s kubectl apply -f -
             fi
           done
