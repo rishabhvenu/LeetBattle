@@ -333,6 +333,18 @@ jobs:
           # Apply storage
           k3s kubectl apply -f storage/
           
+          # Delete old single-instance MongoDB StatefulSet if it exists (before applying replica set version)
+          if k3s kubectl get statefulset mongodb -n codeclashers &>/dev/null; then
+            OLD_MONGODB_REPLICAS=$(k3s kubectl get statefulset mongodb -n codeclashers -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+            if [ "$OLD_MONGODB_REPLICAS" = "1" ]; then
+              echo "⚠️  Old single-instance MongoDB StatefulSet found. Deleting it to use replica set version..."
+              k3s kubectl delete statefulset mongodb -n codeclashers --ignore-not-found=true
+              k3s kubectl delete svc mongodb -n codeclashers --ignore-not-found=true
+              echo "Waiting for old MongoDB pod to terminate..."
+              sleep 10
+            fi
+          fi
+          
           # Apply MongoDB ConfigMap (required before StatefulSet)
           if [ -f mongodb/configmap.yaml ]; then
             echo "Applying MongoDB ConfigMap..."
