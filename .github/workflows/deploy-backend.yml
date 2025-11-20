@@ -184,10 +184,43 @@ jobs:
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
+          # Create MongoDB secrets (required by MongoDB StatefulSet)
+          echo "Creating MongoDB secrets..."
+          MONGO_USER="${{ secrets.MONGO_INITDB_ROOT_USERNAME || 'admin' }}"
+          MONGO_PASS="${{ secrets.MONGO_INITDB_ROOT_PASSWORD }}"
+          
+          if [ -z "$MONGO_PASS" ]; then
+            echo "⚠️  Warning: MONGO_INITDB_ROOT_PASSWORD not set. MongoDB may not work correctly."
+          fi
+          
+          k3s kubectl create secret generic mongodb-secrets \
+            --namespace=codeclashers \
+            --from-literal=MONGO_INITDB_ROOT_USERNAME="$MONGO_USER" \
+            --from-literal=MONGO_INITDB_ROOT_PASSWORD="$MONGO_PASS" \
+            --from-literal=REPLICA_SET_NAME="rs0" \
+            --dry-run=client -o yaml | k3s kubectl apply -f -
+          
+          # Create mongodb-keyfile if it doesn't exist (required for replica set authentication)
+          if ! k3s kubectl get secret mongodb-keyfile -n codeclashers &>/dev/null; then
+            echo "Creating mongodb-keyfile secret..."
+            KEYFILE=$(openssl rand -base64 756)
+            k3s kubectl create secret generic mongodb-keyfile \
+              --namespace=codeclashers \
+              --from-literal=keyfile="$KEYFILE"
+            echo "✓ mongodb-keyfile secret created"
+          else
+            echo "✓ mongodb-keyfile secret already exists"
+          fi
+          
+          # Create app-secrets with MongoDB URI including credentials
+          # Use redis-cluster for internal access (not external domain)
+          REDIS_HOST_INTERNAL="redis-cluster"
+          MONGODB_URI_INTERNAL="mongodb://${MONGO_USER}:${MONGO_PASS}@mongodb.codeclashers.svc.cluster.local:${{ vars.MONGODB_PORT || '27017' }}/codeclashers?replicaSet=rs0&authSource=admin"
+          
           k3s kubectl create secret generic app-secrets \
             --namespace=codeclashers \
             --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
-            --from-literal=REDIS_HOST="${{ vars.REDIS_HOST || 'redis-cluster' }}" \
+            --from-literal=REDIS_HOST="$REDIS_HOST_INTERNAL" \
             --from-literal=REDIS_PORT="${{ vars.REDIS_PORT || '6379' }}" \
             --from-literal=JUDGE0_PORT="${{ vars.JUDGE0_PORT || '2358' }}" \
             --from-literal=MONGODB_PORT="${{ vars.MONGODB_PORT || '27017' }}" \
@@ -195,7 +228,7 @@ jobs:
             --from-literal=JUDGE0_POSTGRES_USER="${{ secrets.JUDGE0_POSTGRES_USER }}" \
             --from-literal=JUDGE0_POSTGRES_PASSWORD="${{ secrets.JUDGE0_POSTGRES_PASSWORD }}" \
             --from-literal=JUDGE0_POSTGRES_DB="${{ secrets.JUDGE0_POSTGRES_DB }}" \
-            --from-literal=MONGODB_URI_INTERNAL="mongodb://mongodb.codeclashers.svc.cluster.local:${{ vars.MONGODB_PORT || '27017' }}/codeclashers?replicaSet=rs0&authSource=admin" \
+            --from-literal=MONGODB_URI_INTERNAL="$MONGODB_URI_INTERNAL" \
             --from-literal=MONGODB_URI="${{ secrets.MONGODB_URI }}" \
             --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
             --from-literal=INTERNAL_SERVICE_SECRET="${{ secrets.INTERNAL_SERVICE_SECRET }}" \
@@ -206,6 +239,8 @@ jobs:
             --from-literal=S3_BUCKET_NAME="${{ vars.S3_BUCKET_NAME }}" \
             --from-literal=AWS_REGION="${{ vars.AWS_REGION }}" \
             --dry-run=client -o yaml | k3s kubectl apply -f -
+          
+          echo "✓ All secrets created/updated"
 
       - name: Clean up old failing pods before deployment
         env:
@@ -285,11 +320,37 @@ jobs:
           # Apply storage
           k3s kubectl apply -f storage/
           
+          # Apply MongoDB ConfigMap (required before StatefulSet)
+          if [ -f mongodb/configmap.yaml ]; then
+            echo "Applying MongoDB ConfigMap..."
+            k3s kubectl apply -f mongodb/configmap.yaml
+          fi
+          
+          # Apply MongoDB headless service (required for StatefulSet)
+          if [ -f mongodb/headless-service.yaml ]; then
+            echo "Applying MongoDB headless service..."
+            k3s kubectl apply -f mongodb/headless-service.yaml
+          fi
+          
+          # Apply MongoDB StatefulSet with env substitution
+          if [ -f mongodb/statefulset.yaml ]; then
+            echo "Applying MongoDB StatefulSet..."
+            envsubst < mongodb/statefulset.yaml | k3s kubectl apply -f -
+          fi
+          
+          # Apply MongoDB PDB
+          if [ -f mongodb/pdb.yaml ]; then
+            echo "Applying MongoDB PodDisruptionBudget..."
+            k3s kubectl apply -f mongodb/pdb.yaml
+          fi
+          
           # Services will be applied with env substitution below (after extracting VM IP)
           
-          # Apply statefulsets with env substitution
+          # Apply other statefulsets with env substitution (Redis, etc.)
           for file in statefulsets/*.yaml; do
-            envsubst < "$file" | k3s kubectl apply -f -
+            if [ -f "$file" ]; then
+              envsubst < "$file" | k3s kubectl apply -f -
+            fi
           done
           
           # Wait briefly for StatefulSets to start pods
@@ -416,6 +477,9 @@ jobs:
           fi
           if [ -z "${{ secrets.MONGODB_URI }}" ]; then
             MISSING_SECRETS+=("MONGODB_URI")
+          fi
+          if [ -z "${{ secrets.MONGO_INITDB_ROOT_PASSWORD }}" ]; then
+            MISSING_SECRETS+=("MONGO_INITDB_ROOT_PASSWORD")
           fi
           if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
             MISSING_SECRETS+=("OPENAI_API_KEY")
