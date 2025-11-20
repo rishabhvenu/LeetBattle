@@ -347,8 +347,17 @@ jobs:
           # Services will be applied with env substitution below (after extracting VM IP)
           
           # Apply other statefulsets with env substitution (Redis, etc.)
+          # Note: Delete old single-instance Redis if redis-cluster exists
+          if [ -f statefulsets/redis-cluster.yaml ] && k3s kubectl get statefulset redis -n codeclashers &>/dev/null; then
+            echo "⚠️  Old single-instance Redis StatefulSet found. Deleting it to use redis-cluster..."
+            k3s kubectl delete statefulset redis -n codeclashers --ignore-not-found=true
+            echo "Waiting for old Redis pod to terminate..."
+            sleep 5
+          fi
+          
           for file in statefulsets/*.yaml; do
             if [ -f "$file" ]; then
+              echo "Applying $(basename $file)..."
               envsubst < "$file" | k3s kubectl apply -f -
             fi
           done
