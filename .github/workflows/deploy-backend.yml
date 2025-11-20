@@ -333,16 +333,16 @@ jobs:
           # Apply storage
           k3s kubectl apply -f storage/
           
-          # Delete old single-instance MongoDB StatefulSet if it exists (before applying replica set version)
+          # Delete existing MongoDB StatefulSet if it exists (StatefulSets have immutable fields)
+          # We need to delete it before applying changes to serviceName, selector, or volumeClaimTemplates
           if k3s kubectl get statefulset mongodb -n codeclashers &>/dev/null; then
-            OLD_MONGODB_REPLICAS=$(k3s kubectl get statefulset mongodb -n codeclashers -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
-            if [ "$OLD_MONGODB_REPLICAS" = "1" ]; then
-              echo "⚠️  Old single-instance MongoDB StatefulSet found. Deleting it to use replica set version..."
-              k3s kubectl delete statefulset mongodb -n codeclashers --ignore-not-found=true
-              k3s kubectl delete svc mongodb -n codeclashers --ignore-not-found=true
-              echo "Waiting for old MongoDB pod to terminate..."
-              sleep 10
-            fi
+            echo "⚠️  MongoDB StatefulSet already exists. Deleting it to apply new configuration..."
+            k3s kubectl delete statefulset mongodb -n codeclashers --cascade=orphan --ignore-not-found=true
+            # Delete associated pods manually since we used --cascade=orphan
+            k3s kubectl delete pods -n codeclashers -l app=mongodb --ignore-not-found=true || true
+            k3s kubectl delete svc mongodb -n codeclashers --ignore-not-found=true || true
+            echo "Waiting for MongoDB resources to be cleaned up..."
+            sleep 15
           fi
           
           # Apply MongoDB ConfigMap (required before StatefulSet)
@@ -365,6 +365,8 @@ jobs:
             # Ensure it's a valid integer (remove any quotes or spaces)
             K8S_MONGODB_REPLICAS=$(echo "$K8S_MONGODB_REPLICAS" | tr -d '"' | tr -d "'" | tr -d ' ')
             export K8S_MONGODB_REPLICAS
+            # Use replace instead of apply to handle immutable fields
+            envsubst < mongodb/statefulset.yaml | k3s kubectl replace -f - || \
             envsubst < mongodb/statefulset.yaml | k3s kubectl apply -f -
           fi
           
