@@ -20,11 +20,16 @@ spec:
         ports:
         - containerPort: 6379
         command:
-        - redis-server
-        - --appendonly
-        - "yes"
-        - --requirepass
-        - "${REDIS_PASSWORD}"
+        - sh
+        - -c
+        - |
+          # Generate redis.conf with password from env var
+          cat > /etc/redis/redis.conf << EOF
+          appendonly yes
+          requirepass ${REDIS_PASSWORD}
+          EOF
+          # Start Redis with config file
+          exec redis-server /etc/redis/redis.conf
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -34,6 +39,11 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /data
+        - name: redis-config
+          mountPath: /etc/redis
+      volumes:
+      - name: redis-config
+        emptyDir: {}
         resources:
           requests:
             memory: ${K8S_REDIS_MEMORY_REQUEST}

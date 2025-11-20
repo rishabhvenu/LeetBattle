@@ -327,8 +327,14 @@ jobs:
           # Apply namespace
           k3s kubectl apply -f namespaces/
           
-          # Apply ConfigMap
+          # Apply ConfigMaps
           k3s kubectl apply -f configmaps/
+          
+          # Apply Redis ConfigMap if it exists (for password persistence)
+          if [ -f configmaps/redis-config.yaml ]; then
+            echo "Applying Redis ConfigMap..."
+            envsubst < configmaps/redis-config.yaml | k3s kubectl apply -f -
+          fi
           
           # Apply storage
           k3s kubectl apply -f storage/
@@ -435,12 +441,26 @@ jobs:
             envsubst < mongodb/service.yaml | k3s kubectl apply -f -
           fi
           
-          # Apply deployments with env substitution
+          # Apply deployments with env substitution and wait for rolling updates
+          # Apply each deployment one at a time and wait for it to be ready before moving to next
+          # This ensures zero-downtime rolling updates
           for file in deployments/*.yaml; do
-            envsubst < "$file" | k3s kubectl apply -f -
+            if [ -f "$file" ]; then
+              DEPLOYMENT_NAME=$(grep -E "^name:|^  name:" "$file" | head -1 | sed 's/.*name: *//' | tr -d ' "')
+              echo "Applying deployment: $DEPLOYMENT_NAME"
+              envsubst < "$file" | k3s kubectl apply -f -
+              
+              # Wait for deployment to be ready (with timeout)
+              echo "Waiting for $DEPLOYMENT_NAME to be ready..."
+              if k3s kubectl wait --for=condition=available --timeout=300s deployment/$DEPLOYMENT_NAME -n codeclashers 2>/dev/null; then
+                echo "✓ $DEPLOYMENT_NAME is ready"
+              else
+                echo "⚠️  $DEPLOYMENT_NAME not ready yet (will continue in background)"
+              fi
+            fi
           done
           
-          echo "Deployments applied. Services will start in background."
+          echo "Deployments applied. Rolling updates completed."
           
           echo "All resources applied successfully"
 

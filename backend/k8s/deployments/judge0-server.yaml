@@ -20,21 +20,88 @@ spec:
     spec:
       imagePullSecrets:
       - name: ghcr-secret
-      containers:
-      - name: judge0-server
-        image: ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
-        ports:
-        - containerPort: 2358
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command: ['sh', '-c', 'until pg_isready -h postgres -p 5432; do echo waiting for postgres; sleep 2; done;']
+      - name: run-migrations
+        image: ${JUDGE0_IMAGE}
+        command: ['sh', '-c', 'rails db:create db:migrate db:seed']
         env:
+        - name: RAILS_ENV
+          value: "production"
+        - name: DISABLE_DATABASE_ENVIRONMENT_CHECK
+          value: "1"
+        - name: SCHEMA
+          value: "/tmp/schema.rb"
+        - name: JUDGE0_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_PORT
         - name: REDIS_HOST
           valueFrom:
-            configMapKeyRef:
-              name: app-config
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_HOST
         - name: REDIS_PORT
           valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        - name: POSTGRES_HOST
+          valueFrom:
             configMapKeyRef:
               name: app-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_DB
+      containers:
+      - name: judge0-server
+        image: ${JUDGE0_IMAGE}
+        ports:
+        - name: http
+          containerPort: 2358  # Judge0 runs on fixed port 2358 internally
+        env:
+        - name: RAILS_ENV
+          value: "production"
+        # Note: JUDGE0_PORT is stored for reference but Judge0 doesn't actually use it
+        # Judge0 always runs on port 2358. This env var is used by other services (Colyseus)
+        # to know how to connect to Judge0.
+        - name: JUDGE0_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_PORT
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_PORT
         - name: REDIS_PASSWORD
           valueFrom:
@@ -71,15 +138,17 @@ spec:
         livenessProbe:
           httpGet:
             path: /
-            port: 2358
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          timeoutSeconds: 5
+            port: http
+          initialDelaySeconds: 120
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /
-            port: 2358
-          initialDelaySeconds: 30
-          periodSeconds: 5
-          timeoutSeconds: 3
+            port: http
+          initialDelaySeconds: 90
+          periodSeconds: 10
+          timeoutSeconds: 8
+          failureThreshold: 5
 
