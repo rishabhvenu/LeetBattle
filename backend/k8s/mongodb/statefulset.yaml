@@ -7,7 +7,7 @@ metadata:
     app: mongodb
 spec:
   serviceName: mongodb-headless
-  replicas: ${K8S_MONGODB_REPLICAS}  # Set via env var in workflow (defaults to 1)
+  replicas: ${K8S_MONGODB_REPLICAS:-1}  # Default to 1 for single-node clusters, override via env var
   selector:
     matchLabels:
       app: mongodb
@@ -56,11 +56,11 @@ spec:
           readOnly: true
         resources:
           requests:
+            memory: 512Mi
+            cpu: 100m
+          limits:
             memory: 2Gi
             cpu: 500m
-          limits:
-            memory: 4Gi
-            cpu: 1000m
         livenessProbe:
           exec:
             command:
@@ -75,42 +75,13 @@ spec:
         readinessProbe:
           exec:
             command:
-            - sh
-            - -c
-            - |
-              # Check if MongoDB is up
-              mongosh --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1 || exit 1
-              
-              # Check if replica set is initialized
-              STATUS=$(mongosh --quiet --eval "try { rs.status().ok } catch(e) { 0 }" 2>/dev/null | tr -d '[:space:]' || echo "0")
-              
-              if [ "$STATUS" != "1" ]; then
-                # Replica set not initialized yet - check if we're the first pod (mongodb-0)
-                HOSTNAME=$(hostname)
-                # Extract pod index from hostname (mongodb-N)
-                POD_INDEX=$(echo "$HOSTNAME" | sed 's/mongodb-//')
-                if [ "$POD_INDEX" = "0" ]; then
-                  # First pod is ready for initialization
-                  exit 0
-                else
-                  # Other pods wait for replica set to be initialized
-                  exit 1
-                fi
-              fi
-              
-              # Check if this pod is a member of the replica set
-              HOSTNAME=$(hostname)
-              MY_HOSTNAME="${HOSTNAME}.mongodb-headless.codeclashers.svc.cluster.local:27017"
-              MEMBER=$(mongosh --quiet --eval "try { rs.status().members.find(m => m.name === '$MY_HOSTNAME') ? 1 : 0 } catch(e) { 0 }" 2>/dev/null | tr -d '[:space:]' || echo "0")
-              
-              if [ "$MEMBER" != "1" ]; then
-                exit 1
-              fi
-              
-              exit 0
+            - mongosh
+            - --quiet
+            - --eval
+            - "db.adminCommand('ping')"
           initialDelaySeconds: 10
           periodSeconds: 5
-          timeoutSeconds: 10
+          timeoutSeconds: 5
           failureThreshold: 3
       volumes:
       - name: mongodb-keyfile
