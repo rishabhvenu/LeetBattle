@@ -386,6 +386,11 @@ jobs:
           
           for file in statefulsets/*.yaml; do
             if [ -f "$file" ]; then
+              # Skip MongoDB StatefulSet - it's already applied above
+              if [[ "$(basename $file)" == *"mongodb"* ]]; then
+                echo "Skipping $(basename $file) - MongoDB StatefulSet already applied"
+                continue
+              fi
               echo "Applying $(basename $file)..."
               envsubst < "$file" | k3s kubectl apply -f -
             fi
