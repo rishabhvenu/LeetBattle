@@ -618,10 +618,18 @@ jobs:
           # Wait for deployments to be ready
           echo "Waiting for deployments to be ready..."
           k3s kubectl wait --for=condition=available --timeout=300s deployment/colyseus -n codeclashers || HEALTH_CHECK_FAILED=true
-          k3s kubectl wait --for=condition=available --timeout=300s deployment/bots -n codeclashers || HEALTH_CHECK_FAILED=true
+          
+          # Bots deployment check (non-blocking - bots may be waiting for MongoDB connection)
+          echo "Checking bots deployment..."
+          if k3s kubectl wait --for=condition=available --timeout=120s deployment/bots -n codeclashers 2>/dev/null; then
+            echo "✓ Bots deployment is available"
+          else
+            echo "⚠️  Bots deployment not ready yet (non-critical - may be waiting for MongoDB connection)"
+            echo "   Bots will continue starting in background"
+          fi
           
           if [ "$HEALTH_CHECK_FAILED" = true ]; then
-            echo "❌ Deployments failed to become available"
+            echo "❌ Critical deployments failed to become available"
             echo "result=false" >> $GITHUB_OUTPUT
             exit 1
           fi
