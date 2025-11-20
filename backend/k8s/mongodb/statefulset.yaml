@@ -7,7 +7,7 @@ metadata:
     app: mongodb
 spec:
   serviceName: mongodb-headless
-  replicas: 3  # Override via kustomize replicas transformer or patch
+  replicas: ${K8S_MONGODB_REPLICAS:-1}  # Default to 1 for single-node clusters, override via env var
   selector:
     matchLabels:
       app: mongodb
