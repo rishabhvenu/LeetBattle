@@ -360,8 +360,11 @@ jobs:
           # Apply MongoDB StatefulSet with env substitution
           if [ -f mongodb/statefulset.yaml ]; then
             echo "Applying MongoDB StatefulSet..."
-            # Ensure K8S_MONGODB_REPLICAS is set (default to 1 if not set)
+            # Ensure K8S_MONGODB_REPLICAS is set and is an integer (default to 1 if not set)
             export K8S_MONGODB_REPLICAS="${K8S_MONGODB_REPLICAS:-1}"
+            # Ensure it's a valid integer (remove any quotes or spaces)
+            K8S_MONGODB_REPLICAS=$(echo "$K8S_MONGODB_REPLICAS" | tr -d '"' | tr -d "'" | tr -d ' ')
+            export K8S_MONGODB_REPLICAS
             envsubst < mongodb/statefulset.yaml | k3s kubectl apply -f -
           fi
           

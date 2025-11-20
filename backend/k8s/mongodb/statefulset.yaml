@@ -7,7 +7,7 @@ metadata:
     app: mongodb
 spec:
   serviceName: mongodb-headless
-  replicas: ${K8S_MONGODB_REPLICAS:-1}  # Default to 1 for single-node clusters, override via env var
+  replicas: ${K8S_MONGODB_REPLICAS}  # Set via K8S_MONGODB_REPLICAS env var (defaults to 1 in workflow)
   selector:
     matchLabels:
       app: mongodb
