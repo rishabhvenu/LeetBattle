@@ -330,12 +330,6 @@ jobs:
           # Apply ConfigMaps
           k3s kubectl apply -f configmaps/
           
-          # Apply Redis ConfigMap if it exists (for password persistence)
-          if [ -f configmaps/redis-config.yaml ]; then
-            echo "Applying Redis ConfigMap..."
-            envsubst < configmaps/redis-config.yaml | k3s kubectl apply -f -
-          fi
-          
           # Apply storage
           k3s kubectl apply -f storage/
           

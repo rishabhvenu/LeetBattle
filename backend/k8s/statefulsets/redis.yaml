@@ -23,13 +23,19 @@ spec:
         - sh
         - -c
         - |
-          # Generate redis.conf with password from env var
-          cat > /etc/redis/redis.conf << EOF
+          # Generate redis.conf with password from env var in persistent data directory
+          # This ensures password persists across restarts
+          if [ ! -f /data/redis.conf ]; then
+            cat > /data/redis.conf << EOF
           appendonly yes
           requirepass ${REDIS_PASSWORD}
           EOF
+          else
+            # Update password in existing config if it changed
+            sed -i "s/^requirepass .*/requirepass ${REDIS_PASSWORD}/" /data/redis.conf
+          fi
           # Start Redis with config file
-          exec redis-server /etc/redis/redis.conf
+          exec redis-server /data/redis.conf
         env:
         - name: REDIS_PASSWORD
           valueFrom:
@@ -39,11 +45,6 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /data
-        - name: redis-config
-          mountPath: /etc/redis
-      volumes:
-      - name: redis-config
-        emptyDir: {}
         resources:
           requests:
             memory: ${K8S_REDIS_MEMORY_REQUEST}
