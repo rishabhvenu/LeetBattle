@@ -186,11 +186,24 @@ jobs:
         run: |
           # Create MongoDB secrets (required by MongoDB StatefulSet)
           echo "Creating MongoDB secrets..."
-          MONGO_USER="${{ secrets.MONGO_INITDB_ROOT_USERNAME || 'admin' }}"
-          MONGO_PASS="${{ secrets.MONGO_INITDB_ROOT_PASSWORD }}"
+          # Extract username and password from MONGODB_URI or use MONGODB_PASSWORD secret
+          MONGODB_URI="${{ secrets.MONGODB_URI }}"
+          # Try to extract from MONGODB_URI (format: mongodb://user:pass@host...)
+          MONGO_USER=$(echo "$MONGODB_URI" | sed -n 's|mongodb://\([^:]*\):\([^@]*\)@.*|\1|p')
+          MONGO_PASS=$(echo "$MONGODB_URI" | sed -n 's|mongodb://\([^:]*\):\([^@]*\)@.*|\2|p')
+          
+          # If extraction failed, use MONGODB_PASSWORD secret or fallback
+          if [ -z "$MONGO_PASS" ]; then
+            MONGO_PASS="${{ secrets.MONGODB_PASSWORD }}"
+          fi
+          if [ -z "$MONGO_USER" ]; then
+            MONGO_USER="${{ secrets.MONGO_INITDB_ROOT_USERNAME || 'admin' }}"
+          fi
           
           if [ -z "$MONGO_PASS" ]; then
-            echo "⚠️  Warning: MONGO_INITDB_ROOT_PASSWORD not set. MongoDB may not work correctly."
+            echo "⚠️  Warning: Could not extract password from MONGODB_URI and MONGODB_PASSWORD secret not set."
+          else
+            echo "✓ Using MongoDB user: $MONGO_USER"
           fi
           
           k3s kubectl create secret generic mongodb-secrets \
@@ -487,9 +500,8 @@ jobs:
           if [ -z "${{ secrets.MONGODB_URI }}" ]; then
             MISSING_SECRETS+=("MONGODB_URI")
           fi
-          if [ -z "${{ secrets.MONGO_INITDB_ROOT_PASSWORD }}" ]; then
-            MISSING_SECRETS+=("MONGO_INITDB_ROOT_PASSWORD")
-          fi
+          # MONGODB_URI is required (password will be extracted from it)
+          # MONGODB_PASSWORD is optional (fallback if MONGODB_URI doesn't contain password)
           if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
             MISSING_SECRETS+=("OPENAI_API_KEY")
           fi
