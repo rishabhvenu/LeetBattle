@@ -97,6 +97,8 @@ jobs:
           JUDGE0_WORKER_IMAGE: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:${{ env.IMAGE_TAG }}
           # External IP for services
           ORACLE_VM_IP: ${{ vars.COLYSEUS_HOST_IP }}
+          # Redis password for ConfigMap substitution
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           # Resource configuration (from secrets/vars, with defaults)
           K8S_MONGODB_REPLICAS: ${{ secrets.K8S_MONGODB_REPLICAS || '1' }}
           K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '512Mi' }}
@@ -148,8 +150,17 @@ jobs:
           # Namespace
           k3s kubectl apply -f namespaces/
           
-          # ConfigMaps
-          k3s kubectl apply -f configmaps/
+          # ConfigMaps (with env substitution for redis-cluster-config)
+          for file in configmaps/*.yaml; do
+            if [ -f "$file" ]; then
+              if [[ "$file" == *"redis-cluster-config"* ]]; then
+                # Redis cluster config needs password substitution
+                envsubst < "$file" | k3s kubectl apply -f -
+              else
+                k3s kubectl apply -f "$file"
+              fi
+            fi
+          done
           
           # Storage
           k3s kubectl apply -f storage/

@@ -10,6 +10,7 @@ data:
     cluster-config-file /data/nodes.conf
     cluster-node-timeout 5000
     appendonly yes
-    protected-mode yes
+    requirepass ${REDIS_PASSWORD}
+    masterauth ${REDIS_PASSWORD}
+    protected-mode no
     dir /data
-
