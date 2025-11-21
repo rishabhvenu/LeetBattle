@@ -162,21 +162,8 @@ jobs:
                   echo "   Adding Ruby and Node.js installation before it..."
                   
                   # Create a temporary file with the installation commands
-                  cat > /tmp/ruby_node_install.txt << 'INSTALL_EOF'
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      curl \
-      git \
-      build-essential \
-      ca-certificates \
-      gnupg && \
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \
-    curl -sSL https://get.rvm.io | bash -s stable && \
-    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \
-    rm -rf /var/lib/apt/lists/*
-INSTALL_EOF
+                  # Use printf to avoid YAML heredoc issues
+                  printf 'RUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n      curl \\\n      git \\\n      build-essential \\\n      ca-certificates \\\n      gnupg && \\\n    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \\\n    apt-get install -y nodejs && \\\n    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \\\n    curl -sSL https://get.rvm.io | bash -s stable && \\\n    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \\\n    rm -rf /var/lib/apt/lists/*\n' > /tmp/ruby_node_install.txt
                   
                   # Insert the installation before the first RUN
                   sed -i "${FIRST_RUN_LINE}r /tmp/ruby_node_install.txt" Dockerfile
