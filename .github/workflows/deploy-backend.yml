@@ -146,7 +146,18 @@ jobs:
               
               # Now replace base images
               sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
-              sed -i 's|^FROM production.*|FROM ubuntu:22.04 AS development|' Dockerfile
+              
+              # Check if development stage inherits from production
+              if grep -q "^FROM production" Dockerfile; then
+                echo "   Development stage inherits from production - this is good"
+                # Keep the inheritance, but we need to ensure production has everything
+                # The development stage will automatically get it
+              else
+                # If development doesn't inherit, we need to fix it
+                sed -i 's|^FROM.*AS development|FROM production AS development|' Dockerfile
+                echo "   ✓ Fixed development stage to inherit from production"
+              fi
+              
               echo "   ✓ Replaced base images with ubuntu:22.04"
             else
               echo "✓ Dockerfile doesn't use judge0/compilers"
@@ -185,48 +196,54 @@ jobs:
             else
               echo "⚠️  Dockerfile may not copy scripts, patching to ensure scripts are included..."
               if [ -d "scripts" ] && [ -f "scripts/workers" ]; then
-                # Find the production stage and add scripts copy there
-                # Look for the production stage (FROM ... AS production or FROM production)
-                PROD_STAGE_LINE=$(grep -n "^FROM.*production\|^FROM production" Dockerfile | head -1 | cut -d: -f1)
+                # Find where COPY . . is (this copies all application code including scripts directory)
+                # But we need to ensure scripts are explicitly copied or accessible
                 
-                if [ -n "$PROD_STAGE_LINE" ]; then
-                  # Find the first COPY command after the production stage
-                  # This is where application code is typically copied
-                  FIRST_COPY_AFTER_PROD=$(sed -n "${PROD_STAGE_LINE},\$p" Dockerfile | grep -n "^COPY\|^ADD" | head -1 | cut -d: -f1)
+                # Find the COPY . . command - scripts should be included, but let's verify
+                COPY_DOT_LINE=$(grep -n "^COPY \\. " Dockerfile | head -1 | cut -d: -f1)
+                
+                if [ -n "$COPY_DOT_LINE" ]; then
+                  echo "   Found COPY . . at line $COPY_DOT_LINE"
+                  echo "   Scripts should be included in COPY . ., but let's add explicit copy after it"
+                  # Add explicit scripts copy right after COPY . .
+                  sed -i "${COPY_DOT_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
+                  echo "✓ Added COPY scripts/ ./scripts/ after COPY . ."
+                else
+                  # Find production stage and add scripts copy there
+                  PROD_STAGE_LINE=$(grep -n "^FROM.*production\|^FROM production" Dockerfile | head -1 | cut -d: -f1)
                   
-                  if [ -n "$FIRST_COPY_AFTER_PROD" ]; then
-                    # Calculate actual line number
-                    ACTUAL_LINE=$((PROD_STAGE_LINE + FIRST_COPY_AFTER_PROD))
-                    # Insert scripts copy after the first COPY in production stage
-                    sed -i "${ACTUAL_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
-                    echo "✓ Added COPY scripts/ ./scripts/ to Dockerfile (in production stage)"
-                  else
-                    # If no COPY found after production stage, add after WORKDIR or at end of production stage
+                  if [ -n "$PROD_STAGE_LINE" ]; then
+                    # Find WORKDIR in production stage
                     WORKDIR_LINE=$(sed -n "${PROD_STAGE_LINE},\$p" Dockerfile | grep -n "^WORKDIR" | head -1 | cut -d: -f1)
                     if [ -n "$WORKDIR_LINE" ]; then
                       ACTUAL_LINE=$((PROD_STAGE_LINE + WORKDIR_LINE))
                       sed -i "${ACTUAL_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
-                      echo "✓ Added COPY scripts/ ./scripts/ to Dockerfile (after WORKDIR in production stage)"
+                      echo "✓ Added COPY scripts/ ./scripts/ after WORKDIR in production stage"
                     else
-                      # Last resort: add right after production stage declaration
-                      sed -i "${PROD_STAGE_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
-                      echo "✓ Added COPY scripts/ ./scripts/ to Dockerfile (right after production stage)"
+                      # Add after production stage declaration
+                      sed -i "${PROD_STAGE_LINE}a\\WORKDIR /api\\nCOPY scripts/ ./scripts/" Dockerfile
+                      echo "✓ Added WORKDIR and COPY scripts/ after production stage"
                     fi
-                  fi
-                else
-                  # Fallback: find last COPY command
-                  LAST_COPY_LINE=$(grep -n "^COPY\|^ADD" Dockerfile | tail -1 | cut -d: -f1)
-                  if [ -n "$LAST_COPY_LINE" ]; then
-                    sed -i "${LAST_COPY_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
-                    echo "✓ Added COPY scripts/ ./scripts/ to Dockerfile (after last COPY)"
                   else
-                    echo "⚠️  Could not find appropriate location to add scripts copy"
+                    # Fallback: find last COPY command
+                    LAST_COPY_LINE=$(grep -n "^COPY\|^ADD" Dockerfile | tail -1 | cut -d: -f1)
+                    if [ -n "$LAST_COPY_LINE" ]; then
+                      sed -i "${LAST_COPY_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
+                      echo "✓ Added COPY scripts/ ./scripts/ after last COPY"
+                    fi
                   fi
                 fi
                 
-                # Also ensure scripts are executable
-                echo "RUN chmod +x ./scripts/workers || true" >> Dockerfile
-                echo "✓ Added chmod command for workers script"
+                # Also ensure scripts are executable - add this in production stage
+                # Find a good place after COPY scripts
+                SCRIPTS_COPY_LINE=$(grep -n "COPY scripts/" Dockerfile | tail -1 | cut -d: -f1)
+                if [ -n "$SCRIPTS_COPY_LINE" ]; then
+                  sed -i "${SCRIPTS_COPY_LINE}a\\RUN chmod +x ./scripts/* || true" Dockerfile
+                  echo "✓ Added chmod command for scripts"
+                else
+                  echo "RUN chmod +x ./scripts/* || true" >> Dockerfile
+                  echo "✓ Added chmod command at end of Dockerfile"
+                fi
               else
                 echo "⚠️  scripts directory not found in source, cannot patch Dockerfile"
               fi
