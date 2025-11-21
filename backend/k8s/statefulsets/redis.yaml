@@ -14,30 +14,38 @@ spec:
       labels:
         app: redis
     spec:
+      initContainers:
+      - name: setup-redis-config
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          # Always recreate redis.conf to ensure it's valid
+          # Remove old broken config if it exists
+          rm -f /data/redis.conf
+          # Create fresh config file with password
+          echo "appendonly yes" > /data/redis.conf
+          echo "requirepass ${REDIS_PASSWORD}" >> /data/redis.conf
+          # Verify config file is valid
+          cat /data/redis.conf
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        volumeMounts:
+        - name: data
+          mountPath: /data
       containers:
       - name: redis
         image: redis:7-alpine
         ports:
         - containerPort: 6379
         command:
-        - sh
-        - -c
-        - |
-          # Generate redis.conf with password from env var in persistent data directory
-          # This ensures password persists across restarts
-          if [ ! -f /data/redis.conf ]; then
-            echo "appendonly yes" > /data/redis.conf
-            echo "requirepass ${REDIS_PASSWORD}" >> /data/redis.conf
-          else
-            # Update password in existing config if it changed
-            if grep -q "^requirepass" /data/redis.conf; then
-              sed -i "s/^requirepass .*/requirepass ${REDIS_PASSWORD}/" /data/redis.conf
-            else
-              echo "requirepass ${REDIS_PASSWORD}" >> /data/redis.conf
-            fi
-          fi
-          # Start Redis with config file
-          exec redis-server /data/redis.conf
+        - redis-server
+        - /data/redis.conf
         env:
         - name: REDIS_PASSWORD
           valueFrom:
