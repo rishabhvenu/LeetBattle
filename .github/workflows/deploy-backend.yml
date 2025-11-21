@@ -219,9 +219,6 @@ jobs:
               else
                 echo "   No gem/npm RUN commands found, skipping Ruby/Node.js installation."
               fi
-              else
-                echo "   ⚠️  No gem/npm usage found in Dockerfile (unusual)"
-              fi
               
               # Check if development stage inherits from production
               if grep -q "^FROM production" Dockerfile; then
