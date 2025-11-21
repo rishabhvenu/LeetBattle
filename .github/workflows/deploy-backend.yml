@@ -175,12 +175,12 @@ jobs:
                     echo '      git \'
                     echo '      build-essential \'
                     echo '      ca-certificates \'
-                    echo '      gnupg && \'
+                    echo '      gnupg2 \'
+                    echo '      software-properties-common && \'
                     echo '    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \'
                     echo '    apt-get install -y nodejs && \'
-                    echo '    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \'
-                    echo '    curl -sSL https://get.rvm.io | bash -s stable && \'
-                    echo '    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \'
+                    echo '    apt-get install -y ruby-full ruby-dev && \'
+                    echo '    gem install bundler:2.1.4 && \'
                     echo '    rm -rf /var/lib/apt/lists/*'
                   } > /tmp/ruby_node_install.txt
                   
@@ -201,12 +201,12 @@ jobs:
                       echo '      git \'
                       echo '      build-essential \'
                       echo '      ca-certificates \'
-                      echo '      gnupg && \'
+                      echo '      gnupg2 \'
+                      echo '      software-properties-common && \'
                       echo '    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \'
                       echo '    apt-get install -y nodejs && \'
-                      echo '    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \'
-                      echo '    curl -sSL https://get.rvm.io | bash -s stable && \'
-                      echo '    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \'
+                      echo '    apt-get install -y ruby-full ruby-dev && \'
+                      echo '    gem install bundler:2.1.4 && \'
                       echo '    rm -rf /var/lib/apt/lists/*'
                     } > /tmp/ruby_node_install.txt
                     sed -i "${INSERT_LINE}r /tmp/ruby_node_install.txt" Dockerfile
