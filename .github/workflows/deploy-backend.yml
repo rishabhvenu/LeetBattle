@@ -132,8 +132,23 @@ jobs:
             if grep -q "COPY.*scripts" Dockerfile || grep -q "ADD.*scripts" Dockerfile; then
               echo "✓ Dockerfile includes scripts copy command"
             else
-              echo "⚠️  Dockerfile may not copy scripts, checking Dockerfile structure..."
-              grep -E "COPY|ADD" Dockerfile | grep -v "^#" | head -10
+              echo "⚠️  Dockerfile may not copy scripts, patching to ensure scripts are included..."
+              # Find the last COPY or ADD command and add scripts copy after it
+              if [ -d "scripts" ] && [ -f "scripts/workers" ]; then
+                # Get the line number of the last COPY/ADD command
+                LAST_COPY_LINE=$(grep -n "COPY\|ADD" Dockerfile | tail -1 | cut -d: -f1)
+                if [ -n "$LAST_COPY_LINE" ]; then
+                  # Insert scripts copy command after the last COPY/ADD
+                  sed -i "${LAST_COPY_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
+                  echo "✓ Added COPY scripts/ ./scripts/ to Dockerfile"
+                else
+                  # If no COPY found, add before the final stage
+                  sed -i '/^FROM.*production/i\\COPY scripts/ ./scripts/' Dockerfile
+                  echo "✓ Added COPY scripts/ ./scripts/ to Dockerfile (before production stage)"
+                fi
+              else
+                echo "⚠️  scripts directory not found in source, cannot patch Dockerfile"
+              fi
             fi
             
             # Build for ARM64 architecture using buildx
