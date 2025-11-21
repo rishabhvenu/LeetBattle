@@ -161,24 +161,26 @@ jobs:
                   echo "   Found RUN command using gem/npm at line $FIRST_RUN_LINE"
                   echo "   Adding Ruby and Node.js installation before it..."
                   
-                  # Insert Ruby and Node.js installation before the first RUN
-                  # Install Ruby via rbenv or rvm, and Node.js
-                  RUBY_NODE_INSTALL='RUN apt-get update && \\
-    apt-get install -y --no-install-recommends \\
-      curl \\
-      git \\
-      build-essential \\
-      ca-certificates \\
-      gnupg \\
-      && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \\
-      && apt-get install -y nodejs \\
-      && curl -sSL https://rvm.io/mpapis.asc | gpg --import - \\
-      && curl -sSL https://get.rvm.io | bash -s stable \\
-      && /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" \\
-      && rm -rf /var/lib/apt/lists/*'
+                  # Create a temporary file with the installation commands
+                  cat > /tmp/ruby_node_install.txt << 'INSTALL_EOF'
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      curl \
+      git \
+      build-essential \
+      ca-certificates \
+      gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y nodejs && \
+    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \
+    curl -sSL https://get.rvm.io | bash -s stable && \
+    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \
+    rm -rf /var/lib/apt/lists/*
+INSTALL_EOF
                   
-                  # Insert before the first RUN
-                  sed -i "${FIRST_RUN_LINE}i\\${RUBY_NODE_INSTALL}" Dockerfile
+                  # Insert the installation before the first RUN
+                  sed -i "${FIRST_RUN_LINE}r /tmp/ruby_node_install.txt" Dockerfile
+                  rm /tmp/ruby_node_install.txt
                   echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation"
                 fi
               fi
