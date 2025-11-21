@@ -326,6 +326,10 @@ jobs:
           export BOTS_IMAGE="ghcr.io/rishabhvenu/codeclashers-bots:${IMAGE_TAG}"
           export JUDGE0_IMAGE="ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${IMAGE_TAG}"
           
+          # Export secrets for envsubst (needed for StatefulSet init containers)
+          # Note: These are only used for envsubst substitution, not exposed in final YAML
+          export REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}"
+          
           # Apply manifests in order with environment substitution
           cd backend/k8s
           
