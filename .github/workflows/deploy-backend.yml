@@ -63,515 +63,74 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
 
-      - name: Build and push Judge0 ARM64 image
-        run: |
-          echo "Building Judge0 for ARM64..."
-          
-          # Login to GHCR to check if image exists
-          echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          
-          # Check if the latest image already exists
-          # FORCE REBUILD: Temporarily disabled to force rebuild with scripts
-          if false && docker manifest inspect ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest &>/dev/null; then
-            echo "✅ Judge0 ARM64 image already exists in registry, skipping build"
-            # Tag the existing image with the current commit
-            docker pull ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest || true
-            docker tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
-            docker push ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }}
-            echo "✅ Tagged and pushed existing image with tag ${{ env.IMAGE_TAG }}"
-          else
-            echo "🔄 Judge0 ARM64 image not found, building from source..."
-            
-            # Use existing builder or create one if missing
-            docker buildx use arm64-builder || docker buildx create --name arm64-builder --use --bootstrap
-            
-            # Clone Judge0 repository if not exists
-            if [ ! -d "judge0-build" ]; then
-              git clone --depth 1 https://github.com/judge0/judge0.git judge0-build
-            else
-              cd judge0-build
-              git pull
-              cd ..
-            fi
-            
-            cd judge0-build
-            
-            echo "Patching Dockerfile for ARM64 compatibility..."
-            
-            # Save original Dockerfile for reference and debugging
-            cp Dockerfile Dockerfile.original
-            TOTAL_LINES=$(wc -l < Dockerfile)
-            echo "Original Dockerfile saved ($TOTAL_LINES lines)"
-            
-            # Check if Dockerfile uses judge0/compilers base image
-            if grep -q "judge0/compilers" Dockerfile; then
-              echo "⚠️  Dockerfile uses judge0/compilers which doesn't support ARM64"
-              echo "   Analyzing Dockerfile structure..."
-              
-              # Count key commands
-              COPY_COUNT=$(grep -c "^COPY\|^ADD" Dockerfile || echo "0")
-              RUN_COUNT=$(grep -c "^RUN" Dockerfile || echo "0")
-              echo "   Stats: $COPY_COUNT COPY/ADD, $RUN_COUNT RUN commands"
-              
-              # Show structure
-              echo "   Key commands:"
-              grep -n "^FROM\|^COPY\|^RUN\|^WORKDIR\|^ENTRYPOINT\|^CMD" Dockerfile | head -15
-              
-              # Check if application code is copied
-              if grep -q "^COPY.*\\. " Dockerfile || grep -q "^COPY \\. " Dockerfile; then
-                echo "   ✓ Found COPY . - application code will be copied"
-              else
-                echo "   ⚠️  No COPY . found - adding it to include application code"
-                # Find where to add it
-                WORKDIR_LINE=$(grep -n "^WORKDIR" Dockerfile | head -1 | cut -d: -f1)
-                if [ -n "$WORKDIR_LINE" ]; then
-                  sed -i "${WORKDIR_LINE}a\\COPY . ." Dockerfile
-                  echo "   ✓ Added COPY . . after WORKDIR"
-                else
-                  # Add after production stage
-                  PROD_LINE=$(grep -n "^FROM.*production\|^FROM.*AS production" Dockerfile | head -1 | cut -d: -f1)
-                  if [ -n "$PROD_LINE" ]; then
-                    sed -i "${PROD_LINE}a\\WORKDIR /app\\nCOPY . ." Dockerfile
-                    echo "   ✓ Added WORKDIR and COPY . . after production stage"
-                  else
-                    # Last resort: add at beginning after first FROM
-                    FIRST_FROM=$(grep -n "^FROM" Dockerfile | head -1 | cut -d: -f1)
-                    if [ -n "$FIRST_FROM" ]; then
-                      sed -i "${FIRST_FROM}a\\WORKDIR /app\\nCOPY . ." Dockerfile
-                      echo "   ✓ Added WORKDIR and COPY . . after first FROM"
-                    fi
-                  fi
-                fi
-              fi
-              
-              # Now replace base images
-              # CRITICAL: Only replace the judge0/compilers base, NOT "FROM production"
-              sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
-              
-              # The original base image had Ruby and Node.js pre-installed
-              # We need to install them in ubuntu:22.04 before the RUN commands that use them
-              echo "   Installing Ruby and Node.js dependencies..."
-              
-              # Check if any RUN command uses gem or npm (check entire Dockerfile)
-              if grep -q "gem\|npm" Dockerfile; then
-                echo "   Found gem/npm usage in Dockerfile, adding Ruby and Node.js installation..."
-                
-                # Find the FROM line for the production stage (after we replaced it)
-                PROD_FROM_LINE=$(grep -n "^FROM.*AS production\|^FROM ubuntu.*AS production" Dockerfile | head -1 | cut -d: -f1)
-                
-                if [ -n "$PROD_FROM_LINE" ]; then
-                  echo "   Production stage FROM at line $PROD_FROM_LINE"
-                  echo "   Adding Ruby and Node.js installation right after FROM..."
-                  
-                  # Insert right after the FROM line
-                  INSERT_LINE=$((PROD_FROM_LINE + 1))
-                  
-                  # Create a temporary file with the installation commands
-                  # Write the RUN command with proper line continuations
-                  {
-                    echo 'RUN DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get update && \'
-                    echo '    DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y --no-install-recommends \'
-                    echo '      curl \'
-                    echo '      git \'
-                    echo '      build-essential \'
-                    echo '      ca-certificates \'
-                    echo '      gnupg2 \'
-                    echo '      software-properties-common \'
-                    echo '      tzdata && \'
-                    echo '    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \'
-                    echo '    apt-get install -y nodejs && \'
-                    echo '    apt-get install -y ruby-full ruby-dev && \'
-                    echo '    gem install bundler:2.1.4 && \'
-                    echo '    rm -rf /var/lib/apt/lists/*'
-                  } > /tmp/ruby_node_install.txt
-                  
-                  # Insert the installation right after the FROM line
-                  sed -i "${INSERT_LINE}r /tmp/ruby_node_install.txt" Dockerfile
-                  rm /tmp/ruby_node_install.txt
-                  echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation"
-                else
-                  echo "   ⚠️  Could not find production FROM line, trying after first FROM..."
-                  # Fallback: insert after first FROM
-                  FIRST_FROM_LINE=$(grep -n "^FROM" Dockerfile | head -1 | cut -d: -f1)
-                  if [ -n "$FIRST_FROM_LINE" ]; then
-                    INSERT_LINE=$((FIRST_FROM_LINE + 1))
-                    {
-                      echo 'RUN DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get update && \'
-                      echo '    DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y --no-install-recommends \'
-                      echo '      curl \'
-                      echo '      git \'
-                      echo '      build-essential \'
-                      echo '      ca-certificates \'
-                      echo '      gnupg2 \'
-                      echo '      software-properties-common \'
-                      echo '      tzdata && \'
-                      echo '    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \'
-                      echo '    apt-get install -y nodejs && \'
-                      echo '    apt-get install -y ruby-full ruby-dev && \'
-                      echo '    gem install bundler:2.1.4 && \'
-                      echo '    rm -rf /var/lib/apt/lists/*'
-                    } > /tmp/ruby_node_install.txt
-                    sed -i "${INSERT_LINE}r /tmp/ruby_node_install.txt" Dockerfile
-                    rm /tmp/ruby_node_install.txt
-                    echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation (fallback)"
-                  else
-                    echo "   ⚠️  No FROM line found, cannot add Ruby/Node.js installation"
-                  fi
-                fi
-              else
-                echo "   No gem/npm RUN commands found, skipping Ruby/Node.js installation."
-              fi
-              
-              # Check if development stage inherits from production
-              if grep -q "^FROM production" Dockerfile; then
-                echo "   ✓ Development stage inherits from production - keeping this!"
-                echo "   Development stage will automatically get all code and scripts from production"
-              else
-                # If development doesn't inherit, we need to fix it
-                # But don't replace if it says "FROM production AS development"
-                if ! grep -q "FROM production AS development" Dockerfile; then
-                  sed -i 's|^FROM.*AS development|FROM production AS development|' Dockerfile
-                  echo "   ✓ Fixed development stage to inherit from production"
-                fi
-              fi
-              
-              echo "   ✓ Replaced judge0/compilers base with ubuntu:22.04"
-              echo "   ✓ Added Ruby and Node.js installation"
-              echo "   ✓ Development stage inherits from production (preserved)"
-            else
-              echo "✓ Dockerfile doesn't use judge0/compilers"
-            fi
-            
-            echo "Dockerfile FROM statements:"
-            grep "^FROM" Dockerfile | head -5
-            
-            # Ensure scripts directory exists and workers script is present
-            echo "Verifying scripts directory..."
-            if [ ! -d "scripts" ]; then
-              echo "⚠️  scripts directory not found, checking repository structure..."
-              find . -name "workers" -type f 2>/dev/null | head -5
-              find . -type d -name "scripts" 2>/dev/null | head -5
-            else
-              echo "✓ scripts directory found"
-              ls -la scripts/ | head -10
-              if [ ! -f "scripts/workers" ]; then
-                echo "⚠️  scripts/workers not found, checking for alternative location..."
-                find . -name "workers" -type f 2>/dev/null
-              else
-                echo "✓ scripts/workers found"
-                chmod +x scripts/workers
-              fi
-            fi
-            
-            # Optional: limit languages for ARM64
-            if command -v jq >/dev/null 2>&1; then
-              jq 'del(.languages[] | select(.name | test("Swift|Pascal|Mono|C#|Go|Kotlin|PHP|Perl|Ruby"; "i")))' config.json > tmp.json && mv tmp.json config.json
-            fi
-            
-            # Verify Dockerfile includes scripts before building
-            echo "Checking Dockerfile for scripts copy commands..."
-            if grep -q "COPY.*scripts" Dockerfile || grep -q "ADD.*scripts" Dockerfile; then
-              echo "✓ Dockerfile includes scripts copy command"
-            else
-              echo "⚠️  Dockerfile may not copy scripts, patching to ensure scripts are included..."
-              if [ -d "scripts" ] && [ -f "scripts/workers" ]; then
-                # Find where COPY . . is (this copies all application code including scripts directory)
-                # But we need to ensure scripts are explicitly copied or accessible
-                
-                # Find the COPY . . command - scripts should be included, but let's verify
-                COPY_DOT_LINE=$(grep -n "^COPY \\. " Dockerfile | head -1 | cut -d: -f1)
-                
-                if [ -n "$COPY_DOT_LINE" ]; then
-                  echo "   Found COPY . . at line $COPY_DOT_LINE"
-                  echo "   Scripts should be included in COPY . ., but let's add explicit copy after it"
-                  # Add explicit scripts copy right after COPY . .
-                  sed -i "${COPY_DOT_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
-                  echo "✓ Added COPY scripts/ ./scripts/ after COPY . ."
-                else
-                  # Find production stage and add scripts copy there
-                  PROD_STAGE_LINE=$(grep -n "^FROM.*production\|^FROM production" Dockerfile | head -1 | cut -d: -f1)
-                  
-                  if [ -n "$PROD_STAGE_LINE" ]; then
-                    # Find WORKDIR in production stage
-                    WORKDIR_LINE=$(sed -n "${PROD_STAGE_LINE},\$p" Dockerfile | grep -n "^WORKDIR" | head -1 | cut -d: -f1)
-                    if [ -n "$WORKDIR_LINE" ]; then
-                      ACTUAL_LINE=$((PROD_STAGE_LINE + WORKDIR_LINE))
-                      sed -i "${ACTUAL_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
-                      echo "✓ Added COPY scripts/ ./scripts/ after WORKDIR in production stage"
-                    else
-                      # Add after production stage declaration
-                      sed -i "${PROD_STAGE_LINE}a\\WORKDIR /api\\nCOPY scripts/ ./scripts/" Dockerfile
-                      echo "✓ Added WORKDIR and COPY scripts/ after production stage"
-                    fi
-                  else
-                    # Fallback: find last COPY command
-                    LAST_COPY_LINE=$(grep -n "^COPY\|^ADD" Dockerfile | tail -1 | cut -d: -f1)
-                    if [ -n "$LAST_COPY_LINE" ]; then
-                      sed -i "${LAST_COPY_LINE}a\\COPY scripts/ ./scripts/" Dockerfile
-                      echo "✓ Added COPY scripts/ ./scripts/ after last COPY"
-                    fi
-                  fi
-                fi
-                
-                # Also ensure scripts are executable - add this in production stage
-                # Find a good place after COPY scripts
-                SCRIPTS_COPY_LINE=$(grep -n "COPY scripts/" Dockerfile | tail -1 | cut -d: -f1)
-                if [ -n "$SCRIPTS_COPY_LINE" ]; then
-                  sed -i "${SCRIPTS_COPY_LINE}a\\RUN chmod +x ./scripts/* || true" Dockerfile
-                  echo "✓ Added chmod command for scripts"
-                else
-                  echo "RUN chmod +x ./scripts/* || true" >> Dockerfile
-                  echo "✓ Added chmod command at end of Dockerfile"
-                fi
-              else
-                echo "⚠️  scripts directory not found in source, cannot patch Dockerfile"
-              fi
-            fi
-            
-            # Patch server script to handle migration/seed failures gracefully
-            echo "Patching server script to handle existing database gracefully..."
-            if [ -f "scripts/server" ]; then
-              echo "   Found scripts/server, patching it..."
-              # Create a backup
-              cp scripts/server scripts/server.original
-              # Modify the script to continue even if migrations/seeds fail
-              # Change: rails db:create db:migrate db:seed
-              # To: rails db:create || true; rails db:migrate || true; rails db:seed || true
-              sed -i 's/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/' scripts/server
-              echo "✓ Patched server script to handle existing database"
-            else
-              echo "⚠️  scripts/server not found, will patch after COPY in Dockerfile"
-              # Add a RUN command to patch the script after it's copied
-              # Find the line with chmod for scripts
-              CHMOD_LINE=$(grep -n "chmod.*scripts" Dockerfile | tail -1 | cut -d: -f1)
-              if [ -n "$CHMOD_LINE" ]; then
-                {
-                  echo 'RUN sed -i "s/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/" /api/scripts/server || true'
-                } > /tmp/patch_server.txt
-                sed -i "${CHMOD_LINE}r /tmp/patch_server.txt" Dockerfile
-                rm /tmp/patch_server.txt
-                echo "✓ Added RUN command to patch server script in Dockerfile"
-              else
-                # Add at end of production stage
-                echo 'RUN sed -i "s/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/" /api/scripts/server || true' >> Dockerfile
-                echo "✓ Added RUN command to patch server script at end of Dockerfile"
-              fi
-            fi
-            
-            # Build for ARM64 architecture using buildx
-            docker buildx build \
-              --platform linux/arm64 \
-              --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${{ env.IMAGE_TAG }} \
-              --push .
-            
-            # Also tag as latest
-            docker buildx build \
-              --platform linux/arm64 \
-              --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest \
-              --push .
-            
-            # Verify the built image has scripts/workers
-            echo "Verifying built image contains scripts/workers..."
-            docker pull ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
-            if docker run --rm --entrypoint sh ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest -c 'test -f ./scripts/workers && echo "✓ scripts/workers exists" || echo "✗ scripts/workers NOT FOUND"'; then
-              echo "✅ Image verification passed"
-            else
-              echo "❌ WARNING: Built image does not contain scripts/workers!"
-              echo "   The image may not work correctly for workers deployment"
-            fi
-            
-            cd ..
-            echo "✅ Judge0 ARM64 image built and pushed successfully"
-          fi
+      - name: Build and push Judge0 API image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/judge0/api
+          push: true
+          platforms: linux/arm64
+          tags: ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:${{ env.IMAGE_TAG }},ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:latest
+          cache-from: type=gha
+          cache-to: type=gha
 
-      - name: Stop docker-compose services (if running)
-        run: |
-          # Stop docker-compose services to avoid port conflicts
-          # This is safe - K8s will handle traffic
-          if [ -f "/opt/CodeClashers/backend/docker-compose.prod.yml" ]; then
-            echo "Stopping docker-compose services..."
-            cd /opt/CodeClashers/backend
-            docker-compose -f docker-compose.prod.yml down || true
-            echo "Docker compose services stopped"
-          else
-            echo "No docker-compose.prod.yml found, skipping"
-          fi
+      - name: Build and push Judge0 Worker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend/judge0/worker
+          push: true
+          platforms: linux/arm64
+          tags: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:${{ env.IMAGE_TAG }},ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:latest
+          cache-from: type=gha
+          cache-to: type=gha
 
-      - name: Install k3s if not present
-        run: |
-          if ! command -v k3s &> /dev/null; then
-            echo "Installing k3s..."
-            chmod +x backend/k8s/install-k3s.sh
-            bash backend/k8s/install-k3s.sh
-          else
-            echo "k3s already installed"
-            k3s --version
-            
-            # Fix permissions if kubeconfig is not readable
-            if [ ! -r ~/.kube/config ]; then
-              echo "Fixing kubeconfig permissions..."
-              sudo mkdir -p ~/.kube
-              sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-              sudo chown -R $USER:$USER ~/.kube
-            fi
-          fi
-          
-          # Ensure envsubst is installed (comes with gettext package)
-          if ! command -v envsubst &> /dev/null; then
-            echo "Installing gettext package for envsubst..."
-            sudo apt-get update && sudo apt-get install -y gettext-base
-          fi
-
-      - name: Create namespace if not exists
+      - name: Ensure namespace exists
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
           k3s kubectl create namespace codeclashers --dry-run=client -o yaml | k3s kubectl apply -f -
 
-      - name: Create registry secret for image pulls
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          k3s kubectl create secret docker-registry ghcr-secret \
-            --namespace=codeclashers \
-            --docker-server=ghcr.io \
-            --docker-username=${{ github.actor }} \
-            --docker-password="${{ secrets.GITHUB_TOKEN }}" \
-            --dry-run=client -o yaml | k3s kubectl apply -f -
-
-      - name: Create or update secrets
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          # Create MongoDB secrets (required by MongoDB StatefulSet)
-          echo "Creating MongoDB secrets..."
-          # Extract username and password from MONGODB_URI or use MONGODB_PASSWORD secret
-          MONGODB_URI="${{ secrets.MONGODB_URI }}"
-          # Try to extract from MONGODB_URI (format: mongodb://user:pass@host...)
-          MONGO_USER=$(echo "$MONGODB_URI" | sed -n 's|mongodb://\([^:]*\):\([^@]*\)@.*|\1|p')
-          MONGO_PASS=$(echo "$MONGODB_URI" | sed -n 's|mongodb://\([^:]*\):\([^@]*\)@.*|\2|p')
-          
-          # If extraction failed, use MONGODB_PASSWORD secret or fallback
-          if [ -z "$MONGO_PASS" ]; then
-            MONGO_PASS="${{ secrets.MONGODB_PASSWORD }}"
-          fi
-          if [ -z "$MONGO_USER" ]; then
-            MONGO_USER="${{ secrets.MONGO_INITDB_ROOT_USERNAME || 'admin' }}"
-          fi
-          
-          if [ -z "$MONGO_PASS" ]; then
-            echo "⚠️  Warning: Could not extract password from MONGODB_URI and MONGODB_PASSWORD secret not set."
-          else
-            echo "✓ Using MongoDB user: $MONGO_USER"
-          fi
-          
-          k3s kubectl create secret generic mongodb-secrets \
-            --namespace=codeclashers \
-            --from-literal=MONGO_INITDB_ROOT_USERNAME="$MONGO_USER" \
-            --from-literal=MONGO_INITDB_ROOT_PASSWORD="$MONGO_PASS" \
-            --from-literal=REPLICA_SET_NAME="rs0" \
-            --dry-run=client -o yaml | k3s kubectl apply -f -
-          
-          # Create mongodb-keyfile if it doesn't exist (required for replica set authentication)
-          if ! k3s kubectl get secret mongodb-keyfile -n codeclashers &>/dev/null; then
-            echo "Creating mongodb-keyfile secret..."
-            KEYFILE=$(openssl rand -base64 756)
-            k3s kubectl create secret generic mongodb-keyfile \
-              --namespace=codeclashers \
-              --from-literal=keyfile="$KEYFILE"
-            echo "✓ mongodb-keyfile secret created"
-          else
-            echo "✓ mongodb-keyfile secret already exists"
-          fi
-          
-          # Create app-secrets with MongoDB URI including credentials
-          # Use redis-cluster for internal access (not external domain)
-          REDIS_HOST_INTERNAL="redis-cluster"
-          MONGODB_URI_INTERNAL="mongodb://${MONGO_USER}:${MONGO_PASS}@mongodb.codeclashers.svc.cluster.local:${{ vars.MONGODB_PORT || '27017' }}/codeclashers?replicaSet=rs0&authSource=admin"
-          
-          k3s kubectl create secret generic app-secrets \
-            --namespace=codeclashers \
-            --from-literal=REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}" \
-            --from-literal=REDIS_HOST="$REDIS_HOST_INTERNAL" \
-            --from-literal=REDIS_PORT="${{ vars.REDIS_PORT || '6379' }}" \
-            --from-literal=JUDGE0_PORT="${{ vars.JUDGE0_PORT || '2358' }}" \
-            --from-literal=MONGODB_PORT="${{ vars.MONGODB_PORT || '27017' }}" \
-            --from-literal=COLYSEUS_PORT="${{ vars.COLYSEUS_PORT || '2567' }}" \
-            --from-literal=JUDGE0_POSTGRES_USER="${{ secrets.JUDGE0_POSTGRES_USER }}" \
-            --from-literal=JUDGE0_POSTGRES_PASSWORD="${{ secrets.JUDGE0_POSTGRES_PASSWORD }}" \
-            --from-literal=JUDGE0_POSTGRES_DB="${{ secrets.JUDGE0_POSTGRES_DB }}" \
-            --from-literal=MONGODB_URI_INTERNAL="$MONGODB_URI_INTERNAL" \
-            --from-literal=MONGODB_URI="${{ secrets.MONGODB_URI }}" \
-            --from-literal=OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
-            --from-literal=INTERNAL_SERVICE_SECRET="${{ secrets.INTERNAL_SERVICE_SECRET }}" \
-            --from-literal=BOT_SERVICE_SECRET="${{ secrets.BOT_SERVICE_SECRET }}" \
-            --from-literal=COLYSEUS_RESERVATION_SECRET="${{ secrets.COLYSEUS_RESERVATION_SECRET }}" \
-            --from-literal=AWS_ACCESS_KEY_ID="${{ secrets.AWS_ACCESS_KEY_ID }}" \
-            --from-literal=AWS_SECRET_ACCESS_KEY="${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
-            --from-literal=S3_BUCKET_NAME="${{ vars.S3_BUCKET_NAME }}" \
-            --from-literal=AWS_REGION="${{ vars.AWS_REGION }}" \
-            --dry-run=client -o yaml | k3s kubectl apply -f -
-          
-          echo "✓ All secrets created/updated"
-
-      - name: Clean up old failing pods before deployment
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "Cleaning up old CrashLoopBackOff pods..."
-          # Delete failed pods (includes CrashLoopBackOff and Error states)
-          k3s kubectl delete pod -n codeclashers --field-selector=status.phase=Failed --grace-period=0 --force || true
-          # Also delete any pods in CrashLoopBackOff or Error states
-          k3s kubectl get pods -n codeclashers -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | while read pod; do
-            status=$(k3s kubectl get pod -n codeclashers "$pod" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}')
-            if [[ "$status" == "CrashLoopBackOff" ]] || [[ "$status" == "Error" ]]; then
-              echo "Deleting pod in $status state: $pod"
-              k3s kubectl delete pod -n codeclashers "$pod" --grace-period=0 --force || true
-            fi
-          done
-          sleep 3
-
       - name: Deploy to Kubernetes
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           KUBECONFIG: /home/ubuntu/.kube/config
-          # MongoDB resources
+          # Image tags for envsubst
+          COLYSEUS_IMAGE: ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}
+          BOTS_IMAGE: ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}
+          JUDGE0_IMAGE: ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:${{ env.IMAGE_TAG }}
+          JUDGE0_WORKER_IMAGE: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:${{ env.IMAGE_TAG }}
+          # External IP for services
+          ORACLE_VM_IP: ${{ vars.COLYSEUS_HOST_IP }}
+          # Resource configuration (from secrets/vars, with defaults)
           K8S_MONGODB_REPLICAS: ${{ secrets.K8S_MONGODB_REPLICAS || '1' }}
           K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '512Mi' }}
           K8S_MONGODB_MEMORY_LIMIT: ${{ secrets.K8S_MONGODB_MEMORY_LIMIT || '1Gi' }}
           K8S_MONGODB_CPU_REQUEST: ${{ secrets.K8S_MONGODB_CPU_REQUEST || '50m' }}
           K8S_MONGODB_CPU_LIMIT: ${{ secrets.K8S_MONGODB_CPU_LIMIT || '200m' }}
-          # Redis resources
           K8S_REDIS_REPLICAS: ${{ secrets.K8S_REDIS_REPLICAS || '1' }}
           K8S_REDIS_MEMORY_REQUEST: ${{ secrets.K8S_REDIS_MEMORY_REQUEST || '256Mi' }}
           K8S_REDIS_MEMORY_LIMIT: ${{ secrets.K8S_REDIS_MEMORY_LIMIT || '512Mi' }}
           K8S_REDIS_CPU_REQUEST: ${{ secrets.K8S_REDIS_CPU_REQUEST || '50m' }}
           K8S_REDIS_CPU_LIMIT: ${{ secrets.K8S_REDIS_CPU_LIMIT || '200m' }}
-          # PostgreSQL resources
           K8S_POSTGRES_REPLICAS: ${{ secrets.K8S_POSTGRES_REPLICAS || '1' }}
           K8S_POSTGRES_MEMORY_REQUEST: ${{ secrets.K8S_POSTGRES_MEMORY_REQUEST || '128Mi' }}
           K8S_POSTGRES_MEMORY_LIMIT: ${{ secrets.K8S_POSTGRES_MEMORY_LIMIT || '256Mi' }}
           K8S_POSTGRES_CPU_REQUEST: ${{ secrets.K8S_POSTGRES_CPU_REQUEST || '50m' }}
           K8S_POSTGRES_CPU_LIMIT: ${{ secrets.K8S_POSTGRES_CPU_LIMIT || '200m' }}
-          # Colyseus resources
           K8S_COLYSEUS_REPLICAS: ${{ secrets.K8S_COLYSEUS_REPLICAS || '1' }}
           K8S_COLYSEUS_MEMORY_REQUEST: ${{ secrets.K8S_COLYSEUS_MEMORY_REQUEST || '256Mi' }}
           K8S_COLYSEUS_MEMORY_LIMIT: ${{ secrets.K8S_COLYSEUS_MEMORY_LIMIT || '512Mi' }}
           K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '50m' }}
           K8S_COLYSEUS_CPU_LIMIT: ${{ secrets.K8S_COLYSEUS_CPU_LIMIT || '200m' }}
-          # Judge0 Server resources
           K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '1' }}
           K8S_JUDGE0_SERVER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_REQUEST || '256Mi' }}
           K8S_JUDGE0_SERVER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_LIMIT || '512Mi' }}
           K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '50m' }}
           K8S_JUDGE0_SERVER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_CPU_LIMIT || '200m' }}
-          # Judge0 Worker resources
           K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '1' }}
           K8S_JUDGE0_WORKER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_REQUEST || '512Mi' }}
           K8S_JUDGE0_WORKER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_LIMIT || '1Gi' }}
           K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '50m' }}
           K8S_JUDGE0_WORKER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_CPU_LIMIT || '400m' }}
-          # Bots resources
           K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '1' }}
           K8S_BOTS_MEMORY_REQUEST: ${{ secrets.K8S_BOTS_MEMORY_REQUEST || '128Mi' }}
           K8S_BOTS_MEMORY_LIMIT: ${{ secrets.K8S_BOTS_MEMORY_LIMIT || '256Mi' }}
@@ -580,445 +139,66 @@ jobs:
         run: |
           set -e
           
-          # Export image variables for envsubst
-          export COLYSEUS_IMAGE="ghcr.io/rishabhvenu/codeclashers-colyseus:${IMAGE_TAG}"
-          export BOTS_IMAGE="ghcr.io/rishabhvenu/codeclashers-bots:${IMAGE_TAG}"
-          export JUDGE0_IMAGE="ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${IMAGE_TAG}"
+          # Ensure envsubst is installed
+          if ! command -v envsubst &> /dev/null; then
+            echo "Installing gettext package for envsubst..."
+            sudo apt-get update && sudo apt-get install -y gettext-base
+          fi
           
-          # Export secrets for envsubst (needed for StatefulSet init containers)
-          # Note: These are only used for envsubst substitution, not exposed in final YAML
-          export REDIS_PASSWORD="${{ secrets.REDIS_PASSWORD }}"
-          
-          # Apply manifests in order with environment substitution
           cd backend/k8s
           
-          # Apply namespace
+          # Apply manifests explicitly by subdirectory, EXCLUDING secrets/
+          # Namespace
           k3s kubectl apply -f namespaces/
           
-          # Apply ConfigMaps
+          # ConfigMaps
           k3s kubectl apply -f configmaps/
           
-          # Apply storage
+          # Storage
           k3s kubectl apply -f storage/
           
-          # Note: MongoDB StatefulSet deletion is handled in the MongoDB StatefulSet apply step
-          # to avoid conflicts with multiple apply attempts
-          
-          # Apply MongoDB ConfigMap (required before StatefulSet)
+          # MongoDB (if exists in separate directory)
           if [ -f mongodb/configmap.yaml ]; then
-            echo "Applying MongoDB ConfigMap..."
             k3s kubectl apply -f mongodb/configmap.yaml
           fi
-          
-          # Apply MongoDB headless service (required for StatefulSet)
           if [ -f mongodb/headless-service.yaml ]; then
-            echo "Applying MongoDB headless service..."
             k3s kubectl apply -f mongodb/headless-service.yaml
           fi
-          
-          # Apply MongoDB StatefulSet with env substitution
           if [ -f mongodb/statefulset.yaml ]; then
-            echo "Applying MongoDB StatefulSet..."
-            # Ensure K8S_MONGODB_REPLICAS is set and is an integer (default to 1 if not set)
-            export K8S_MONGODB_REPLICAS="${K8S_MONGODB_REPLICAS:-1}"
-            # Ensure it's a valid integer (remove any quotes or spaces)
-            K8S_MONGODB_REPLICAS=$(echo "$K8S_MONGODB_REPLICAS" | tr -d '"' | tr -d "'" | tr -d ' ')
-            export K8S_MONGODB_REPLICAS
-            # Check if StatefulSet already exists - if so, delete it first (immutable fields)
-            if k3s kubectl get statefulset mongodb -n codeclashers &>/dev/null; then
-              echo "⚠️  MongoDB StatefulSet exists, deleting before applying new spec..."
-              k3s kubectl delete statefulset mongodb -n codeclashers --cascade=orphan --ignore-not-found=true
-              k3s kubectl delete pods -n codeclashers -l app=mongodb --ignore-not-found=true || true
-              sleep 5
-            fi
-            # Apply the StatefulSet
             envsubst < mongodb/statefulset.yaml | k3s kubectl apply -f -
           fi
-          
-          # Apply MongoDB PDB
           if [ -f mongodb/pdb.yaml ]; then
-            echo "Applying MongoDB PodDisruptionBudget..."
             k3s kubectl apply -f mongodb/pdb.yaml
           fi
           
-          # Services will be applied with env substitution below (after extracting VM IP)
-          
-          # Apply other statefulsets with env substitution (Redis, etc.)
-          # Note: Delete old single-instance Redis if redis-cluster exists
-          if [ -f statefulsets/redis-cluster.yaml ] && k3s kubectl get statefulset redis -n codeclashers &>/dev/null; then
-            echo "⚠️  Old single-instance Redis StatefulSet found. Deleting it to use redis-cluster..."
-            k3s kubectl delete statefulset redis -n codeclashers --ignore-not-found=true
-            echo "Waiting for old Redis pod to terminate..."
-            sleep 3
-          fi
-          
+          # StatefulSets (with env substitution)
           for file in statefulsets/*.yaml; do
             if [ -f "$file" ]; then
-              # Skip MongoDB StatefulSet - it's already applied above
-              if [[ "$(basename $file)" == *"mongodb"* ]]; then
-                echo "Skipping $(basename $file) - MongoDB StatefulSet already applied"
-                continue
-              fi
-              echo "Applying $(basename $file)..."
-              # Check if this StatefulSet is MongoDB and delete it first if it exists
-              STATEFULSET_NAME=$(grep -E "^name:|^  name:" "$file" | head -1 | sed 's/.*name: *//' | tr -d ' "')
-              if [ "$STATEFULSET_NAME" = "mongodb" ]; then
-                echo "⚠️  Found MongoDB StatefulSet in $(basename $file), deleting existing one first..."
-                k3s kubectl delete statefulset mongodb -n codeclashers --cascade=orphan --ignore-not-found=true || true
-                k3s kubectl delete pods -n codeclashers -l app=mongodb --ignore-not-found=true || true
-                sleep 3
-              fi
               envsubst < "$file" | k3s kubectl apply -f -
             fi
           done
           
-          # Wait briefly for StatefulSets to start pods
-          echo "Waiting for StatefulSets to initialize..."
-          sleep 3
-          
-          # Apply PodDisruptionBudgets before deployments
+          # PodDisruptionBudgets
           k3s kubectl apply -f pdbs/
           
-          # Get VM IP from COLYSEUS_HOST_IP variable
-          export ORACLE_VM_IP="${{ vars.COLYSEUS_HOST_IP }}"
-          
-          if [ -z "$ORACLE_VM_IP" ]; then
-            echo "⚠️  Warning: COLYSEUS_HOST_IP not set. Services will use ClusterIP only."
-            echo "   Set COLYSEUS_HOST_IP variable with your Oracle VM IP address"
-          else
-            echo "✓ Using Oracle VM IP: $ORACLE_VM_IP"
-            export ORACLE_VM_IP
-          fi
-          
-          # Apply services with env substitution (for externalIPs)
-          echo "Applying services..."
+          # Services (with env substitution for externalIPs)
           for file in services/*.yaml; do
             if [ -f "$file" ]; then
               envsubst < "$file" | k3s kubectl apply -f -
             fi
           done
           
-          # Apply MongoDB service if it exists
+          # MongoDB service (if exists in separate directory)
           if [ -f mongodb/service.yaml ]; then
             envsubst < mongodb/service.yaml | k3s kubectl apply -f -
           fi
           
-          # Apply deployments in parallel for faster deployment
-          # Apply all deployments first, then wait only for critical services
-          echo "Applying all deployments..."
+          # Deployments (with env substitution for image tags)
           for file in deployments/*.yaml; do
             if [ -f "$file" ]; then
-              DEPLOYMENT_NAME=$(grep -E "^name:|^  name:" "$file" | head -1 | sed 's/.*name: *//' | tr -d ' "')
-              echo "Applying deployment: $DEPLOYMENT_NAME"
               envsubst < "$file" | k3s kubectl apply -f -
             fi
           done
           
-          echo "Deployments applied. Waiting for critical services..."
-          
-          # Wait only for critical service (colyseus) with shorter timeout
-          # Other services continue in background
-          if k3s kubectl wait --for=condition=available --timeout=120s deployment/colyseus -n codeclashers 2>/dev/null; then
-            echo "✓ Colyseus is ready"
-          else
-            echo "⚠️  Colyseus not ready yet (will continue in background)"
-          fi
-          
-          # Non-critical services: quick check, don't block
-          for service in bots judge0-server judge0-worker; do
-            if k3s kubectl get deployment $service -n codeclashers &>/dev/null; then
-              if k3s kubectl wait --for=condition=available --timeout=30s deployment/$service -n codeclashers 2>/dev/null; then
-                echo "✓ $service is ready"
-              else
-                echo "⚠️  $service still starting (non-critical, continuing in background)"
-              fi
-            fi
-          done
-          
-          echo "Deployments applied. Rolling updates initiated."
-          
-          echo "All resources applied successfully"
-
-      - name: Check pod status before rollout
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "=== Current Pod Status ==="
-          k3s kubectl get pods -n codeclashers
-          echo ""
-          echo "=== Pod Events (last 20) ==="
-          k3s kubectl get events -n codeclashers --sort-by='.lastTimestamp' | tail -20
-          echo ""
-          echo "=== Node Status ==="
-          k3s kubectl describe nodes | grep -A 5 "Allocatable:"
-          echo ""
-          echo "=== Unscheduleable Pods (if any) ==="
-          k3s kubectl get pods -n codeclashers -o wide --field-selector=status.phase=Pending
-          k3s kubectl describe pod -n codeclashers mongodb-0 | grep -A 5 Events || true
-
-      - name: Wait for rollouts to complete
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "Checking deployment status..."
-          
-          # Quick non-blocking check - just wait for pods to exist
-          sleep 3
-          
-          k3s kubectl get pods -n codeclashers
-          
-          echo "Deployments applied. Pods will continue starting in background."
-
-      - name: Verify deployments
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "=== Deployment Status ==="
-          k3s kubectl get pods -n codeclashers
-          echo ""
-          echo "=== Services ==="
-          k3s kubectl get svc -n codeclashers
-          
-      - name: Debug failed pods
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "=== Debugging failed pods ==="
-          
-          # Check Judge0 server logs if it exists
-          if k3s kubectl get deployment judge0-server -n codeclashers 2>/dev/null | grep -q judge0-server; then
-            echo ""
-            echo "--- Judge0 Server Logs ---"
-            k3s kubectl logs -n codeclashers deployment/judge0-server --tail=50 || echo "No logs available yet"
-          fi
-          
-          # Check Judge0 worker logs if it exists
-          if k3s kubectl get deployment judge0-worker -n codeclashers 2>/dev/null | grep -q judge0-worker; then
-            echo ""
-            echo "--- Judge0 Worker Logs ---"
-            k3s kubectl logs -n codeclashers deployment/judge0-worker --tail=50 || echo "No logs available yet"
-          fi
-          
-          # Check MongoDB logs if it's having issues
-          if k3s kubectl get pod mongodb-0 -n codeclashers 2>/dev/null | grep -v "1/1.*Running"; then
-            echo ""
-            echo "--- MongoDB Logs ---"
-            k3s kubectl logs -n codeclashers mongodb-0 --tail=50 || echo "No logs available yet"
-          fi
-          
-      - name: Pre-deployment validation
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "=== Pre-deployment Validation ==="
-          
-          # Check if required secrets exist (check each one individually)
-          echo "Checking required secrets..."
-          MISSING_SECRETS=()
-          
-          # Check each secret individually
-          if [ -z "${{ secrets.REDIS_PASSWORD }}" ]; then
-            MISSING_SECRETS+=("REDIS_PASSWORD")
-          fi
-          if [ -z "${{ secrets.MONGODB_URI }}" ]; then
-            MISSING_SECRETS+=("MONGODB_URI")
-          fi
-          # MONGODB_URI is required (password will be extracted from it)
-          # MONGODB_PASSWORD is optional (fallback if MONGODB_URI doesn't contain password)
-          if [ -z "${{ secrets.OPENAI_API_KEY }}" ]; then
-            MISSING_SECRETS+=("OPENAI_API_KEY")
-          fi
-          if [ -z "${{ secrets.INTERNAL_SERVICE_SECRET }}" ]; then
-            MISSING_SECRETS+=("INTERNAL_SERVICE_SECRET")
-          fi
-          if [ -z "${{ secrets.BOT_SERVICE_SECRET }}" ]; then
-            MISSING_SECRETS+=("BOT_SERVICE_SECRET")
-          fi
-          
-          if [ ${#MISSING_SECRETS[@]} -gt 0 ]; then
-            echo "❌ Missing required secrets: ${MISSING_SECRETS[*]}"
-            exit 1
-          fi
-          
-          echo "✓ All required secrets present"
-          
-          # Validate image tags
-          if [ -z "$IMAGE_TAG" ]; then
-            echo "❌ IMAGE_TAG is not set"
-            exit 1
-          fi
-          
-          echo "✓ Image tag: $IMAGE_TAG"
-          
-          # Check cluster connectivity
-          if ! k3s kubectl cluster-info &>/dev/null; then
-            echo "❌ Cannot connect to Kubernetes cluster"
-            exit 1
-          fi
-          
-          echo "✓ Cluster connectivity verified"
-          
-      - name: Health check with rollback
-        id: health_check
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "=== Performing Enhanced Health Checks ==="
-          
-          HEALTH_CHECK_FAILED=false
-          
-          # Function to check HTTP endpoint
-          check_http_endpoint() {
-            local service=$1
-            local port=$2
-            local path=${3:-/}
-            local max_attempts=${4:-30}
-            
-            echo "Checking $service HTTP endpoint (port $port, path $path)..."
-            for i in $(seq 1 $max_attempts); do
-              # Try to exec into pod and curl the endpoint
-              if k3s kubectl exec -n codeclashers deployment/$service -- sh -c "curl -sf http://localhost:$port$path > /dev/null 2>&1" 2>/dev/null; then
-                echo "✓ $service HTTP endpoint is healthy"
-                return 0
-              fi
-              if [ $i -lt $max_attempts ]; then
-                sleep 2
-              fi
-            done
-            echo "❌ $service HTTP endpoint health check failed"
-            return 1
-          }
-          
-          # Function to check port connectivity (optimized - fewer attempts)
-          check_port() {
-            local service=$1
-            local port=$2
-            local max_attempts=${3:-10}  # Reduced from 30 to 10
-            
-            echo "Checking $service port $port connectivity..."
-            for i in $(seq 1 $max_attempts); do
-              if k3s kubectl exec -n codeclashers deployment/$service -- sh -c "nc -z localhost $port" 2>/dev/null; then
-                echo "✓ $service port $port is open"
-                return 0
-              fi
-              if [ $i -lt $max_attempts ]; then
-                sleep 1  # Reduced from 2s to 1s
-              fi
-            done
-            echo "⚠️  $service port $port connectivity check failed (may still be starting)"
-            return 1
-          }
-          
-          # Wait for critical deployment (colyseus) with reduced timeout
-          # Already waited in deployment step, but verify it's still healthy
-          echo "Verifying critical services..."
-          if k3s kubectl wait --for=condition=available --timeout=60s deployment/colyseus -n codeclashers 2>/dev/null; then
-            echo "✓ Colyseus is available"
-          else
-            echo "⚠️  Colyseus health check timeout (may still be starting)"
-            HEALTH_CHECK_FAILED=true
-          fi
-          
-          # Bots deployment check (non-blocking - quick check only)
-          if k3s kubectl get deployment bots -n codeclashers &>/dev/null; then
-            if k3s kubectl wait --for=condition=available --timeout=30s deployment/bots -n codeclashers 2>/dev/null; then
-              echo "✓ Bots deployment is available"
-            else
-              echo "⚠️  Bots deployment not ready yet (non-critical - continuing in background)"
-            fi
-          fi
-          
-          if [ "$HEALTH_CHECK_FAILED" = true ]; then
-            echo "❌ Critical deployments failed to become available"
-            echo "result=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          
-          # Check Colyseus port connectivity (reduced attempts)
-          if ! check_port "colyseus" "2567" 10; then
-            echo "⚠️  Colyseus port check failed (may still be starting)"
-            # Don't fail deployment - port may be accessible externally even if internal check fails
-          fi
-          
-          # Check Colyseus HTTP endpoint (if available)
-          # Note: Colyseus may not have a /health endpoint, so we check port only
-          
-          # Judge0 server already checked in deployment step above
-          # Skip duplicate check here to save time
-          
-          # Check MongoDB if accessible
-          if k3s kubectl get statefulset mongodb -n codeclashers &>/dev/null; then
-            echo "Checking MongoDB connectivity..."
-            for i in {1..30}; do
-              if k3s kubectl exec -n codeclashers mongodb-0 -- mongosh --quiet --eval "db.adminCommand('ping')" 2>/dev/null | grep -q "ok.*1"; then
-                echo "✓ MongoDB is healthy"
-                break
-              fi
-              if [ $i -eq 30 ]; then
-                echo "⚠️  MongoDB health check timeout (may still be initializing)"
-              else
-                sleep 2
-              fi
-            done
-          fi
-          
-          if [ "$HEALTH_CHECK_FAILED" = true ]; then
-            echo "❌ Health checks failed"
-            echo "result=false" >> $GITHUB_OUTPUT
-            exit 1
-          fi
-          
-          echo "✓ All health checks passed"
-          echo "result=true" >> $GITHUB_OUTPUT
-          
-      - name: Rollback on health check failure
-        if: steps.health_check.outputs.result == 'false'
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "=== Rolling back deployment due to health check failure ==="
-          
-          # Get previous ReplicaSet
-          PREVIOUS_RS=$(k3s kubectl get replicaset -n codeclashers -l app=colyseus --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-2].metadata.name}' 2>/dev/null || echo "")
-          
-          if [ -n "$PREVIOUS_RS" ]; then
-            echo "Rolling back Colyseus to previous ReplicaSet: $PREVIOUS_RS"
-            k3s kubectl rollout undo deployment/colyseus -n codeclashers || true
-          else
-            echo "No previous ReplicaSet found for Colyseus"
-          fi
-          
-          PREVIOUS_RS=$(k3s kubectl get replicaset -n codeclashers -l app=bots --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-2].metadata.name}' 2>/dev/null || echo "")
-          
-          if [ -n "$PREVIOUS_RS" ]; then
-            echo "Rolling back Bots to previous ReplicaSet: $PREVIOUS_RS"
-            k3s kubectl rollout undo deployment/bots -n codeclashers || true
-          else
-            echo "No previous ReplicaSet found for Bots"
-          fi
-          
-          echo "=== Rollback complete ==="
-          echo "Please check pod logs and events for details:"
-          k3s kubectl get pods -n codeclashers
-          k3s kubectl get events -n codeclashers --sort-by='.lastTimestamp' | tail -20
-          
-          exit 1
-          
-      - name: Deployment complete
-        if: steps.health_check.outputs.result == 'true'
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          echo "🚀 Deployment complete!"
-          echo "Image tag: $IMAGE_TAG"
-          echo ""
-          echo "=== Service Status ==="
-          k3s kubectl get svc -n codeclashers
-          echo ""
-          echo "✓ Services are bound to Oracle VM IP with predefined ports:"
-          echo "   - Colyseus: Port 2567"
-          echo "   - Redis: Port 6379"
-          echo "   - MongoDB: Port 27017"
-          echo "   - Judge0: Port 2358"
-          echo ""
-          echo "✓ No variable updates needed - using predefined IPs and ports from GitHub Variables"
+          echo "✅ All manifests applied successfully"
+          echo "Note: Secrets are managed separately via sync-secrets.yml workflow"
