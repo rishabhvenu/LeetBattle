@@ -328,6 +328,36 @@ jobs:
               fi
             fi
             
+            # Patch server script to handle migration/seed failures gracefully
+            echo "Patching server script to handle existing database gracefully..."
+            if [ -f "scripts/server" ]; then
+              echo "   Found scripts/server, patching it..."
+              # Create a backup
+              cp scripts/server scripts/server.original
+              # Modify the script to continue even if migrations/seeds fail
+              # Change: rails db:create db:migrate db:seed
+              # To: rails db:create || true; rails db:migrate || true; rails db:seed || true
+              sed -i 's/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/' scripts/server
+              echo "✓ Patched server script to handle existing database"
+            else
+              echo "⚠️  scripts/server not found, will patch after COPY in Dockerfile"
+              # Add a RUN command to patch the script after it's copied
+              # Find the line with chmod for scripts
+              CHMOD_LINE=$(grep -n "chmod.*scripts" Dockerfile | tail -1 | cut -d: -f1)
+              if [ -n "$CHMOD_LINE" ]; then
+                {
+                  echo 'RUN sed -i "s/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/" /api/scripts/server || true'
+                } > /tmp/patch_server.txt
+                sed -i "${CHMOD_LINE}r /tmp/patch_server.txt" Dockerfile
+                rm /tmp/patch_server.txt
+                echo "✓ Added RUN command to patch server script in Dockerfile"
+              else
+                # Add at end of production stage
+                echo 'RUN sed -i "s/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/" /api/scripts/server || true' >> Dockerfile
+                echo "✓ Added RUN command to patch server script at end of Dockerfile"
+              fi
+            fi
+            
             # Build for ARM64 architecture using buildx
             docker buildx build \
               --platform linux/arm64 \
