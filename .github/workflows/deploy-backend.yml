@@ -98,35 +98,58 @@ jobs:
             
             echo "Patching Dockerfile for ARM64 compatibility..."
             
-            # Save original Dockerfile for reference
+            # Save original Dockerfile for reference and debugging
             cp Dockerfile Dockerfile.original
+            TOTAL_LINES=$(wc -l < Dockerfile)
+            echo "Original Dockerfile saved ($TOTAL_LINES lines)"
             
             # Check if Dockerfile uses judge0/compilers base image
             if grep -q "judge0/compilers" Dockerfile; then
               echo "⚠️  Dockerfile uses judge0/compilers which doesn't support ARM64"
-              echo "   Creating ARM64-compatible Dockerfile that builds Judge0 from source..."
+              echo "   Analyzing Dockerfile structure..."
               
-              echo "   The original Dockerfile structure is complex."
-              echo "   Instead of replacing it entirely, let's just ensure scripts are included."
-              echo "   We'll replace the base image but keep the original structure."
+              # Count key commands
+              COPY_COUNT=$(grep -c "^COPY\|^ADD" Dockerfile || echo "0")
+              RUN_COUNT=$(grep -c "^RUN" Dockerfile || echo "0")
+              echo "   Stats: $COPY_COUNT COPY/ADD, $RUN_COUNT RUN commands"
               
-              # Replace base image but preserve structure
+              # Show structure
+              echo "   Key commands:"
+              grep -n "^FROM\|^COPY\|^RUN\|^WORKDIR\|^ENTRYPOINT\|^CMD" Dockerfile | head -15
+              
+              # Check if application code is copied
+              if grep -q "^COPY.*\\. " Dockerfile || grep -q "^COPY \\. " Dockerfile; then
+                echo "   ✓ Found COPY . - application code will be copied"
+              else
+                echo "   ⚠️  No COPY . found - adding it to include application code"
+                # Find where to add it
+                WORKDIR_LINE=$(grep -n "^WORKDIR" Dockerfile | head -1 | cut -d: -f1)
+                if [ -n "$WORKDIR_LINE" ]; then
+                  sed -i "${WORKDIR_LINE}a\\COPY . ." Dockerfile
+                  echo "   ✓ Added COPY . . after WORKDIR"
+                else
+                  # Add after production stage
+                  PROD_LINE=$(grep -n "^FROM.*production\|^FROM.*AS production" Dockerfile | head -1 | cut -d: -f1)
+                  if [ -n "$PROD_LINE" ]; then
+                    sed -i "${PROD_LINE}a\\WORKDIR /app\\nCOPY . ." Dockerfile
+                    echo "   ✓ Added WORKDIR and COPY . . after production stage"
+                  else
+                    # Last resort: add at beginning after first FROM
+                    FIRST_FROM=$(grep -n "^FROM" Dockerfile | head -1 | cut -d: -f1)
+                    if [ -n "$FIRST_FROM" ]; then
+                      sed -i "${FIRST_FROM}a\\WORKDIR /app\\nCOPY . ." Dockerfile
+                      echo "   ✓ Added WORKDIR and COPY . . after first FROM"
+                    fi
+                  fi
+                fi
+              fi
+              
+              # Now replace base images
               sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
               sed -i 's|^FROM production.*|FROM ubuntu:22.04 AS development|' Dockerfile
-              
-              echo "   Replaced base images. Original Dockerfile structure preserved."
-              echo "   Checking if application code is copied..."
-              
-              # Check if there are COPY commands that copy the app
-              if grep -q "^COPY.*\\. " Dockerfile || grep -q "^COPY \\. " Dockerfile; then
-                echo "   ✓ Dockerfile copies application code"
-              else
-                echo "   ⚠️  No COPY . found - the original may rely on base image having code"
-                echo "   This means we need the full Judge0 build process"
-              fi
+              echo "   ✓ Replaced base images with ubuntu:22.04"
             else
-              echo "✓ Dockerfile doesn't use judge0/compilers, checking structure..."
-              # Just ensure scripts are copied (handled below)
+              echo "✓ Dockerfile doesn't use judge0/compilers"
             fi
             
             echo "Dockerfile FROM statements:"
