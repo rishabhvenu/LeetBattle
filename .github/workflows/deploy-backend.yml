@@ -106,46 +106,24 @@ jobs:
               echo "⚠️  Dockerfile uses judge0/compilers which doesn't support ARM64"
               echo "   Creating ARM64-compatible Dockerfile that builds Judge0 from source..."
               
-              # Create a new Dockerfile that builds Judge0 properly for ARM64
-              # We'll use the official Judge0 build process but with ARM64 base
-              cat > Dockerfile.arm64 << 'DOCKERFILE_EOF'
-FROM ubuntu:22.04 AS base
-
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
-    git \
-    libpq-dev \
-    postgresql-client \
-    redis-tools \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Ruby
-RUN curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \
-    curl -sSL https://get.rvm.io | bash -s stable && \
-    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default"
-
-# Set working directory
-WORKDIR /app
-
-# Copy application files
-COPY . .
-
-# Install Ruby dependencies
-RUN /bin/bash -l -c "gem install bundler && bundle install"
-
-# Copy scripts
-COPY scripts/ ./scripts/
-RUN chmod +x ./scripts/*
-
-# Set entrypoint
-ENTRYPOINT ["./scripts/server"]
-DOCKERFILE_EOF
+              echo "   The original Dockerfile structure is complex."
+              echo "   Instead of replacing it entirely, let's just ensure scripts are included."
+              echo "   We'll replace the base image but keep the original structure."
               
-              # Use the ARM64 Dockerfile
-              mv Dockerfile.arm64 Dockerfile
-              echo "✓ Created ARM64-compatible Dockerfile"
+              # Replace base image but preserve structure
+              sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
+              sed -i 's|^FROM production.*|FROM ubuntu:22.04 AS development|' Dockerfile
+              
+              echo "   Replaced base images. Original Dockerfile structure preserved."
+              echo "   Checking if application code is copied..."
+              
+              # Check if there are COPY commands that copy the app
+              if grep -q "^COPY.*\\. " Dockerfile || grep -q "^COPY \\. " Dockerfile; then
+                echo "   ✓ Dockerfile copies application code"
+              else
+                echo "   ⚠️  No COPY . found - the original may rely on base image having code"
+                echo "   This means we need the full Judge0 build process"
+              fi
             else
               echo "✓ Dockerfile doesn't use judge0/compilers, checking structure..."
               # Just ensure scripts are copied (handled below)
