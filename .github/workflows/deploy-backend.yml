@@ -321,6 +321,11 @@ jobs:
         run: |
           set -e
           
+          # Export image variables for envsubst
+          export COLYSEUS_IMAGE="ghcr.io/rishabhvenu/codeclashers-colyseus:${IMAGE_TAG}"
+          export BOTS_IMAGE="ghcr.io/rishabhvenu/codeclashers-bots:${IMAGE_TAG}"
+          export JUDGE0_IMAGE="ghcr.io/rishabhvenu/codeclashers-judge0-arm64:${IMAGE_TAG}"
+          
           # Apply manifests in order with environment substitution
           cd backend/k8s
           
