@@ -152,13 +152,14 @@ jobs:
               # We need to install them in ubuntu:22.04 before the RUN commands that use them
               echo "   Installing Ruby and Node.js dependencies..."
               
-              # Find the first RUN command that uses gem or npm
-              FIRST_RUN_LINE=$(grep -n "^RUN" Dockerfile | head -1 | cut -d: -f1)
-              if [ -n "$FIRST_RUN_LINE" ]; then
-                # Check if this RUN command uses gem or npm
-                RUN_CMD=$(sed -n "${FIRST_RUN_LINE}p" Dockerfile)
-                if echo "$RUN_CMD" | grep -q "gem\|npm"; then
-                  echo "   Found RUN command using gem/npm at line $FIRST_RUN_LINE"
+              # Check if any RUN command uses gem or npm (check entire Dockerfile)
+              if grep -q "gem\|npm" Dockerfile; then
+                echo "   Found gem/npm usage in Dockerfile, adding Ruby and Node.js installation..."
+                
+                # Find the first RUN command line
+                FIRST_RUN_LINE=$(grep -n "^RUN" Dockerfile | head -1 | cut -d: -f1)
+                if [ -n "$FIRST_RUN_LINE" ]; then
+                  echo "   First RUN command at line $FIRST_RUN_LINE"
                   echo "   Adding Ruby and Node.js installation before it..."
                   
                   # Create a temporary file with the installation commands
@@ -169,7 +170,14 @@ jobs:
                   sed -i "${FIRST_RUN_LINE}r /tmp/ruby_node_install.txt" Dockerfile
                   rm /tmp/ruby_node_install.txt
                   echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation"
+                else
+                  echo "   ⚠️  No RUN commands found, adding Ruby/Node.js installation at end"
+                  # Add at the end if no RUN found (shouldn't happen, but safety)
+                  printf 'RUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n      curl \\\n      git \\\n      build-essential \\\n      ca-certificates \\\n      gnupg && \\\n    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \\\n    apt-get install -y nodejs && \\\n    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \\\n    curl -sSL https://get.rvm.io | bash -s stable && \\\n    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \\\n    rm -rf /var/lib/apt/lists/*\n' >> Dockerfile
+                  echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation at end"
                 fi
+              else
+                echo "   ⚠️  No gem/npm usage found in Dockerfile (unusual)"
               fi
               
               # Check if development stage inherits from production
