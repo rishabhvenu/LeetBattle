@@ -20,20 +20,74 @@ spec:
     spec:
       imagePullSecrets:
       - name: ghcr-secret
-      containers:
-      - name: judge0-worker
-        image: ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
-        command: ["./scripts/workers"]
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command: ['sh', '-c', 'until pg_isready -h postgres -p 5432; do echo waiting for postgres; sleep 2; done;']
+      - name: run-migrations
+        image: ${JUDGE0_IMAGE}
+        command: ['sh', '-c', 'rails db:create db:migrate db:seed']
         env:
+        - name: RAILS_ENV
+          value: "production"
+        - name: DISABLE_DATABASE_ENVIRONMENT_CHECK
+          value: "1"
+        - name: SCHEMA
+          value: "/tmp/schema.rb"
         - name: REDIS_HOST
           valueFrom:
-            configMapKeyRef:
-              name: app-config
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_HOST
         - name: REDIS_PORT
           valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        - name: POSTGRES_HOST
+          valueFrom:
             configMapKeyRef:
               name: app-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_DB
+      containers:
+      - name: judge0-worker
+        image: ${JUDGE0_IMAGE}
+        imagePullPolicy: IfNotPresent
+        command: ["./scripts/workers"]
+        env:
+        - name: RAILS_ENV
+          value: "production"
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_PORT
         - name: REDIS_PASSWORD
           valueFrom:
