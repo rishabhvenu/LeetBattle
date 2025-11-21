@@ -148,6 +148,41 @@ jobs:
               # CRITICAL: Only replace the judge0/compilers base, NOT "FROM production"
               sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
               
+              # The original base image had Ruby and Node.js pre-installed
+              # We need to install them in ubuntu:22.04 before the RUN commands that use them
+              echo "   Installing Ruby and Node.js dependencies..."
+              
+              # Find the first RUN command that uses gem or npm
+              FIRST_RUN_LINE=$(grep -n "^RUN" Dockerfile | head -1 | cut -d: -f1)
+              if [ -n "$FIRST_RUN_LINE" ]; then
+                # Check if this RUN command uses gem or npm
+                RUN_CMD=$(sed -n "${FIRST_RUN_LINE}p" Dockerfile)
+                if echo "$RUN_CMD" | grep -q "gem\|npm"; then
+                  echo "   Found RUN command using gem/npm at line $FIRST_RUN_LINE"
+                  echo "   Adding Ruby and Node.js installation before it..."
+                  
+                  # Insert Ruby and Node.js installation before the first RUN
+                  # Install Ruby via rbenv or rvm, and Node.js
+                  RUBY_NODE_INSTALL='RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      curl \\
+      git \\
+      build-essential \\
+      ca-certificates \\
+      gnupg \\
+      && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \\
+      && apt-get install -y nodejs \\
+      && curl -sSL https://rvm.io/mpapis.asc | gpg --import - \\
+      && curl -sSL https://get.rvm.io | bash -s stable \\
+      && /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" \\
+      && rm -rf /var/lib/apt/lists/*'
+                  
+                  # Insert before the first RUN
+                  sed -i "${FIRST_RUN_LINE}i\\${RUBY_NODE_INSTALL}" Dockerfile
+                  echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation"
+                fi
+              fi
+              
               # Check if development stage inherits from production
               if grep -q "^FROM production" Dockerfile; then
                 echo "   ✓ Development stage inherits from production - keeping this!"
@@ -162,6 +197,7 @@ jobs:
               fi
               
               echo "   ✓ Replaced judge0/compilers base with ubuntu:22.04"
+              echo "   ✓ Added Ruby and Node.js installation"
               echo "   ✓ Development stage inherits from production (preserved)"
             else
               echo "✓ Dockerfile doesn't use judge0/compilers"
