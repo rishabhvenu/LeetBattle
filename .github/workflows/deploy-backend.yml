@@ -156,11 +156,15 @@ jobs:
               if grep -q "gem\|npm" Dockerfile; then
                 echo "   Found gem/npm usage in Dockerfile, adding Ruby and Node.js installation..."
                 
-                # Find the first RUN command line
-                FIRST_RUN_LINE=$(grep -n "^RUN" Dockerfile | head -1 | cut -d: -f1)
-                if [ -n "$FIRST_RUN_LINE" ]; then
-                  echo "   First RUN command at line $FIRST_RUN_LINE"
-                  echo "   Adding Ruby and Node.js installation before it..."
+                # Find the FROM line for the production stage (after we replaced it)
+                PROD_FROM_LINE=$(grep -n "^FROM.*AS production\|^FROM ubuntu.*AS production" Dockerfile | head -1 | cut -d: -f1)
+                
+                if [ -n "$PROD_FROM_LINE" ]; then
+                  echo "   Production stage FROM at line $PROD_FROM_LINE"
+                  echo "   Adding Ruby and Node.js installation right after FROM..."
+                  
+                  # Insert right after the FROM line
+                  INSERT_LINE=$((PROD_FROM_LINE + 1))
                   
                   # Create a temporary file with the installation commands
                   # Write the RUN command with proper line continuations
@@ -180,12 +184,38 @@ jobs:
                     echo '    rm -rf /var/lib/apt/lists/*'
                   } > /tmp/ruby_node_install.txt
                   
-                  # Insert the installation before the first RUN
-                  sed -i "${FIRST_RUN_LINE}r /tmp/ruby_node_install.txt" Dockerfile
+                  # Insert the installation right after the FROM line
+                  sed -i "${INSERT_LINE}r /tmp/ruby_node_install.txt" Dockerfile
                   rm /tmp/ruby_node_install.txt
                   echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation"
                 else
-                  echo "   ⚠️  No RUN commands found, adding Ruby/Node.js installation at end"
+                  echo "   ⚠️  Could not find production FROM line, trying after first FROM..."
+                  # Fallback: insert after first FROM
+                  FIRST_FROM_LINE=$(grep -n "^FROM" Dockerfile | head -1 | cut -d: -f1)
+                  if [ -n "$FIRST_FROM_LINE" ]; then
+                    INSERT_LINE=$((FIRST_FROM_LINE + 1))
+                    {
+                      echo 'RUN apt-get update && \'
+                      echo '    apt-get install -y --no-install-recommends \'
+                      echo '      curl \'
+                      echo '      git \'
+                      echo '      build-essential \'
+                      echo '      ca-certificates \'
+                      echo '      gnupg && \'
+                      echo '    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \'
+                      echo '    apt-get install -y nodejs && \'
+                      echo '    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \'
+                      echo '    curl -sSL https://get.rvm.io | bash -s stable && \'
+                      echo '    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \'
+                      echo '    rm -rf /var/lib/apt/lists/*'
+                    } > /tmp/ruby_node_install.txt
+                    sed -i "${INSERT_LINE}r /tmp/ruby_node_install.txt" Dockerfile
+                    rm /tmp/ruby_node_install.txt
+                    echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation (fallback)"
+                  else
+                    echo "   ⚠️  No FROM line found, cannot add Ruby/Node.js installation"
+                  fi
+                fi
                   # Add at the end if no RUN found (shouldn't happen, but safety)
                   printf 'RUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n      curl \\\n      git \\\n      build-essential \\\n      ca-certificates \\\n      gnupg && \\\n    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \\\n    apt-get install -y nodejs && \\\n    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \\\n    curl -sSL https://get.rvm.io | bash -s stable && \\\n    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \\\n    rm -rf /var/lib/apt/lists/*\n' >> Dockerfile
                   echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation at end"
