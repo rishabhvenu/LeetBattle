@@ -1,7 +1,7 @@
 # Judge0 Worker Dockerfile for ARM64
 # Worker does NOT use Ruby/Rails/Bundler - it's a shell-based executor
 
-FROM ubuntu:22.04 AS production
+FROM ubuntu:22.04
 
 # Install compilers and runtimes used by Judge0 Worker
 RUN DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get update && \
@@ -21,14 +21,11 @@ RUN DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get update && \
 # Create working directory
 WORKDIR /worker
 
-# Copy worker code
+# Copy worker code (includes scripts/)
 COPY . .
 
-# Copy scripts and ensure they are executable
+# Make scripts executable
 RUN chmod +x ./scripts/* || true
-
-# Development stage (inherits from production)
-FROM production AS development
 
 # Use Judge0 worker entrypoint
 ENTRYPOINT ["./scripts/workers"]
