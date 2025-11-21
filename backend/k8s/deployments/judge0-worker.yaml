@@ -74,7 +74,7 @@ spec:
       containers:
       - name: judge0-worker
         image: ${JUDGE0_IMAGE}
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Never
         command: ["./scripts/workers"]
         env:
         - name: RAILS_ENV
