@@ -216,10 +216,9 @@ jobs:
                     echo "   ⚠️  No FROM line found, cannot add Ruby/Node.js installation"
                   fi
                 fi
-                  # Add at the end if no RUN found (shouldn't happen, but safety)
-                  printf 'RUN apt-get update && \\\n    apt-get install -y --no-install-recommends \\\n      curl \\\n      git \\\n      build-essential \\\n      ca-certificates \\\n      gnupg && \\\n    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \\\n    apt-get install -y nodejs && \\\n    curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \\\n    curl -sSL https://get.rvm.io | bash -s stable && \\\n    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default" && \\\n    rm -rf /var/lib/apt/lists/*\n' >> Dockerfile
-                  echo "   ✓ Added Ruby 3.1.0 and Node.js 18.x installation at end"
-                fi
+              else
+                echo "   No gem/npm RUN commands found, skipping Ruby/Node.js installation."
+              fi
               else
                 echo "   ⚠️  No gem/npm usage found in Dockerfile (unusual)"
               fi
