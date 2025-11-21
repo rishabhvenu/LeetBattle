@@ -71,7 +71,8 @@ jobs:
           echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           
           # Check if the latest image already exists
-          if docker manifest inspect ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest &>/dev/null; then
+          # FORCE REBUILD: Temporarily disabled to force rebuild with scripts
+          if false && docker manifest inspect ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest &>/dev/null; then
             echo "✅ Judge0 ARM64 image already exists in registry, skipping build"
             # Tag the existing image with the current commit
             docker pull ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest || true
