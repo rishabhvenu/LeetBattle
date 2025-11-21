@@ -104,9 +104,36 @@ jobs:
             echo "Patched Dockerfile:"
             grep "^FROM" Dockerfile
             
+            # Ensure scripts directory exists and workers script is present
+            echo "Verifying scripts directory..."
+            if [ ! -d "scripts" ]; then
+              echo "⚠️  scripts directory not found, checking repository structure..."
+              find . -name "workers" -type f 2>/dev/null | head -5
+              find . -type d -name "scripts" 2>/dev/null | head -5
+            else
+              echo "✓ scripts directory found"
+              ls -la scripts/ | head -10
+              if [ ! -f "scripts/workers" ]; then
+                echo "⚠️  scripts/workers not found, checking for alternative location..."
+                find . -name "workers" -type f 2>/dev/null
+              else
+                echo "✓ scripts/workers found"
+                chmod +x scripts/workers
+              fi
+            fi
+            
             # Optional: limit languages for ARM64
             if command -v jq >/dev/null 2>&1; then
               jq 'del(.languages[] | select(.name | test("Swift|Pascal|Mono|C#|Go|Kotlin|PHP|Perl|Ruby"; "i")))' config.json > tmp.json && mv tmp.json config.json
+            fi
+            
+            # Verify Dockerfile includes scripts before building
+            echo "Checking Dockerfile for scripts copy commands..."
+            if grep -q "COPY.*scripts" Dockerfile || grep -q "ADD.*scripts" Dockerfile; then
+              echo "✓ Dockerfile includes scripts copy command"
+            else
+              echo "⚠️  Dockerfile may not copy scripts, checking Dockerfile structure..."
+              grep -E "COPY|ADD" Dockerfile | grep -v "^#" | head -10
             fi
             
             # Build for ARM64 architecture using buildx
@@ -120,6 +147,16 @@ jobs:
               --platform linux/arm64 \
               --tag ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest \
               --push .
+            
+            # Verify the built image has scripts/workers
+            echo "Verifying built image contains scripts/workers..."
+            docker pull ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest
+            if docker run --rm --entrypoint sh ghcr.io/rishabhvenu/codeclashers-judge0-arm64:latest -c 'test -f ./scripts/workers && echo "✓ scripts/workers exists" || echo "✗ scripts/workers NOT FOUND"'; then
+              echo "✅ Image verification passed"
+            else
+              echo "❌ WARNING: Built image does not contain scripts/workers!"
+              echo "   The image may not work correctly for workers deployment"
+            fi
             
             cd ..
             echo "✅ Judge0 ARM64 image built and pushed successfully"
