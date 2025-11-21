@@ -1,20 +1,22 @@
 'use server';
 
 import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
 import { getGuestMatchDataFromRedis, type GuestMatchData } from './guest-actions-db';
 
-// Re-export type
-export type { GuestMatchData } from './guest-actions-db';
+// Note: Types should be imported directly from './guest-actions-db' since
+// 'use server' files can only export async functions
 
-const COLYSEUS_HTTP_URL = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || 'http://localhost:2567';
-
-export interface GuestSession {
-  guestId: string;
-  matchId: string;
-  roomId: string;
-  createdAt: number;
-}
+const COLYSEUS_HTTP_URL =
+  process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || process.env.NEXT_PUBLIC_API_BASE || '';
+const GUEST_MATCH_TIMEOUT_MS = (() => {
+  const raw = process.env.NEXT_PUBLIC_GUEST_MATCH_TIMEOUT_MS;
+  const parsed = raw ? Number(raw) : NaN;
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    // Backend keeps polling for bots for up to 15s; add buffer to avoid premature aborts.
+    return 20000;
+  }
+  return parsed;
+})();
 
 /**
  * Create a guest session with a 7-day cookie
@@ -68,6 +70,7 @@ export async function clearGuestSession(): Promise<void> {
   try {
     const cookieStore = await cookies();
     cookieStore.delete('codeclashers.guest.sid');
+    cookieStore.delete('codeclashers.guest.match');
   } catch (error) {
     console.error('Error clearing guest session:', error);
   }
@@ -107,10 +110,18 @@ export async function hasGuestPlayed(): Promise<boolean> {
 /**
  * Create a guest match by calling the backend API
  */
-export async function createGuestMatch(): Promise<{ success: boolean; guestId?: string; matchId?: string; roomId?: string; bot?: unknown; error?: string }> {
+export async function createGuestMatch(): Promise<{
+  success: boolean;
+  guestId?: string;
+  matchId?: string;
+  roomId?: string;
+  bot?: unknown;
+  error?: string;
+  timedOut?: boolean;
+}> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), GUEST_MATCH_TIMEOUT_MS);
     
     const response = await fetch(`${COLYSEUS_HTTP_URL}/guest/match/create`, {
       method: 'POST',
@@ -122,12 +133,28 @@ export async function createGuestMatch(): Promise<{ success: boolean; guestId?: 
     
     clearTimeout(timeoutId);
     
-    if (!response.ok) {
-      const errorData = await response.json();
-      return { success: false, error: errorData.error || 'Failed to create guest match' };
-    }
-    
     const data = await response.json();
+
+    if (!response.ok) {
+      const errorMessage = data?.error || 'Failed to create guest match';
+      if (errorMessage === 'No bots available for guest match') {
+        return {
+          success: false,
+          timedOut: true,
+          error: 'Still searching for an available bot opponent. Please stay in the queue.',
+        };
+      }
+      return { success: false, error: errorMessage };
+    }
+
+    if (!data?.success) {
+      return {
+        success: false,
+        error: data?.error || 'Still searching for an available bot opponent. Please stay in the queue.',
+        timedOut: Boolean(data?.timedOut),
+      };
+    }
+
     return {
       success: true,
       guestId: data.guestId,
@@ -137,8 +164,12 @@ export async function createGuestMatch(): Promise<{ success: boolean; guestId?: 
     };
   } catch (error) {
     console.error('Error creating guest match:', error);
-    if (error.name === 'AbortError') {
-      return { success: false, error: 'Request timed out - backend server may not be running' };
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        success: false,
+        timedOut: true,
+        error: 'Guest match request is taking longer than expected; still working on pairing you.',
+      };
     }
     return { success: false, error: 'Failed to create guest match' };
   }
@@ -162,7 +193,7 @@ export async function claimGuestMatch(guestId: string, userId: string): Promise<
       return { success: false, error: errorData.error || 'Failed to claim guest match' };
     }
     
-    const data = await response.json();
+    await response.json();
     return { success: true };
   } catch (error) {
     console.error('Error claiming guest match:', error);
@@ -175,5 +206,37 @@ export async function claimGuestMatch(guestId: string, userId: string): Promise<
  * Edge runtime orchestrator - delegates to Node runtime
  */
 export async function getGuestMatchData(guestId: string): Promise<GuestMatchData | null> {
-  return await getGuestMatchDataFromRedis(guestId);
+  const redisData = await getGuestMatchDataFromRedis(guestId);
+  if (redisData && redisData.matchId && redisData.roomId) {
+    return redisData;
+  }
+
+  try {
+    const cookieStore = await cookies();
+    const fallbackCookie = cookieStore.get('codeclashers.guest.match')?.value;
+    if (!fallbackCookie) {
+      return redisData;
+    }
+
+    const parsed = JSON.parse(decodeURIComponent(fallbackCookie));
+    if (!parsed || parsed.guestId !== guestId || !parsed.matchId || !parsed.roomId) {
+      return redisData;
+    }
+
+    return {
+      matchId: parsed.matchId,
+      roomId: parsed.roomId,
+      guestId: parsed.guestId,
+      opponentId: '',
+      problemId: '',
+      result: 'draw',
+      submissions: [],
+      testsPassed: 0,
+      totalTests: 0,
+      completedAt: 0,
+    };
+  } catch (error) {
+    console.error('Error reading guest match fallback cookie:', error);
+    return redisData;
+  }
 }

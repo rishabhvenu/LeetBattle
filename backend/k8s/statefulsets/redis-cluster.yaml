@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: codeclashers
+spec:
+  serviceName: redis-cluster-headless
+  replicas: 6
+  selector:
+    matchLabels:
+      app: redis-cluster
+  template:
+    metadata:
+      labels:
+        app: redis-cluster
+    spec:
+      initContainers:
+      - name: config
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          cat > /tmp/redis.conf <<EOF
+          port 6379
+          cluster-enabled yes
+          cluster-config-file /data/nodes.conf
+          cluster-node-timeout 5000
+          appendonly yes
+          requirepass ${REDIS_PASSWORD}
+          masterauth ${REDIS_PASSWORD}
+          protected-mode yes
+          dir /data
+          EOF
+          cp /tmp/redis.conf /shared/redis.conf
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        volumeMounts:
+        - name: config
+          mountPath: /shared
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command:
+        - sh
+        - -c
+        - |
+          cp /shared/redis.conf /etc/redis/redis.conf
+          redis-server /etc/redis/redis.conf
+        ports:
+        - containerPort: 6379
+          name: client
+        - containerPort: 16379
+          name: gossip
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: config
+          mountPath: /etc/redis
+        resources:
+          requests:
+            memory: ${K8S_REDIS_MEMORY_REQUEST}
+            cpu: ${K8S_REDIS_CPU_REQUEST}
+          limits:
+            memory: ${K8S_REDIS_MEMORY_LIMIT}
+            cpu: ${K8S_REDIS_CPU_LIMIT}
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "redis-cli -a ${REDIS_PASSWORD} -p 6379 ping"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "redis-cli -a ${REDIS_PASSWORD} -p 6379 ping"
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+      volumes:
+      - name: config
+        emptyDir: {}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: local-path
+      resources:
+        requests:
+          storage: 5Gi
+

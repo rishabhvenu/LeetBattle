@@ -7,6 +7,8 @@ import { getRedis, RedisKeys } from '@/lib/redis';
 import { getGuestSession, hasGuestPlayed } from '@/lib/guest-actions';
 import GuestQueue from '@/components/pages/match/GuestQueue';
 
+export const dynamic = 'force-dynamic';
+
 export default async function QueuePage() {
   const session = await getSession();
 

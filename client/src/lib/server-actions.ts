@@ -80,7 +80,7 @@ function roundToNearestEstimate(num: number): number {
 
 export async function getGeneralStats() {
   try {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:2567';
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
     const response = await fetch(`${apiBase}/global/general-stats`, {
       method: 'GET',
       headers: {

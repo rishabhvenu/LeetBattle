@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { toast } from 'react-toastify';
 import { getAvatarUrl } from '@/lib/utils';
-import { getActiveMatches } from '@/lib/actions';
+import { getActiveMatches, forceBotWin } from '@/lib/actions';
 import { Clock, Users, Bot, Trophy, Timer, Eye } from 'lucide-react';
 
 interface ActiveMatch {
@@ -44,6 +44,7 @@ export default function ActiveMatches() {
   const [activeMatches, setActiveMatches] = useState<ActiveMatch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
+  const [forcingWin, setForcingWin] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -142,6 +143,29 @@ export default function ActiveMatches() {
       case 'Medium': return 'bg-yellow-600';
       case 'Hard': return 'bg-red-600';
       default: return 'bg-gray-600';
+    }
+  };
+
+  const handleForceBotWin = async (matchId: string, botUserId: string) => {
+    const key = `${matchId}-${botUserId}`;
+    setForcingWin(prev => ({ ...prev, [key]: true }));
+    
+    try {
+      const result = await forceBotWin(matchId, botUserId);
+      if (result.success) {
+        toast.success(result.message || 'Bot has been forced to win the match');
+        // Refresh matches after a short delay to allow backend to process
+        setTimeout(() => {
+          fetchActiveMatches();
+        }, 1000);
+      } else {
+        toast.error(result.error || 'Failed to force bot win');
+      }
+    } catch (error) {
+      console.error('Error forcing bot win:', error);
+      toast.error('Failed to force bot win');
+    } finally {
+      setForcingWin(prev => ({ ...prev, [key]: false }));
     }
   };
 
@@ -289,9 +313,22 @@ export default function ActiveMatches() {
                             </div>
                           </div>
                         </div>
-                        {match.submissions.some(sub => sub.userId === player.userId && sub.passed) && (
-                          <Trophy className="h-4 w-4 text-yellow-500" />
-                        )}
+                        <div className="flex items-center gap-2">
+                          {match.submissions.some(sub => sub.userId === player.userId && sub.passed) && (
+                            <Trophy className="h-4 w-4 text-yellow-500" />
+                          )}
+                          {player.isBot && match.status === 'ongoing' && (
+                            <Button
+                              onClick={() => handleForceBotWin(match.matchId, player.userId)}
+                              disabled={forcingWin[`${match.matchId}-${player.userId}`] || match.status === 'finished'}
+                              size="sm"
+                              variant="outline"
+                              className="text-xs h-7 px-2 border-green-500 text-green-600 hover:bg-green-50"
+                            >
+                              {forcingWin[`${match.matchId}-${player.userId}`] ? 'Winning...' : 'Make Win'}
+                            </Button>
+                          )}
+                        </div>
                       </div>
                       );
                     })}

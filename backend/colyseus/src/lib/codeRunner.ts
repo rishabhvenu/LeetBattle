@@ -3,12 +3,13 @@
  * Generates runnable code by wrapping Solution classes with test harness
  */
 
-import { 
-  hasComplexDataTypes, 
-  getHelpersForLanguage, 
-  isListNodeType, 
-  isTreeNodeType 
+import {
+  hasComplexDataTypes,
+  getHelpersForLanguage,
+  isListNodeType,
+  isTreeNodeType,
 } from './dataStructureHelpers';
+import type { RuntimeSpecialInput } from './specialInputs';
 
 interface FunctionSignature {
   functionName: string;
@@ -16,9 +17,125 @@ interface FunctionSignature {
   returnType: string;
 }
 
-interface TestCase {
+interface RunnerTestCase {
   input: Record<string, unknown>;
   output: unknown;
+  runtimeSpecialInputs?: RuntimeSpecialInput[];
+}
+
+interface LinkedListCycleInstruction {
+  parameter: string;
+  cycleIndex: number;
+}
+
+interface PreparedTestCase {
+  input: Record<string, unknown>;
+  output: unknown;
+  linkedListCycles?: LinkedListCycleInstruction[];
+}
+
+function toPreparedTestCases(testCases: RunnerTestCase[]): PreparedTestCase[] {
+  return testCases.map((testCase) => {
+    const linkedListCycles = (testCase.runtimeSpecialInputs || [])
+      .filter((instruction) => instruction.type === 'linked_list_cycle')
+      .flatMap((instruction) =>
+        instruction.targets
+          .filter((target) => typeof target.cycleIndex === 'number' && target.cycleIndex !== undefined)
+          .map((target) => ({
+            parameter: target.parameter,
+            cycleIndex: Number(target.cycleIndex),
+          }))
+      )
+      .filter((entry) => Number.isFinite(entry.cycleIndex) && entry.cycleIndex >= 0);
+
+    const prepared: PreparedTestCase = {
+      input: testCase.input,
+      output: testCase.output,
+    };
+
+    if (linkedListCycles.length > 0) {
+      prepared.linkedListCycles = linkedListCycles;
+    }
+
+    return prepared;
+  });
+}
+
+function getLinkedListCyclePositions(testCase: RunnerTestCase, parameter: string): number[] {
+  return (testCase.runtimeSpecialInputs || [])
+    .filter((instruction) => instruction.type === 'linked_list_cycle')
+    .flatMap((instruction) => instruction.targets)
+    .filter((target) => target.parameter === parameter && Number.isFinite(target.cycleIndex))
+    .map((target) => Number(target.cycleIndex))
+    .filter((cycleIndex) => cycleIndex >= 0);
+}
+
+function buildPythonCycleAttachment(listNodeParams: string[]): string {
+  if (listNodeParams.length === 0) {
+    return '';
+  }
+
+  const conditions = listNodeParams
+    .map((name, idx) => {
+      const keyword = idx === 0 ? 'if' : 'elif';
+      return `            ${keyword} name == "${name}":\n                ${name} = attach_cycle(${name}, index)\n`;
+    })
+    .join('');
+
+  return `
+        linked_list_cycles = test_case.get("linkedListCycles") or []
+        for cycle in linked_list_cycles:
+            name = cycle.get("parameter")
+            index = cycle.get("cycleIndex", -1)
+            if index is None or index < 0:
+                continue
+${conditions}`;
+}
+
+function buildJavaScriptCycleAttachment(listNodeParams: string[]): string {
+  if (listNodeParams.length === 0) {
+    return '';
+  }
+
+  const conditions = listNodeParams
+    .map((name, idx) => {
+      const keyword = idx === 0 ? 'if' : 'else if';
+      return `        ${keyword} (name === "${name}") {\n            ${name} = attachCycle(${name}, index);\n        }\n`;
+    })
+    .join('');
+
+  return `
+    const linkedListCycles = Array.isArray(testCase.linkedListCycles) ? testCase.linkedListCycles : [];
+    for (const cycle of linkedListCycles) {
+        const name = cycle.parameter;
+        const index = typeof cycle.cycleIndex === 'number' ? cycle.cycleIndex : -1;
+        if (index < 0) {
+            continue;
+        }
+${conditions}        else {
+            continue;
+        }
+    }
+`;
+}
+
+function wrapJavaListNodeExpression(expression: string, cyclePositions: number[]): string {
+  if (!cyclePositions || cyclePositions.length === 0) {
+    return expression;
+  }
+
+  const cycleIndex = cyclePositions[cyclePositions.length - 1];
+  return `ListHelper.attachCycle(${expression}, ${cycleIndex})`;
+}
+
+function buildCppCycleAttachment(variableName: string, cyclePositions: number[]): string {
+  if (!cyclePositions || cyclePositions.length === 0) {
+    return '';
+  }
+
+  const cycleIndex = cyclePositions[cyclePositions.length - 1];
+  return `
+    ${variableName} = attachCycle(${variableName}, ${cycleIndex});`;
 }
 
 /**
@@ -467,11 +584,23 @@ export function generateCppRunner(
     }()`;
   }
 
+  const printsDirectly = outputSerialization.includes('cout');
+  const finalCppPrint = cppReturnType === 'bool'
+    ? 'cout << serializeBool(result) << endl;'
+    : printsDirectly
+      ? outputSerialization
+      : `json output = ${outputSerialization};
+    cout << output.dump() << endl;`;
+ 
   return `#include <iostream>
 #include <vector>
 #include <string>
 #include <queue>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
+#include <map>
+#include <set>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
@@ -489,8 +618,7 @@ ${inputParsing}
     Solution solution;
     ${cppReturnType} result = solution.${functionName}(${args});
     
-    ${outputSerialization.includes('cout') ? outputSerialization : `json output = ${outputSerialization};
-    cout << output.dump() << endl;`}
+    ${finalCppPrint}
     
     return 0;
 }
@@ -526,13 +654,18 @@ export function generateRunnableCode(
 export function generateBatchPythonRunner(
   solutionCode: string,
   signature: FunctionSignature,
-  testCases: Array<{ input: Record<string, unknown>; output: unknown }>
+  testCases: RunnerTestCase[]
 ): string {
   const { functionName, parameters, returnType } = signature;
   
   // Check if we need helper functions for complex data types
   const needsHelpers = hasComplexDataTypes(signature);
   const helpers = needsHelpers ? getHelpersForLanguage('python') : '';
+  const preparedTestCases = toPreparedTestCases(testCases);
+  const testCasesJson = JSON.stringify(preparedTestCases);
+  const testCasesLiteral = JSON.stringify(testCasesJson);
+  const listNodeParameters = parameters.filter(param => isListNodeType(param.type)).map(param => param.name);
+  const cycleAttachment = buildPythonCycleAttachment(listNodeParameters);
   
   // Build argument deserialization
   const argsDeserialization = parameters.map(param => {
@@ -564,14 +697,15 @@ import sys
 # Test runner
 if __name__ == "__main__":
     solution = Solution()
-    test_cases = ${JSON.stringify(testCases)}
+    test_cases = json.loads(${testCasesLiteral})
     
     for i, test_case in enumerate(test_cases):
         input_data = test_case["input"]
         expected = test_case["output"]
         
 ${argsDeserialization}
-        
+${cycleAttachment ? `${cycleAttachment}
+` : ''}
         result = solution.${functionName}(${args})
         print(f"Test {i}: {json.dumps(${outputSerialization})}")
 `;
@@ -583,18 +717,21 @@ ${argsDeserialization}
 export function generateBatchJavaScriptRunner(
   solutionCode: string,
   signature: FunctionSignature,
-  testCases: Array<{ input: Record<string, unknown>; output: unknown }>
+  testCases: RunnerTestCase[]
 ): string {
   const { functionName, parameters, returnType } = signature;
   
   // Check if we need helper functions for complex data types
   const needsHelpers = hasComplexDataTypes(signature);
   const helpers = needsHelpers ? getHelpersForLanguage('javascript') : '';
+  const preparedTestCases = toPreparedTestCases(testCases);
+  const listNodeParameters = parameters.filter(param => isListNodeType(param.type)).map(param => param.name);
+  const cycleAttachment = buildJavaScriptCycleAttachment(listNodeParameters);
   
   // Build argument deserialization
   const argsDeserialization = parameters.map(param => {
     if (isListNodeType(param.type)) {
-      return `    const ${param.name} = deserializeList(input.${param.name});`;
+      return `    let ${param.name} = deserializeList(input.${param.name});`;
     } else if (isTreeNodeType(param.type)) {
       return `    const ${param.name} = deserializeTree(input.${param.name});`;
     } else {
@@ -616,7 +753,7 @@ export function generateBatchJavaScriptRunner(
 ${solutionCode}
 
 const solution = new Solution();
-const testCases = ${JSON.stringify(testCases)};
+const testCases = ${JSON.stringify(preparedTestCases)};
 
 for (let i = 0; i < testCases.length; i++) {
     const testCase = testCases[i];
@@ -624,9 +761,10 @@ for (let i = 0; i < testCases.length; i++) {
     const expected = testCase.output;
     
 ${argsDeserialization}
+${cycleAttachment}
     
     const result = solution.${functionName}(${args});
-    console.log(\`Test \${i}: \${JSON.stringify(${outputSerialization})}\`);
+    console.log('Test ' + i + ': ' + JSON.stringify(${outputSerialization}));
 }
 `;
 }
@@ -637,7 +775,7 @@ ${argsDeserialization}
 export function generateBatchJavaRunner(
   solutionCode: string,
   signature: FunctionSignature,
-  testCases: Array<{ input: Record<string, unknown>; output: unknown }>
+  testCases: RunnerTestCase[]
 ): string {
   const { functionName, parameters, returnType } = signature;
   
@@ -647,10 +785,17 @@ export function generateBatchJavaRunner(
   
   // Map return type to Java type using same logic as single runner
   const mapReturnType = (type: string): string => {
+    const normalized = (type || '').trim().toLowerCase();
+    if (normalized === 'bool') {
+      return 'boolean';
+    }
+    if (normalized === 'boolean') {
+      return 'boolean';
+    }
     // Reuse the mapType defined above via a minimal inline replica to avoid scope issues
     const wrap = (t: string): string => {
-      const normalized = t.replace(/\s+/g, '');
-      const lower = normalized.toLowerCase();
+      const normalizedInner = t.replace(/\s+/g, '');
+      const lower = normalizedInner.toLowerCase();
       const directMap: Record<string, string> = {
         'int[]': 'int[]',
         'string[]': 'String[]',
@@ -720,7 +865,9 @@ export function generateBatchJavaRunner(
       // Handle complex data types
       if (isListNodeType(p.type)) {
         const arrayValue = Array.isArray(value) ? value : [];
-        return `ListHelper.deserializeList(java.util.Arrays.asList(${arrayValue.map(v => String(v)).join(', ')}))`;
+        const baseExpression = `ListHelper.deserializeList(java.util.Arrays.asList(${arrayValue.map(v => String(v)).join(', ')}))`;
+        const cyclePositions = getLinkedListCyclePositions(testCase, p.name);
+        return wrapJavaListNodeExpression(baseExpression, cyclePositions);
       } else if (isTreeNodeType(p.type)) {
         const arrayValue = Array.isArray(value) ? value : [];
         return `TreeHelper.deserializeTree(java.util.Arrays.asList(${arrayValue.map(v => v === null ? 'null' : String(v)).join(', ')}))`;
@@ -838,7 +985,7 @@ ${testCode}
 export function generateBatchCppRunner(
   solutionCode: string,
   signature: FunctionSignature,
-  testCases: Array<{ input: Record<string, unknown>; output: unknown }>
+  testCases: RunnerTestCase[]
 ): string {
   const { functionName, parameters, returnType } = signature;
   
@@ -885,8 +1032,10 @@ export function generateBatchCppRunner(
           // Handle complex data types
           if (isListNodeType(p.type)) {
             const arrayValue = value.map(v => v === null ? -1 : v); // Use -1 for null in C++
+            const variableName = `test${index}_${p.name}`;
+            const cycleAttachment = buildCppCycleAttachment(variableName, getLinkedListCyclePositions(testCase, p.name));
             return `    vector<int> test${index}_${p.name}_arr = {${arrayValue.join(', ')}};
-    ListNode* test${index}_${p.name} = deserializeList(test${index}_${p.name}_arr);`;
+    ListNode* ${variableName} = deserializeList(test${index}_${p.name}_arr);${cycleAttachment}`;
           } else if (isTreeNodeType(p.type)) {
             const arrayValue = value.map(v => v === null ? -1 : v); // Use -1 for null in C++
             return `    vector<int> test${index}_${p.name}_arr = {${arrayValue.join(', ')}};
@@ -951,6 +1100,8 @@ export function generateBatchCppRunner(
         if (i < result${index}.size() - 1) cout << ",";
     }
     cout << "]" << endl;`;
+    } else if (cppReturnType === 'bool') {
+      outputCode = `    cout << "Test ${index}: " << serializeBool(result${index}) << endl;`;
     } else {
       outputCode = `    cout << "Test ${index}: " << result${index} << endl;`;
     }
@@ -961,11 +1112,18 @@ ${arrayVars}
 ${outputCode}`;
   }).join('\n');
   
+  // Ensure includes are always present - unordered_map requires C++11 but should be available in Judge0
+  // IMPORTANT: All includes must be at the top before any code
   return `#include <iostream>
 #include <vector>
 #include <string>
 #include <queue>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
+#include <map>
+#include <set>
+
 using namespace std;
 
 ${helpers}
@@ -988,7 +1146,7 @@ export function generateBatchRunnableCode(
   language: 'python' | 'javascript' | 'java' | 'cpp',
   solutionCode: string,
   signature: FunctionSignature,
-  testCases: Array<{ input: Record<string, unknown>; output: unknown }>
+  testCases: RunnerTestCase[]
 ): string {
   switch (language) {
     case 'python':

@@ -19,12 +19,12 @@ import {
   deployBots, 
   updateBot, 
   deleteBot, 
-  resetBotData,
   deleteAllBots,
   resetBotStats,
   setRotationConfig,
   getRotationStatus,
-  initializeRotationSystem
+  initializeRotationSystem,
+  initializeBotsCollection
 } from '@/lib/actions';
 import { BotDoc, BotStats } from '@/types/bot';
 
@@ -48,19 +48,25 @@ export default function BotManagement() {
     maxDeployed: number;
     totalBots: number;
     deployedCount: number;
+    deployedBots: string[];
     activeCount: number;
+    activeBots: string[];
     rotationQueue: string[];
     queueLength: number;
     queuedPlayersCount?: number;
+    queuedHumansCount?: number;
     targetDeployed?: number;
   }>({
     maxDeployed: 5,
     totalBots: 0,
     deployedCount: 0,
+    deployedBots: [],
     activeCount: 0,
+    activeBots: [],
     rotationQueue: [] as string[],
     queueLength: 0,
     queuedPlayersCount: 0,
+    queuedHumansCount: 0,
     targetDeployed: 5
   });
   const [maxDeployedInput, setMaxDeployedInput] = useState(5);
@@ -84,7 +90,7 @@ export default function BotManagement() {
 
   useEffect(() => {
     fetchBots();
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchBots = async () => {
     try {
@@ -93,10 +99,15 @@ export default function BotManagement() {
       if (result.success) {
         setBots(result.bots);
         calculateStats(result.bots);
-        // Refresh rotation status after fetching bots
-        await fetchRotationStatus();
+        // Refresh rotation status after fetching bots using latest list
+        await fetchRotationStatus(result.bots);
       } else {
-        toast.error('Failed to fetch bots');
+        // Check if error is about collection not initialized
+        if (result.error && result.error.includes('not initialized')) {
+          toast.warning('Bots collection not initialized. Click "Initialize Collection" to set it up.');
+        } else {
+          toast.error('Failed to fetch bots');
+        }
       }
     } catch (error) {
       console.error('Error fetching bots:', error);
@@ -106,43 +117,91 @@ export default function BotManagement() {
     }
   };
 
-  const fetchRotationStatus = async () => {
+  const handleInitializeCollection = async () => {
+    try {
+      setIsLoading(true);
+      const result = await initializeBotsCollection();
+      if (result.success) {
+        toast.success(result.message || 'Bots collection initialized successfully!');
+        // Refresh bots after initialization
+        await fetchBots();
+      } else {
+        toast.error(result.error || 'Failed to initialize bots collection');
+      }
+    } catch (error) {
+      console.error('Error initializing bots collection:', error);
+      toast.error('Failed to initialize bots collection');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchRotationStatus = async (botListOverride?: BotDoc[]) => {
+    const botsToUse = botListOverride ?? bots;
     try {
       const result = await getRotationStatus();
       if (result.success) {
-        setRotationStatus(result.status);
-        setMaxDeployedInput(result.status.maxDeployed);
+        const status = {
+          maxDeployed: result.status.maxDeployed,
+          totalBots: result.status.totalBots,
+          deployedCount: result.status.deployedCount ?? 0,
+          deployedBots: result.status.deployedBots ?? [],
+          activeCount: result.status.activeCount ?? 0,
+          activeBots: result.status.activeBots ?? [],
+          rotationQueue: result.status.rotationQueue ?? [],
+          queueLength:
+            result.status.queueLength ?? result.status.rotationQueue?.length ?? 0,
+          queuedPlayersCount: result.status.queuedPlayersCount ?? 0,
+          queuedHumansCount:
+            result.status.queuedHumansCount ?? result.status.queuedPlayersCount ?? 0,
+          targetDeployed: result.status.targetDeployed ?? result.status.maxDeployed,
+        };
+
+        setRotationStatus(status);
+        setMaxDeployedInput(status.maxDeployed);
         // Recalculate stats with updated rotation status
-        calculateStats(bots);
+        calculateStats(botsToUse, status);
       } else {
         console.error('Failed to fetch rotation status:', result.error);
         // Set default values if rotation status fails
-        setRotationStatus({
+        const fallbackStatus = {
           maxDeployed: 5,
-          totalBots: bots.length,
+          totalBots: botsToUse.length,
           deployedCount: 0, // Default to 0 since we can't read from MongoDB
+          deployedBots: [],
           activeCount: 0,
+          activeBots: [],
           rotationQueue: [],
-          queueLength: 0
-        });
+          queueLength: 0,
+          queuedPlayersCount: 0,
+          queuedHumansCount: 0,
+          targetDeployed: 5,
+        };
+        setRotationStatus(fallbackStatus);
         setMaxDeployedInput(5);
         // Recalculate stats with default values
-        calculateStats(bots);
+        calculateStats(botsToUse, fallbackStatus);
       }
     } catch (error) {
       console.error('Error fetching rotation status:', error);
       // Set default values if rotation status fails
-      setRotationStatus({
+      const fallbackStatus = {
         maxDeployed: 5,
-        totalBots: bots.length,
+        totalBots: botsToUse.length,
         deployedCount: 0, // Default to 0 since we can't read from MongoDB
+        deployedBots: [],
         activeCount: 0,
+        activeBots: [],
         rotationQueue: [],
-        queueLength: 0
-      });
+        queueLength: 0,
+        queuedPlayersCount: 0,
+        queuedHumansCount: 0,
+        targetDeployed: 5,
+      };
+      setRotationStatus(fallbackStatus);
       setMaxDeployedInput(5);
       // Recalculate stats with default values
-      calculateStats(bots);
+      calculateStats(botsToUse, fallbackStatus);
     }
   };
 
@@ -184,16 +243,35 @@ export default function BotManagement() {
     }
   };
 
-  // Helper function to check if a bot is deployed (from Redis data)
+  // Helper function to check if a bot is deployed
   const isBotDeployed = (botId: string) => {
-    // Check if bot is in rotation queue (which means it's deployed or will be deployed)
-    return rotationStatus.rotationQueue?.includes(botId) || false;
+    const rotationDeployed = rotationStatus.deployedBots?.includes(botId) || false;
+    const rotationActive = rotationStatus.activeBots?.includes(botId) || false;
+    const bot = bots.find((b) => b._id.toString() === botId);
+    if (bot) {
+      return !!bot.deployed || rotationDeployed || rotationActive;
+    }
+    return rotationDeployed || rotationActive;
   };
 
-  const calculateStats = (botList: BotDoc[]) => {
+  // Helper function to get bot status (In Queue or In Match)
+  const getBotStatus = (botId: string): 'In Queue' | 'In Match' | null => {
+    const isDeployed = isBotDeployed(botId);
+    if (!isDeployed) return null;
+    
+    const isActive = rotationStatus.activeBots?.includes(botId) || false;
+    if (isActive) return 'In Match';
+    
+    const isDeployedButNotActive = rotationStatus.deployedBots?.includes(botId) || false;
+    if (isDeployedButNotActive && !isActive) return 'In Queue';
+    
+    return null;
+  };
+
+  const calculateStats = (botList: BotDoc[], rotationData?: typeof rotationStatus) => {
     const totalBots = botList.length;
-    // Use Redis data from rotation status instead of MongoDB deployed field
-    const deployedBots = rotationStatus.deployedCount || 0;
+    const rotation = rotationData || rotationStatus;
+    const deployedBotsCount = rotation?.deployedCount ?? botList.filter((bot) => bot.deployed).length;
     const totalMatches = botList.reduce((sum, bot) => sum + bot.stats.totalMatches, 0);
     const averageRating = totalBots > 0 
       ? Math.round(botList.reduce((sum, bot) => sum + bot.stats.rating, 0) / totalBots)
@@ -201,8 +279,8 @@ export default function BotManagement() {
 
     setStats({
       totalBots,
-      deployedBots,
-      activeBots: rotationStatus.activeCount || 0, // From Redis
+      deployedBots: deployedBotsCount,
+      activeBots: rotation?.activeCount || rotation?.activeBots?.length || 0,
       totalMatches,
       averageRating
     });
@@ -219,7 +297,12 @@ export default function BotManagement() {
         setShowGenerateDialog(false);
         fetchBots();
       } else {
-        toast.error(result.error || 'Failed to generate bots');
+        // Check if error is about collection not initialized
+        if (result.error && result.error.includes('not initialized')) {
+          toast.warning('Bots collection not initialized. Please click "Initialize Collection" first.');
+        } else {
+          toast.error(result.error || 'Failed to generate bots');
+        }
       }
     } catch (error) {
       console.error('Error generating bots:', error);
@@ -485,7 +568,7 @@ export default function BotManagement() {
                     {isUpdatingRotation ? 'Updating...' : 'Apply Configuration'}
                   </Button>
                   <Button
-                    onClick={fetchRotationStatus}
+                    onClick={() => fetchRotationStatus()}
                     variant="outline"
                     className="border-blue-200 text-black hover:bg-blue-50"
                   >
@@ -534,6 +617,15 @@ export default function BotManagement() {
 
       {/* Action Buttons */}
       <div className="flex gap-4 flex-wrap">
+        <Button
+          onClick={handleInitializeCollection}
+          disabled={isLoading}
+          className="bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          <Zap className="h-4 w-4 mr-2" />
+          Initialize Collection
+        </Button>
+        
         <Dialog open={showGenerateDialog} onOpenChange={setShowGenerateDialog}>
           <DialogTrigger asChild>
             <Button className="bg-green-600 hover:bg-green-700 text-white">
@@ -682,6 +774,23 @@ export default function BotManagement() {
                         <Badge variant={isBotDeployed(bot._id.toString()) ? "default" : "secondary"}>
                           {isBotDeployed(bot._id.toString()) ? "Deployed" : "Stopped"}
                         </Badge>
+                        {(() => {
+                          const status = getBotStatus(bot._id.toString());
+                          if (status === 'In Match') {
+                            return (
+                              <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-700 border-yellow-300">
+                                In Match
+                              </Badge>
+                            );
+                          } else if (status === 'In Queue') {
+                            return (
+                              <Badge variant="outline" className="text-xs bg-blue-100 text-blue-700 border-blue-300">
+                                In Queue
+                              </Badge>
+                            );
+                          }
+                          return null;
+                        })()}
                         {!isBotDeployed(bot._id.toString()) && rotationStatus.rotationQueue.includes(bot._id.toString()) && (
                           <Badge variant="outline" className="text-xs bg-blue-100 text-blue-700">
                             Queue #{rotationStatus.rotationQueue.indexOf(bot._id.toString()) + 1}

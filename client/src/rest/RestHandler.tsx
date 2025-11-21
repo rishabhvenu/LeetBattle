@@ -11,7 +11,7 @@ class RestHandler {
 
   constructor() {
     this.api = axios.create({
-      baseURL: process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_SERVER_URL,
+      baseURL: process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_SERVER_URL || '',
       withCredentials: true,
       headers: {
         Accept: "application/json",

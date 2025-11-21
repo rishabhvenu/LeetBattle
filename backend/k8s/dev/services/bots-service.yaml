@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bots
+  namespace: codeclashers-dev
+spec:
+  type: ClusterIP
+  selector:
+    app: bots
+  ports:
+    - port: 3000
+      targetPort: 3000
+      protocol: TCP
+

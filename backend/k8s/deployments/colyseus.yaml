@@ -24,33 +24,60 @@ spec:
       - name: colyseus
         image: ghcr.io/rishabhvenu/codeclashers-colyseus:${IMAGE_TAG}
         ports:
-        - containerPort: 2567
+        - name: websocket
+          containerPort: 2567
         envFrom:
         - configMapRef:
             name: app-config
         env:
+        - name: PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: COLYSEUS_PORT
         - name: REDIS_HOST
           valueFrom:
-            configMapKeyRef:
-              name: app-config
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_HOST
         - name: REDIS_PORT
           valueFrom:
-            configMapKeyRef:
-              name: app-config
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_PORT
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: REDIS_PASSWORD
+        - name: REDIS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_USERNAME
+              optional: true
         - name: MONGODB_URI
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: MONGODB_URI_INTERNAL
+        - name: JUDGE0_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_PORT
+        - name: JUDGE0_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: JUDGE0_HOST
         - name: JUDGE0_URL
-          value: "http://judge0-server:2358"
+          value: "http://$(JUDGE0_HOST):$(JUDGE0_PORT)"
+        - name: COLYSEUS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: COLYSEUS_PORT
         - name: OPENAI_API_KEY
           valueFrom:
             secretKeyRef:
@@ -91,6 +118,12 @@ spec:
             secretKeyRef:
               name: app-secrets
               key: AWS_REGION
+        - name: CORS_ORIGIN
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: CORS_ORIGIN
+              optional: true
         resources:
           requests:
             memory: ${K8S_COLYSEUS_MEMORY_REQUEST}
@@ -100,13 +133,13 @@ spec:
             cpu: ${K8S_COLYSEUS_CPU_LIMIT}
         livenessProbe:
           tcpSocket:
-            port: 2567
+            port: websocket
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
         readinessProbe:
           tcpSocket:
-            port: 2567
+            port: websocket
           initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3

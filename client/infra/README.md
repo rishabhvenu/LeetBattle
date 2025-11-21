@@ -38,16 +38,41 @@ This generates:
 ### Required Environment Variables
 
 Set these in your GitHub Actions secrets or locally:
-- `MONGODB_URI`
-- `NEXTAUTH_SECRET`
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `S3_BUCKET_NAME` (optional, defaults to auto-generated)
-- `ROUTE53_HOSTED_ZONE_ID` (required for automatic certificate creation and domain setup)
-- `ROUTE53_HOSTED_ZONE_NAME` (optional, defaults to 'leetbattle.net')
-- `NEXTJS_DOMAIN_NAME` (optional, defaults to the hosted zone name)
-- `OPENNEXT_CACHE_BUCKET` (optional, defaults to auto-generated)
-- `NEXTJS_STATIC_BUCKET_NAME` (optional, defaults to auto-generated)
+
+**Backend Connection:**
+- `MONGODB_URI` - Full MongoDB connection string with credentials (e.g., `mongodb://user:pass@host:27017/db?authSource=admin`)
+- `REDIS_HOST` - Redis hostname (external IP or domain)
+- `REDIS_PORT` - Redis port (default: 6379)
+- `REDIS_PASSWORD` - Redis password
+- `REDIS_CLUSTER_ENABLED` - Set to `true` if using Redis cluster (default: `true`)
+- `REDIS_CLUSTER_NODES` - Optional: Comma-separated cluster nodes (e.g., `node1:6379,node2:6379`)
+- `NEXT_PUBLIC_COLYSEUS_HTTP_URL` - Colyseus HTTP endpoint (e.g., `http://<external-ip>:2567` or `https://api.yourdomain.com`)
+- `NEXT_PUBLIC_COLYSEUS_WS_URL` - Colyseus WebSocket endpoint (e.g., `ws://<external-ip>:2567` or `wss://api.yourdomain.com`)
+- `NEXT_PUBLIC_API_BASE` - Optional: API base URL (fallback for REST endpoints)
+- `INTERNAL_SERVICE_SECRET` - **REQUIRED** - Secret for authenticating with protected backend endpoints (must match backend secret)
+
+**Next.js Authentication:**
+- `NEXTAUTH_SECRET` - NextAuth.js secret (generate with `openssl rand -base64 32`)
+- `NEXTAUTH_URL` - Frontend URL (e.g., `https://leetbattle.net`)
+
+**AWS S3 Configuration:**
+- `S3_BUCKET_NAME` - Optional: Existing S3 bucket name for avatars (defaults to auto-generated)
+- `AWS_REGION` - AWS region (default: `us-east-1`)
+- `S3_ENDPOINT` - **DO NOT SET for AWS S3** - SDK automatically determines endpoint from region
+  - Only set for MinIO or S3-compatible services (e.g., `http://localhost:9000` for MinIO)
+  - For AWS S3, leave unset/empty - the SDK will use `s3.<region>.amazonaws.com` automatically
+- **Note**: AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) are **NOT needed** in Lambda - IAM role credentials are used automatically
+
+**DNS & Domain (Optional but recommended):**
+- `ROUTE53_HOSTED_ZONE_ID` - Required for automatic certificate creation and domain setup
+- `ROUTE53_HOSTED_ZONE_NAME` - Optional, defaults to 'leetbattle.net'
+- `NEXTJS_DOMAIN_NAME` - Optional, defaults to the hosted zone name
+- `COLYSEUS_DOMAIN` - Optional: Subdomain for Colyseus (e.g., `api`)
+- `COLYSEUS_HOST_IP` - Optional: External IP for Colyseus A record
+
+**OpenNext Cache (Optional):**
+- `OPENNEXT_CACHE_BUCKET` - Optional, defaults to auto-generated
+- `NEXTJS_STATIC_BUCKET_NAME` - Optional, defaults to auto-generated
 
 Note: The certificate is automatically created and validated via DNS in us-east-1 (required by CloudFront).
 

@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bots
+  namespace: codeclashers-dev
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: bots
+  template:
+    metadata:
+      labels:
+        app: bots
+    spec:
+      containers:
+      - name: bots
+        image: codeclashers-bots:dev
+        ports:
+        - containerPort: 3000
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_PASSWORD
+        - name: BOT_SERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: BOT_SERVICE_SECRET
+        - name: COLYSEUS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: COLYSEUS_HOST
+        - name: COLYSEUS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: COLYSEUS_PORT
+        - name: COLYSEUS_URL
+          value: "ws://$(COLYSEUS_HOST):$(COLYSEUS_PORT)"
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: MONGODB_URI_INTERNAL
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - node.*index.js
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - node.*index.js
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sh
+              - -c
+              - "sleep 5"
+      terminationGracePeriodSeconds: 20
+

@@ -1,0 +1,14 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mongodb-pdb
+  namespace: codeclashers
+spec:
+  # Dynamically calculated: ensure majority of replicas available
+  # For 3 replicas: minAvailable=2, for 5: minAvailable=3, etc.
+  # Using maxUnavailable instead for more flexibility
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: mongodb
+

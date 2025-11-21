@@ -103,6 +103,29 @@ def serialize_tree(root):
     while result and result[-1] is None:
         result.pop()
     return result
+
+# Linked list helpers for special inputs
+def attach_cycle(head, pos):
+    if head is None or pos is None or pos < 0:
+        return head
+
+    current = head
+    tail = None
+    cycle_node = None
+    idx = 0
+
+    while current:
+        if idx == pos:
+            cycle_node = current
+        tail = current
+        current = current.next
+        idx += 1
+
+    if cycle_node is None or tail is None:
+        return head
+
+    tail.next = cycle_node
+    return head
 `;
 }
 
@@ -198,6 +221,29 @@ function serializeTree(root) {
     }
     return result;
 }
+
+function attachCycle(head, pos) {
+    if (!head || typeof pos !== 'number' || pos < 0) {
+        return head;
+    }
+    let current = head;
+    let tail = null;
+    let cycleNode = null;
+    let idx = 0;
+    while (current) {
+        if (idx === pos) {
+            cycleNode = current;
+        }
+        tail = current;
+        current = current.next;
+        idx += 1;
+    }
+    if (!cycleNode || !tail) {
+        return head;
+    }
+    tail.next = cycleNode;
+    return head;
+}
 `;
 }
 
@@ -252,6 +298,33 @@ class ListHelper {
             current = current.next;
         }
         return result;
+    }
+
+    public static ListNode attachCycle(ListNode head, int pos) {
+        if (head == null || pos < 0) {
+            return head;
+        }
+
+        ListNode current = head;
+        ListNode tail = null;
+        ListNode cycleNode = null;
+        int idx = 0;
+
+        while (current != null) {
+            if (idx == pos) {
+                cycleNode = current;
+            }
+            tail = current;
+            current = current.next;
+            idx++;
+        }
+
+        if (cycleNode == null || tail == null) {
+            return head;
+        }
+
+        tail.next = cycleNode;
+        return head;
     }
 }
 
@@ -405,6 +478,37 @@ vector<int> serializeTree(TreeNode* root) {
         result.pop_back();
     }
     return result;
+}
+
+ListNode* attachCycle(ListNode* head, int pos) {
+    if (!head || pos < 0) {
+        return head;
+    }
+
+    ListNode* current = head;
+    ListNode* tail = nullptr;
+    ListNode* cycleNode = nullptr;
+    int idx = 0;
+
+    while (current) {
+        if (idx == pos) {
+            cycleNode = current;
+        }
+        tail = current;
+        current = current->next;
+        idx++;
+    }
+
+    if (!cycleNode || !tail) {
+        return head;
+    }
+
+    tail->next = cycleNode;
+    return head;
+}
+
+std::string serializeBool(bool value) {
+    return value ? "true" : "false";
 }
 `;
 }

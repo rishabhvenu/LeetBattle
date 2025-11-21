@@ -44,12 +44,14 @@ The Bot Service is a standalone Node.js application that:
 - Bot service listens to `bots:commands` channel
 - Commands include: `deploy` (start all bots), `stop` (stop specific/all bots)
 - Bot service maintains `bots:deployed` Redis set for active bots
+- Multiple bot pods participate in leader election via Redis (`bots:leader` key). Only the leader processes commands and rotates bots; failover happens automatically when the leader stops renewing its lease (`BOT_LEADER_TTL_MS`).
 
 ### 3. Queue Integration
 - Deployed bots automatically join the matchmaking queue
 - Bots use their current ELO rating for fair matchmaking
 - Bot service continuously cycles through deployed bots
 - Bots wait in queue until matched with human players
+- Before every join attempt the service clears stale state by calling the Colyseus `/queue/clear` endpoint with the `X-Bot-Secret` header and purging related Redis keys (`queue:reservation:*`, `queue:joinedAt:*`, `bots:state:*`, `bot:current_match:*`, `bots:active`). This eliminates the “seat reservation expired” disconnect loop observed in pod logs.
 
 ### 4. Match Participation
 - When matched, bots connect to Colyseus MatchRoom as clients
@@ -174,6 +176,11 @@ npm install
 npm start
 ```
 
+### Running Tests
+```bash
+npm test
+```
+
 ### Docker
 ```bash
 cd backend
@@ -192,6 +199,7 @@ docker-compose up bots
 - Bot service can be scaled horizontally
 - Each instance maintains its own bot pool
 - Redis coordination ensures no duplicate bot deployment
+- Leader lease timeout (`BOT_LEADER_TTL_MS`) defaults to 15 seconds and can be tuned per environment
 - MongoDB handles concurrent bot statistics updates
 
 ### Performance

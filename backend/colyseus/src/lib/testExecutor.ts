@@ -4,6 +4,7 @@
  */
 
 import { generateBatchRunnableCode, getJudge0LanguageId } from './codeRunner';
+import type { RuntimeSpecialInput } from './specialInputs';
 import { VM } from 'vm2';
 import { submitToJudge0, pollJudge0 } from './judge0';
 
@@ -18,6 +19,8 @@ interface FunctionSignature {
 interface TestCase {
   input: Record<string, unknown>;
   output: unknown;
+  specialInputData?: Record<string, Record<string, unknown>>;
+  runtimeSpecialInputs?: RuntimeSpecialInput[];
 }
 
 interface TestResult {
@@ -132,6 +135,16 @@ async function executeBatchTestCases(
     // Generate batch code
     const batchCode = generateBatchRunnableCode(language, solutionCode, signature, limitedTestCases);
     
+    // Debug: Log first 500 chars of generated C++ code to verify includes
+    if (language === 'cpp') {
+      console.log(`Generated C++ code (first 500 chars):\n${batchCode.substring(0, 500)}`);
+      if (batchCode.includes('#include <unordered_map>')) {
+        console.log('✅ <unordered_map> found in generated code');
+      } else {
+        console.error('❌ <unordered_map> NOT found in generated code!');
+      }
+    }
+    
     // Check if generated code is too large (Judge0 has limits)
     if (batchCode.length > 100000) { // 100KB limit
       console.warn(`Generated ${language} code is very large: ${batchCode.length} characters`);
@@ -178,6 +191,25 @@ async function executeBatchTestCases(
     }
     
     console.log(`${language} batch final status: ${result.status.id} (${result.status.description})`);
+    
+    // Check if we timed out while still processing
+    if (result.status.id <= 2 && attempts >= maxAttempts) {
+      console.error(`${language} batch execution timed out after ${maxAttempts} attempts (${maxAttempts * 2}s). Status still: ${result.status.id} (${result.status.description})`);
+      return {
+        allPassed: false,
+        totalTests: limitedTestCases.length,
+        passedTests: 0,
+        failedTests: limitedTestCases.length,
+        results: limitedTestCases.map((testCase, index) => ({
+          passed: false,
+          testCase,
+          actualOutput: undefined,
+          error: `Execution timed out after ${maxAttempts * 2} seconds. Judge0 status: ${result.status.description}`,
+          status: result.status,
+          testNumber: index + 1,
+        })),
+      };
+    }
   
   // Log detailed error information
   if (result.status.id !== 3) {

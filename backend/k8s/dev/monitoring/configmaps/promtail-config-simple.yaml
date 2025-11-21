@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: codeclashers-dev
+  labels:
+    app: promtail
+data:
+  promtail.yml: |
+    server:
+      http_listen_port: 3101
+      grpc_listen_port: 0
+    
+    positions:
+      filename: /tmp/positions.yaml
+    
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+    
+    scrape_configs:
+      # Static file scrape for codeclashers-dev namespace
+      - job_name: kubernetes-pods-static
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: kubernetes-pods
+              namespace: codeclashers-dev
+              __path__: /var/log/pods/codeclashers-dev_*/*/*.log
+        
+        pipeline_stages:
+          - docker: {}
+          
+        relabel_configs:
+          # Extract pod and container from path
+          # Path format: /var/log/pods/codeclashers-dev_<pod-name-with-suffix>_<uid>/<container>/<logfile>.log
+          # Example: /var/log/pods/codeclashers-dev_colyseus-855c7cbc75-2hpdb_e4b473ff-98ae-4851-b16b-c838a1361f04/colyseus/0.log
+          # Extract pod name: everything between codeclashers-dev_ and the UUID (captures full pod name with dashes)
+          # Path: /var/log/pods/codeclashers-dev_PODNAME_UUID/container/logfile.log
+          # Example: colyseus-855c7cbc75-2hpdb from codeclashers-dev_colyseus-855c7cbc75-2hpdb_<uuid>/
+          # Extract pod name: match pod name (can contain dashes) between namespace_ and _UUID
+          # Path example: /var/log/pods/codeclashers-dev_colyseus-855c7cbc75-2hpdb_<uuid>/container/logfile.log
+          - source_labels:
+              - __path__
+            regex: /var/log/pods/codeclashers-dev_(.+?)_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/
+            target_label: pod
+            replacement: ${1}
+          
+          - source_labels:
+              - __path__
+            regex: /var/log/pods/codeclashers-dev_[^/]+/([^/]+)/.*\.log
+            target_label: container
+            replacement: ${1}
+          
+          - action: replace
+            target_label: namespace
+            replacement: codeclashers-dev
+

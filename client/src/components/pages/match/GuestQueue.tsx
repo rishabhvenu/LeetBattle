@@ -5,131 +5,108 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Users, X, Zap, Clock } from "lucide-react";
-import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from "framer-motion";
-import { createGuestMatch } from '@/lib/guest-actions';
+import { useQueueWebSocket } from '@/lib/hooks/useQueueWebSocket';
 
 interface GuestQueueProps {
   isAlreadyPlayed: boolean;
 }
 
 const GuestQueue: React.FC<GuestQueueProps> = ({ isAlreadyPlayed }) => {
-  const [queueStatus, setQueueStatus] = useState<
-    "waiting" | "matched" | "error" | "cancelled"
-  >("waiting");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [queueStats, setQueueStats] = useState({ playersInQueue: 0, ongoingMatches: 0, averageWaitTime: 0 });
-  const [isStartingMatch, setIsStartingMatch] = useState(false);
-  const [hasAttemptedMatch, setHasAttemptedMatch] = useState(false);
+  const [guestId, setGuestId] = useState<string | null>(null);
   const router = useRouter();
 
+  // Use shared hook for queue WebSocket logic
+  const {
+    queueStatus,
+    setQueueStatus,
+    errorMessage,
+    setErrorMessage,
+    shouldCancelRef,
+    leaveQueue,
+  } = useQueueWebSocket({
+    userId: guestId || '',
+    rating: 1200,
+    isGuest: true,
+    enabled: !isAlreadyPlayed && !!guestId,
+  });
+
+  // Initialize guest ID
   useEffect(() => {
     if (isAlreadyPlayed) {
       setQueueStatus("cancelled");
       return;
     }
 
-    // Prevent multiple attempts
-    if (hasAttemptedMatch) {
-      return;
-    }
-
-    // Start the guest match creation process
-    const startGuestMatch = async () => {
-      try {
-        setIsStartingMatch(true);
-        setHasAttemptedMatch(true);
-        
-        // Create guest match (this will create session on backend)
-        const matchResult = await createGuestMatch();
-        
-        if (!matchResult.success) {
-          throw new Error(matchResult.error || 'Failed to create guest match');
-        }
-        
-        // Set the guest session cookie
-        if (matchResult.guestId) {
-          document.cookie = `codeclashers.guest.sid=${matchResult.guestId}; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax`;
-        }
-        
-        // Show 1-second fake queue animation
-        setQueueStatus("waiting");
-        
-        // Fetch real queue stats; show constant 3s average wait for guests
-        try {
-          const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
-          const [queueRes, statsRes] = await Promise.all([
-            fetch(`${base}/queue/size`),
-            fetch(`${base}/global/general-stats`)
-          ]);
-
-          const queueData = queueRes.ok ? await queueRes.json() : { size: 0 };
-          const statsData = statsRes.ok ? await statsRes.json() : { inProgressMatches: 0 };
-
-          setQueueStats({
-            playersInQueue: typeof queueData.size === 'number' ? queueData.size : 0,
-            ongoingMatches: typeof statsData.inProgressMatches === 'number' ? statsData.inProgressMatches : 0,
-            averageWaitTime: 3,
-          });
-        } catch {
-          setQueueStats({ playersInQueue: 0, ongoingMatches: 0, averageWaitTime: 3 });
-        }
-        
-        // Wait 1 second then redirect to match
-        setTimeout(() => {
-          setQueueStatus("matched");
-          setTimeout(() => {
-            router.push('/match');
-          }, 500);
-        }, 1000);
-        
-      } catch (error) {
-        console.error('Failed to create guest match:', error);
-        const message = error instanceof Error ? error.message : 'Failed to create guest match';
-        toast.error(message);
-        setQueueStatus("error");
-        setErrorMessage(message);
-        
-        // Don't auto-redirect to prevent infinite loops
-        // Let user manually click "Back to Home" button
-      } finally {
-        setIsStartingMatch(false);
+    // Helper to get cookie value
+    const getCookie = (name: string): string | null => {
+      if (typeof document === 'undefined') return null;
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) {
+        return parts.pop()?.split(';').shift() || null;
       }
+      return null;
     };
 
-    startGuestMatch();
-  }, [isAlreadyPlayed, router, hasAttemptedMatch]);
+    // Initialize guest ID (get existing or create new)
+    let existingGuestId = getCookie('codeclashers.guest.sid');
+    
+    if (!existingGuestId) {
+      // Generate new guest ID on client
+      existingGuestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      // Set cookie with 7-day expiry
+      document.cookie = `codeclashers.guest.sid=${existingGuestId}; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax`;
+    }
+    
+    setGuestId(existingGuestId);
+  }, [isAlreadyPlayed, setQueueStatus]);
 
-  // Handle page unload/close/navigation - ensure cleanup happens
+  // Fetch queue stats
   useEffect(() => {
-    const handleBeforeUnload = () => {
-      // For guests, we don't have a WebSocket connection to clean up,
-      // but we should prevent the match creation if it's still in progress
-      if (isStartingMatch) {
-        console.log('Guest match creation cancelled on page unload');
+    if (isAlreadyPlayed) return;
+
+    const fetchQueueStats = async () => {
+      try {
+        const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
+        const [queueRes, statsRes] = await Promise.all([
+          fetch(`${base}/queue/size`),
+          fetch(`${base}/global/general-stats`)
+        ]);
+
+        const queueData = queueRes.ok ? await queueRes.json() : { size: 0 };
+        const statsData = statsRes.ok ? await statsRes.json() : { inProgressMatches: 0 };
+
+        setQueueStats({
+          playersInQueue: typeof queueData.size === 'number' ? queueData.size : 0,
+          ongoingMatches: typeof statsData.inProgressMatches === 'number' ? statsData.inProgressMatches : 0,
+          averageWaitTime: 10,
+        });
+      } catch {
+        setQueueStats({ playersInQueue: 0, ongoingMatches: 0, averageWaitTime: 10 });
       }
     };
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden' && isStartingMatch) {
-        console.log('Guest match creation cancelled on page hidden');
-      }
-    };
+    fetchQueueStats();
+    const statsInterval = setInterval(fetchQueueStats, 5000);
 
-    if (typeof window !== 'undefined') {
-      window.addEventListener('beforeunload', handleBeforeUnload);
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-      
-      return () => {
-        window.removeEventListener('beforeunload', handleBeforeUnload);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      };
-    }
-  }, [isStartingMatch]);
+    return () => {
+      clearInterval(statsInterval);
+    };
+  }, [isAlreadyPlayed]);
+
 
   const handleCancelQueue = async () => {
     try {
       setQueueStatus("cancelled");
+      shouldCancelRef.current = true;
+      // Clear guest match bootstrap cookie so we don't keep stale data
+      if (typeof document !== 'undefined') {
+        document.cookie = 'codeclashers.guest.match=; path=/; max-age=0; samesite=lax';
+      }
+      // Leave queue room using hook
+      await leaveQueue();
       router.push("/landing");
     } catch (error) {
       console.error("Error cancelling queue:", error);
@@ -314,7 +291,6 @@ const GuestQueue: React.FC<GuestQueueProps> = ({ isAlreadyPlayed }) => {
                           <Button
                             className="px-6 py-3 text-white font-semibold rounded-full transition-colors duration-300 text-lg"
                             onClick={() => {
-                              setHasAttemptedMatch(false);
                               setQueueStatus("waiting");
                               setErrorMessage(null);
                             }}

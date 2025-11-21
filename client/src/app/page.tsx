@@ -2,6 +2,8 @@ import { getSession, getUserStatsCached, getUserActivityCached } from '@/lib/act
 import { redirect } from 'next/navigation';
 import HomePageClient from './HomePageClient';
 
+export const dynamic = 'force-dynamic';
+
 export default async function HomePage() {
   const session = await getSession();
 

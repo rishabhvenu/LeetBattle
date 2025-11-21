@@ -1,5 +1,5 @@
 export const REST_ENDPOINTS = {
-  API_BASE: process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:2567',
+  API_BASE: process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '',
   AUTH: {
     USERNAME_VALIDATE: "/auth/username/validate",
     EMAIL_VALIDATE: "/auth/email/validate",

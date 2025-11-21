@@ -1,0 +1,8 @@
+{
+  "rules": [
+    "./rules/README.md"
+  ],
+  "rulesFolder": "./rules",
+  "$schema": "https://cursor.sh/config-schema.json"
+}
+

@@ -4,7 +4,7 @@ Backend infrastructure for LeetBattle competitive coding platform.
 
 ## Architecture Overview
 
-The backend consists of multiple microservices orchestrated via Docker Compose:
+The backend consists of multiple microservices orchestrated via **Kubernetes**:
 
 ### Core Services
 
@@ -13,41 +13,58 @@ The backend consists of multiple microservices orchestrated via Docker Compose:
 - **MongoDB** (Port 27017) - User accounts, sessions, match history, bot data, guest sessions
 - **Redis** (Port 6379) - Matchmaking queue, caching, pub/sub events, bot coordination, guest data storage
 - **Judge0** (Port 2358) - Code execution in 89+ languages
-- **MinIO** (Ports 9000-9001) - S3-compatible object storage for avatars
+- **MinIO** (Ports 9000-9001) - S3-compatible object storage for avatars (dev only)
 
 ## Getting Started
 
-### Development Setup
+### Development Setup (k3d)
 
+**Prerequisites:**
+- Docker installed and running
+- k3d installed (`brew install k3d` on macOS)
+- kubectl installed
+
+**Quick Start:**
 ```bash
-# 1. Create .env from template
-cp .env.example .env
+# 1. Navigate to dev directory
+cd k8s/dev
 
-# 2. Edit .env with your values (dev defaults work for local)
-nano .env
+# 2. Create k3d cluster
+./setup-k3d-cluster.sh
 
-# 3. Start all services
-docker-compose up -d
+# 3. Run setup script
+./setup-dev.sh
 
 # 4. Verify services
-docker-compose ps
+kubectl get pods -n codeclashers-dev
+```
 
-# 5. View logs
-docker-compose logs -f
+All services will be available on `localhost` via k3d's loadbalancer on standard ports (27017, 6379, 2567, etc.).
+
+**For detailed instructions, see:** [`k8s/dev/README.md`](./k8s/dev/README.md)
+
+**Alternative: Manual Setup**
+```bash
+# Create secrets
+cd k8s/dev
+./create-dev-secrets.sh
+
+# Deploy with kustomize
+kubectl apply -k .
 ```
 
 ### Production Deployment (Oracle Cloud + AWS)
 
 **Production Stack:**
-- **Oracle Cloud VM** - Colyseus + Judge0 + Redis + Bot Service
-- **MongoDB Atlas** - Managed MongoDB (not local container)
-- **AWS S3** - Avatar storage (not MinIO)
+- **Oracle Cloud VM** - k3s Kubernetes cluster
+- **MongoDB** - 3-node replica set in Kubernetes
+- **Redis** - 6-node cluster in Kubernetes
+- **AWS S3** - Avatar storage (no MinIO in production)
 
-**Use:** `docker-compose.prod.yml` for production (no MongoDB/MinIO)
+**See:** [`Production Setup`](../context/backend/README-PROD.md) for the complete deployment guide, plus
+[`deployment runbook`](../context/backend/deployment-runbook.md) for pipeline details.
 
-See `README-PROD.md` for complete production setup guide.
-
-The default `docker-compose.yml` is for local development only.
+**Note:** `docker-compose.yml` is deprecated. Use Kubernetes for both development and production.
 
 ### 3. Verify Services Are Running
 
@@ -137,7 +154,7 @@ colyseus/
 └── package.json
 ```
 
-**Matchmaking Flow:**
+**Matchmaking Flow:** (Full detail in [`context/backend/matchmaking-flow.md`](../context/backend/matchmaking-flow.md))
 1. Players join queue via `/queue/enqueue` (adds to Redis sorted set)
 2. Background matchmaker polls every 1 second
 3. **Dynamic ELO-based pairing** with progressive threshold expansion (±50 to ±250 based on wait time)
@@ -153,7 +170,7 @@ colyseus/
 4. Creator starts match when ready
 5. Match transitions to competitive match with same rules
 
-**Guest Mode Flow:**
+**Guest Mode Flow:** (See [`context/frontend/match-experience.md`](../context/frontend/match-experience.md) for UI)
 1. Unauthenticated player starts a guest session (7-day cookie)
 2. Guest automatically matched with bot opponent
 3. Guest completes match

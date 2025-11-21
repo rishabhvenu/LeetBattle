@@ -1,0 +1,33 @@
+# Kustomization for MongoDB Replica Set
+# This allows easy customization of replica count
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: codeclashers
+
+resources:
+- statefulset.yaml
+- headless-service.yaml
+- service.yaml
+- init-job.yaml
+- pdb.yaml
+- configmap.yaml
+- secret-template.yaml
+
+# Replicas transformer: Override replica count via kustomize
+# Usage: kustomize edit replicas mongodb <count>
+# Or set via environment variable and use kustomize build
+replicas:
+- name: mongodb
+  count: 3  # Default: 3 replicas (minimum for quorum)
+
+# ConfigMap patches: Update REPLICA_COUNT to match replica count
+patches:
+- patch: |-
+    - op: replace
+      path: /data/REPLICA_COUNT
+      value: "3"  # Should match replicas count above
+  target:
+    kind: ConfigMap
+    name: mongodb-config
+

@@ -25,8 +25,8 @@ spec:
         image: postgres:15-alpine
         command: ['sh', '-c', 'until pg_isready -h postgres -p 5432; do echo waiting for postgres; sleep 2; done;']
       - name: run-migrations
-        image: ${JUDGE0_IMAGE}
-        command: ['sh', '-c', 'rails db:create db:migrate db:seed']
+        image: ${JUDGE0_WORKER_IMAGE}
+        command: ['sh', '-c', 'rails db:create || true; rails db:migrate || true; rails db:seed || true']
         env:
         - name: RAILS_ENV
           value: "production"
@@ -73,8 +73,7 @@ spec:
               key: JUDGE0_POSTGRES_DB
       containers:
       - name: judge0-worker
-        image: ${JUDGE0_IMAGE}
-        imagePullPolicy: Never
+        image: ${JUDGE0_WORKER_IMAGE}
         command: ["./scripts/workers"]
         env:
         - name: RAILS_ENV

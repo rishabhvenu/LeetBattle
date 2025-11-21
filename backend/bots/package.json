@@ -5,6 +5,9 @@
   "main": "index.js",
   "license": "MIT",
   "type": "commonjs",
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
     "colyseus.js": "^0.15.18",
     "ioredis": "^5.4.1",

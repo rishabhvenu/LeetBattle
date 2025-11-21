@@ -82,6 +82,20 @@ graph TD
 
 ---
 
+## 🗂️ Context Docs
+
+- Backend reference index: [`context/backend/overview.md`](./context/backend/overview.md)
+- Frontend reference index: [`context/frontend/overview.md`](./context/frontend/overview.md)
+- Highlighted deep dives:
+  - Matchmaking internals (`context/backend/matchmaking-flow.md`)
+  - Bot service lifecycle (`context/backend/bot-lifecycle.md`)
+  - Judge0 troubleshooting (`context/backend/judge0-runbook.md`)
+  - Backend debugging checklist (`context/backend/debugging-playbook.md`)
+  - Next.js app map (`context/frontend/app-architecture.md`)
+  - Match UI flow (`context/frontend/match-experience.md`)
+
+---
+
 ## 🚀 Getting Started
 
 ### Prerequisites

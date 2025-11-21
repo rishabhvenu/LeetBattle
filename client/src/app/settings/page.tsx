@@ -23,14 +23,12 @@ export default async function SettingsPage() {
 
   // Transform session for Settings component
   const username = session.user?.username || 'User';
-  const initials = username.substring(0, 2).toUpperCase();
   
   const settingsSession = {
     _id: session.user?.id || '',
     username,
     email: session.user?.email || 'user@example.com',
     avatar: session.user?.avatar || undefined,
-    initials,
     timeCoded: 0,
     problemsSolved: 0,
     globalRank: 1,

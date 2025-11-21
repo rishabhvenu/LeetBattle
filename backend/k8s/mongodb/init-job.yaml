@@ -1,0 +1,252 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-replica-set-init
+  namespace: codeclashers
+spec:
+  backoffLimit: 5
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: init
+        image: mongo:7.0
+        # Install network tools for DNS discovery (if not available in mongo image)
+        # Alternatively, use a sidecar or different base image
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -e
+          
+          REPLICA_SET_NAME="${REPLICA_SET_NAME:-rs0}"
+          REPLICA_COUNT="${REPLICA_COUNT:-3}"
+          MONGODB_USERNAME="${MONGO_INITDB_ROOT_USERNAME}"
+          MONGODB_PASSWORD="${MONGO_INITDB_ROOT_PASSWORD}"
+          
+          echo "MongoDB Replica Set Initialization"
+          echo "Replica Set Name: ${REPLICA_SET_NAME}"
+          echo "Expected Replica Count: ${REPLICA_COUNT}"
+          echo ""
+          
+          # Discover available MongoDB pods dynamically
+          echo "Discovering MongoDB pods..."
+          AVAILABLE_PODS=()
+          
+          # Check for pods by attempting to connect (more reliable than DNS)
+          # Start with expected count, check a few extra in case of scaling
+          MAX_CHECK=$((REPLICA_COUNT + 2))
+          
+          for i in $(seq 0 $((MAX_CHECK - 1))); do
+            HOST="mongodb-${i}.mongodb-headless.codeclashers.svc.cluster.local"
+            
+            # Try to connect to MongoDB to verify pod exists
+            # Use a short timeout to quickly check availability
+            if mongosh "mongodb://${HOST}:27017" --quiet --eval "1" --timeoutMS=2000 > /dev/null 2>&1 || \
+               mongosh "mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${HOST}:27017/admin?authSource=admin" --quiet --eval "1" --timeoutMS=2000 > /dev/null 2>&1; then
+              AVAILABLE_PODS+=($i)
+              echo "  Found pod: mongodb-${i}"
+            fi
+          done
+          
+          if [ ${#AVAILABLE_PODS[@]} -eq 0 ]; then
+            echo "ERROR: No MongoDB pods discovered. Check StatefulSet configuration."
+            echo "Tried pods 0 to $((MAX_CHECK - 1))"
+            exit 1
+          fi
+          
+          echo "Discovered ${#AVAILABLE_PODS[@]} MongoDB pod(s): ${AVAILABLE_PODS[*]}"
+          echo ""
+          echo "Waiting for all MongoDB pods to accept connections..."
+          
+          # Wait for all discovered pods to be accepting MongoDB connections
+          for i in "${AVAILABLE_PODS[@]}"; do
+            HOST="mongodb-${i}.mongodb-headless.codeclashers.svc.cluster.local"
+            echo "Waiting for ${HOST}..."
+            
+            # Try to connect (MongoDB may not have auth enabled during initial setup)
+            MAX_ATTEMPTS=60
+            ATTEMPT=0
+            while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+              # Try without auth first (initial setup)
+              if mongosh "mongodb://${HOST}:27017" --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+                echo "  ${HOST} is ready (no auth)"
+                break
+              fi
+              # Try with auth (after user creation)
+              if mongosh "mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${HOST}:27017/admin?authSource=admin" --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+                echo "  ${HOST} is ready (with auth)"
+                break
+              fi
+              
+              ATTEMPT=$((ATTEMPT + 1))
+              if [ $ATTEMPT -lt $MAX_ATTEMPTS ]; then
+                echo "  ${HOST} not ready yet (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
+                sleep 5
+              fi
+            done
+            
+            if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+              echo "ERROR: ${HOST} failed to become ready after $MAX_ATTEMPTS attempts"
+              exit 1
+            fi
+          done
+          
+          # Give pods a moment to fully initialize
+          sleep 5
+          
+          # Check if replica set is already initialized
+          echo "Checking if replica set is already initialized..."
+          PRIMARY="mongodb-0.mongodb-headless.codeclashers.svc.cluster.local"
+          
+          # Try to check status with auth first, fall back to no auth
+          RS_STATUS=""
+          if mongosh "mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${PRIMARY}:27017/admin?authSource=admin" --quiet --eval "rs.status().ok" 2>/dev/null | grep -q "1"; then
+            RS_STATUS="initialized_auth"
+          elif mongosh "mongodb://${PRIMARY}:27017" --quiet --eval "rs.status().ok" 2>/dev/null | grep -q "1"; then
+            RS_STATUS="initialized_no_auth"
+          fi
+          
+          if [ -n "$RS_STATUS" ]; then
+            echo "Replica set ${REPLICA_SET_NAME} is already initialized!"
+            
+            # Determine connection string based on auth status
+            if [ "$RS_STATUS" = "initialized_auth" ]; then
+              CONN_STR="mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${PRIMARY}:27017/admin?authSource=admin"
+            else
+              CONN_STR="mongodb://${PRIMARY}:27017/admin"
+            fi
+            
+            # Verify all members are present
+            MEMBERS=$(mongosh "$CONN_STR" --quiet --eval "rs.status().members.length" 2>/dev/null | tr -d '[:space:]')
+            echo "Current members in replica set: ${MEMBERS}"
+            echo "Expected members: ${#AVAILABLE_PODS[@]}"
+            
+            # Check if we need to add missing members
+            for i in "${AVAILABLE_PODS[@]}"; do
+              MEMBER="mongodb-${i}.mongodb-headless.codeclashers.svc.cluster.local:27017"
+              EXISTS=$(mongosh "$CONN_STR" --quiet --eval "rs.status().members.find(m => m.name === '${MEMBER}')" 2>/dev/null || echo "null")
+              
+              if [ "$EXISTS" = "null" ] || [ "$EXISTS" = "" ]; then
+                echo "Adding missing member: ${MEMBER}"
+                # Priority: earlier pods (lower index) get higher priority
+                PRIORITY=$((REPLICA_COUNT - i))
+                mongosh "$CONN_STR" --quiet <<EOF
+                try {
+                  rs.add({host: "${MEMBER}", priority: ${PRIORITY}})
+                } catch (e) {
+                  if (e.message.includes("already") || e.message.includes("duplicate")) {
+                    print("Member already exists")
+                  } else {
+                    throw e
+                  }
+                }
+EOF
+              else
+                echo "Member ${MEMBER} already exists in replica set"
+              fi
+            done
+            
+            exit 0
+          fi
+          
+          # Initialize replica set
+          echo "Initializing replica set ${REPLICA_SET_NAME}..."
+          
+          # Use the first available pod as primary
+          PRIMARY_IDX="${AVAILABLE_PODS[0]}"
+          PRIMARY="mongodb-${PRIMARY_IDX}.mongodb-headless.codeclashers.svc.cluster.local"
+          
+          # Determine if we need auth (try with auth first)
+          CONN_STR="mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${PRIMARY}:27017/admin?authSource=admin"
+          if ! mongosh "$CONN_STR" --quiet --eval "db.adminCommand('ping')" > /dev/null 2>&1; then
+            # Fall back to no auth if auth doesn't work
+            CONN_STR="mongodb://${PRIMARY}:27017/admin"
+          fi
+          
+          # Build members array dynamically from discovered pods
+          MEMBERS=()
+          MEMBER_ID=0
+          for i in "${AVAILABLE_PODS[@]}"; do
+            HOST="mongodb-${i}.mongodb-headless.codeclashers.svc.cluster.local:27017"
+            # Priority: earlier pods (lower index) get higher priority for primary election
+            PRIORITY=$((REPLICA_COUNT - i))
+            MEMBERS+=("{\"_id\": ${MEMBER_ID}, \"host\": \"${HOST}\", \"priority\": ${PRIORITY}}")
+            MEMBER_ID=$((MEMBER_ID + 1))
+          done
+          
+          MEMBERS_JSON=$(IFS=','; echo "[${MEMBERS[*]}]")
+          echo ""
+          echo "Replica set configuration with ${#AVAILABLE_PODS[@]} members:"
+          echo "${MEMBERS_JSON}"
+          echo ""
+          echo "Using connection: ${CONN_STR}"
+          
+          mongosh "$CONN_STR" --quiet <<EOF
+          try {
+            rs.initiate({
+              _id: "${REPLICA_SET_NAME}",
+              members: ${MEMBERS_JSON}
+            })
+          } catch (e) {
+            if (e.message.includes("already initialized")) {
+              print("Replica set already initialized")
+            } else {
+              throw e
+            }
+          }
+          
+          print("Waiting for replica set to be ready...")
+          var status = rs.status()
+          while (status.ok !== 1) {
+            sleep(2000)
+            status = rs.status()
+          }
+          
+          print("Replica set ${REPLICA_SET_NAME} initialized successfully!")
+          print("Primary: " + status.members.find(m => m.stateStr === "PRIMARY").name)
+EOF
+          
+          echo ""
+          echo ""
+          echo "✅ MongoDB Replica Set ${REPLICA_SET_NAME} initialized successfully!"
+          echo ""
+          echo "Connection strings:"
+          echo ""
+          
+          # Build connection string with all discovered members
+          MEMBER_HOSTS=()
+          for i in "${AVAILABLE_PODS[@]}"; do
+            MEMBER_HOSTS+=("mongodb-${i}.mongodb-headless.codeclashers.svc.cluster.local:27017")
+          done
+          ALL_MEMBERS=$(IFS=','; echo "${MEMBER_HOSTS[*]}")
+          
+          echo "Internal (all members - recommended):"
+          echo "mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@${ALL_MEMBERS}/codeclashers?replicaSet=${REPLICA_SET_NAME}&authSource=admin"
+          echo ""
+          echo "Internal (single endpoint):"
+          echo "mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@mongodb.codeclashers.svc.cluster.local:27017/codeclashers?replicaSet=${REPLICA_SET_NAME}&authSource=admin"
+        env:
+        - name: REPLICA_SET_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: mongodb-config
+              key: REPLICA_SET_NAME
+        - name: REPLICA_COUNT
+          valueFrom:
+            configMapKeyRef:
+              name: mongodb-config
+              key: REPLICA_COUNT
+              optional: true
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secrets
+              key: MONGO_INITDB_ROOT_USERNAME
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mongodb-secrets
+              key: MONGO_INITDB_ROOT_PASSWORD
+

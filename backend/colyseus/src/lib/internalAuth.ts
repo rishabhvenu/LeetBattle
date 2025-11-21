@@ -1,26 +1,19 @@
 import type { Context, Next } from 'koa';
+import { getMongoClient, getDbName } from './mongo';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
-const DB_NAME = 'codeclashers';
+interface SessionDocument {
+  _id: string;
+  expires: Date;
+  user?: {
+    email?: string;
+  };
+  userId?: string;
+}
+
+const DB_NAME = getDbName();
 const USERS_COLLECTION = 'users';
 const SESSIONS_COLLECTION = 'sessions';
 const ADMIN_EMAIL = 'rishiryan4@gmail.com';
-
-// MongoDB client singleton
-let mongoClient: any = null;
-
-async function getMongoClient() {
-  if (!mongoClient) {
-    const { MongoClient } = await import('mongodb');
-    mongoClient = new MongoClient(MONGODB_URI, {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    });
-    await mongoClient.connect();
-  }
-  return mongoClient;
-}
 
 /**
  * Admin authentication middleware
@@ -32,8 +25,17 @@ export function adminAuthMiddleware() {
     try {
       // Get session cookie
       const sessionCookie = ctx.cookies.get('codeclashers.sid');
+      console.log('[adminAuth] incoming request', {
+        path: ctx.path,
+        method: ctx.method,
+        hasSessionCookie: Boolean(sessionCookie),
+      });
       
       if (!sessionCookie) {
+        console.warn('[adminAuth] missing session cookie', {
+          path: ctx.path,
+          method: ctx.method,
+        });
         ctx.status = 401;
         ctx.body = { error: 'not_authenticated', message: 'No session found' };
         return;
@@ -42,14 +44,27 @@ export function adminAuthMiddleware() {
       // Look up session in MongoDB
       const client = await getMongoClient();
       const db = client.db(DB_NAME);
-      const sessions = db.collection(SESSIONS_COLLECTION);
+      const sessions = db.collection<SessionDocument>(SESSIONS_COLLECTION);
       
+      const now = new Date();
       const session = await sessions.findOne({ 
         _id: sessionCookie,
-        expires: { $gt: new Date() }
+        expires: { $gt: now }
       });
+      if (session) {
+        console.log('[adminAuth] session lookup success', {
+          userId: session.userId?.toString(),
+          userEmail: session.user?.email,
+          expires: session.expires,
+          now,
+        });
+      }
       
       if (!session) {
+        console.warn('[adminAuth] session not found or expired', {
+          sessionCookie,
+          now,
+        });
         ctx.status = 401;
         ctx.body = { error: 'invalid_session', message: 'Session expired or not found' };
         return;
@@ -59,17 +74,41 @@ export function adminAuthMiddleware() {
       const userEmail = session.user?.email;
       
       if (!userEmail) {
+        console.warn('[adminAuth] session missing user email', {
+          sessionCookie,
+          userId: session.userId?.toString(),
+        });
         ctx.status = 401;
         ctx.body = { error: 'no_user_email', message: 'No user email in session' };
         return;
       }
 
       // Check if user email matches the admin email
+      console.log('[adminAuth] checking email match', {
+        userEmail,
+        adminEmail: ADMIN_EMAIL,
+        match: userEmail === ADMIN_EMAIL,
+        userEmailLength: userEmail?.length,
+        adminEmailLength: ADMIN_EMAIL.length,
+      });
+      
       if (userEmail !== ADMIN_EMAIL) {
+        console.warn('[adminAuth] non-admin session - email mismatch', {
+          sessionCookie,
+          userEmail,
+          expectedAdminEmail: ADMIN_EMAIL,
+          match: false,
+        });
         ctx.status = 403;
         ctx.body = { error: 'forbidden', message: 'Admin access required' };
         return;
       }
+
+      console.log('[adminAuth] admin access granted', {
+        userId: session.userId?.toString(),
+        userEmail,
+        path: ctx.path,
+      });
 
       // Add user info to context for logging
       ctx.state.adminUser = true;

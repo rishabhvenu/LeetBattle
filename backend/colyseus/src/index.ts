@@ -1,20 +1,24 @@
-import { Server } from 'colyseus';
+import { Server, matchMaker } from 'colyseus';
+import { RedisPresence } from '@colyseus/redis-presence';
+import { RedisDriver } from '@colyseus/redis-driver';
 import { createServer } from 'http';
 import Koa from 'koa';
 import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
 import cors from '@koa/cors';
-import { MongoClient, ObjectId } from 'mongodb';
+import { ObjectId, Db } from 'mongodb';
 import { QueueRoom } from './rooms/QueueRoom';
 import { MatchRoom } from './rooms/MatchRoom';
 import { PrivateRoom } from './rooms/PrivateRoom';
 // Matchmaking is now integrated into QueueRoom
 import { enqueueUser, dequeueUser, queueSize } from './lib/queue';
-import { getRedis, RedisKeys } from './lib/redis';
-import Redis from 'ioredis';
+import { getRedis, RedisKeys, isBotUser } from './lib/redis';
+import { getMongoClient, getDbName } from './lib/mongo';
+import { prepareTestCasesForExecution, type ProblemTestCase, type SpecialInputConfig } from './lib/specialInputs';
+import Redis, { RedisOptions, ClusterNode, ClusterOptions } from 'ioredis';
 import jwt from 'jsonwebtoken';
 import OpenAI from 'openai';
-// import AWS from 'aws-sdk'; // Commented out for now to fix build
+import AWS from 'aws-sdk';
 import { 
   rateLimitMiddleware, 
   queueLimiter, 
@@ -23,9 +27,132 @@ import {
 } from './lib/rateLimiter';
 import { internalAuthMiddleware, botAuthMiddleware, combinedAuthMiddleware, adminAuthMiddleware } from './lib/internalAuth';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
-const DB_NAME = 'codeclashers';
+const DB_NAME = getDbName();
 const isProduction = process.env.NODE_ENV === 'production';
+
+type RedisEndpoint = { host: string; port: number };
+
+interface RedisScalingConfig {
+  options: RedisOptions;
+  endpoints?: RedisEndpoint[];
+}
+
+function parseClusterEndpoints(raw?: string | null): RedisEndpoint[] | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  const endpoints = raw
+    .split(',')
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .map((segment) => {
+      const [host, rawPort] = segment.split(':');
+      const port = parseInt(rawPort ?? '6379', 10);
+      if (!host) {
+        return undefined;
+      }
+      return {
+        host,
+        port: Number.isNaN(port) ? 6379 : port,
+      } satisfies RedisEndpoint;
+    })
+    .filter((endpoint): endpoint is RedisEndpoint => Boolean(endpoint));
+
+  return endpoints.length > 0 ? endpoints : undefined;
+}
+
+function buildRedisScalingConfig(): RedisScalingConfig {
+  if (!process.env.REDIS_HOST || !process.env.REDIS_PORT) {
+    throw new Error('REDIS_HOST and REDIS_PORT environment variables are required');
+  }
+
+  const options: RedisOptions = {
+    host: process.env.REDIS_HOST,
+    port: parseInt(process.env.REDIS_PORT, 10),
+    password: process.env.REDIS_PASSWORD || undefined,
+  };
+
+  if (process.env.REDIS_USERNAME) {
+    (options as unknown as { username: string }).username = process.env.REDIS_USERNAME;
+  }
+
+  if (process.env.REDIS_DB) {
+    const db = parseInt(process.env.REDIS_DB, 10);
+    if (!Number.isNaN(db)) {
+      options.db = db;
+    }
+  }
+
+  if ((process.env.REDIS_TLS || '').toLowerCase() === 'true') {
+    options.tls = {
+      rejectUnauthorized: (process.env.REDIS_TLS_REJECT_UNAUTHORIZED || '').toLowerCase() !== 'false',
+    };
+  }
+
+  const endpoints = parseClusterEndpoints(process.env.REDIS_CLUSTER_NODES);
+
+  return { options, endpoints };
+}
+
+const redisScalingConfig = buildRedisScalingConfig();
+
+async function getBotsInActiveMatches(redis: ReturnType<typeof getRedis>): Promise<string[]> {
+  try {
+    const activeMatchIds = await redis.smembers(RedisKeys.activeMatchesSet);
+    if (!activeMatchIds || activeMatchIds.length === 0) {
+      return [];
+    }
+
+    const matchKeys = activeMatchIds.map((id) => RedisKeys.matchKey(id));
+    const matches = await redis.mget(matchKeys);
+    const botIds = new Set<string>();
+
+    matches.forEach((data, idx) => {
+      if (!data) {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed?.players) {
+          Object.keys(parsed.players).forEach((playerId) => {
+            botIds.add(playerId);
+          });
+        }
+      } catch (err) {
+        console.error(`Failed to parse match data for ${activeMatchIds[idx]}:`, err);
+      }
+    });
+
+    return Array.from(botIds);
+  } catch (error) {
+    console.error('Failed to enumerate bots in active matches:', error);
+    return [];
+  }
+}
+
+function createRedisPresence() {
+  if (redisScalingConfig.endpoints && redisScalingConfig.endpoints.length > 0) {
+    const clusterOptions: ClusterOptions = {
+      redisOptions: redisScalingConfig.options,
+    };
+    return new RedisPresence(redisScalingConfig.endpoints as ClusterNode[], clusterOptions);
+  }
+  return new RedisPresence(redisScalingConfig.options as RedisOptions);
+}
+
+function createRedisDriver() {
+  if (redisScalingConfig.endpoints && redisScalingConfig.endpoints.length > 0) {
+    const clusterOptions: ClusterOptions = {
+      redisOptions: redisScalingConfig.options,
+    };
+    return new RedisDriver(redisScalingConfig.endpoints as ClusterNode[], clusterOptions);
+  }
+  return new RedisDriver(redisScalingConfig.options as RedisOptions);
+}
+
+const redisPresence = createRedisPresence();
+const redisDriver = createRedisDriver();
 
 function resolveReservationSecret(): string {
   const secret = process.env.COLYSEUS_RESERVATION_SECRET;
@@ -35,19 +162,120 @@ function resolveReservationSecret(): string {
   return secret || 'dev_secret';
 }
 
-// MongoDB client singleton
-let mongoClient: MongoClient | null = null;
+type ParticipantStats = {
+  rating: number;
+  wins: number;
+  losses: number;
+  totalMatches: number;
+  globalRank: number;
+};
 
-async function getMongoClient(): Promise<MongoClient> {
-  if (!mongoClient) {
-    mongoClient = new MongoClient(MONGODB_URI, {
-      maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-    });
-    await mongoClient.connect();
+async function fetchParticipantStats(userId: string, db: Db): Promise<ParticipantStats> {
+  const defaultStats: ParticipantStats = {
+    rating: 1200,
+    wins: 0,
+    losses: 0,
+    totalMatches: 0,
+    globalRank: 1234,
+  };
+
+  if (!userId || userId.startsWith('guest_')) {
+    return defaultStats;
   }
-  return mongoClient;
+
+  if (!ObjectId.isValid(userId)) {
+    return defaultStats;
+  }
+
+  const userObjectId = new ObjectId(userId);
+  const matchesCollection = db.collection('matches');
+  const botsCollection = db.collection('bots');
+  const usersCollection = db.collection('users');
+
+  const botDoc = await botsCollection.findOne(
+    { _id: userObjectId },
+    { projection: { 'stats.rating': 1, 'stats.wins': 1, 'stats.losses': 1, 'stats.totalMatches': 1 } }
+  );
+
+  if (botDoc) {
+    const rating = botDoc.stats?.rating ?? 1200;
+    const totalMatches = botDoc.stats?.totalMatches ?? 0;
+    const wins = botDoc.stats?.wins ?? 0;
+    const losses = botDoc.stats?.losses ?? 0;
+    const higherBots = await botsCollection.countDocuments({ 'stats.rating': { $gt: rating } });
+    return {
+      rating,
+      wins,
+      losses,
+      totalMatches,
+      globalRank: higherBots + 1,
+    };
+  }
+
+  const totalMatches = await matchesCollection.countDocuments({ playerIds: userObjectId });
+  const wins = await matchesCollection.countDocuments({ winnerUserId: userObjectId });
+  const losses = Math.max(totalMatches - wins, 0);
+
+  const userDoc = await usersCollection.findOne(
+    { _id: userObjectId },
+    { projection: { 'stats.rating': 1 } }
+  );
+
+  const rating = userDoc?.stats?.rating ?? 1200;
+  const higherUsers = await usersCollection.countDocuments({ 'stats.rating': { $gt: rating } });
+
+  return {
+    rating,
+    wins,
+    losses,
+    totalMatches,
+    globalRank: higherUsers + 1,
+  };
+}
+
+async function fetchParticipantIdentity(userId: string, db: Db): Promise<{ username: string; fullName: string; avatar: string | null }> {
+  if (!userId) {
+    return { username: 'Opponent', fullName: 'Opponent', avatar: null };
+  }
+
+  if (userId.startsWith('guest_')) {
+    return { username: 'Guest', fullName: 'Guest User', avatar: null };
+  }
+
+  if (!ObjectId.isValid(userId)) {
+    return { username: 'Opponent', fullName: 'Opponent', avatar: null };
+  }
+
+  const userObjectId = new ObjectId(userId);
+  const usersCollection = db.collection('users');
+  const botsCollection = db.collection('bots');
+
+  const userDoc = await usersCollection.findOne(
+    { _id: userObjectId },
+    { projection: { username: 1, avatar: 1, 'profile.avatar': 1, 'profile.firstName': 1, 'profile.lastName': 1 } }
+  );
+
+  if (userDoc) {
+    const username = userDoc.username || 'Opponent';
+    const fullName = `${userDoc.profile?.firstName || ''} ${userDoc.profile?.lastName || ''}`.trim() || username;
+    const avatar = (userDoc.profile?.avatar || userDoc.avatar || null) ?? null;
+    return { username, fullName, avatar };
+  }
+
+  const botDoc = await botsCollection.findOne(
+    { _id: userObjectId },
+    { projection: { username: 1, fullName: 1, avatar: 1 } }
+  );
+
+  if (botDoc) {
+    return {
+      username: botDoc.username || 'Bot',
+      fullName: botDoc.fullName || botDoc.username || 'Bot',
+      avatar: botDoc.avatar || null,
+    };
+  }
+
+  return { username: 'Opponent', fullName: 'Opponent', avatar: null };
 }
 
 // OpenAI client singleton
@@ -55,15 +283,34 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// AWS S3 (MinIO) client - commented out for now
-// const s3 = new AWS.S3({
-//   endpoint: process.env.S3_ENDPOINT || 'http://codeclashers-minio:9000',
-//   accessKeyId: process.env.AWS_ACCESS_KEY_ID || 'minioadmin',
-//   secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || 'minioadmin123',
-//   s3ForcePathStyle: true,
-//   signatureVersion: 'v4',
-//   region: process.env.AWS_REGION || 'us-east-1',
-// });
+function createS3Client() {
+  const config: AWS.S3.ClientConfiguration = {
+    region: process.env.AWS_REGION || 'us-east-1',
+    signatureVersion: 'v4',
+  };
+
+  const resolvedEndpoint =
+    process.env.S3_ENDPOINT ||
+    (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_ACCESS_KEY_ID.startsWith('minio')
+      ? 'http://minio-dev:9000'
+      : undefined) ||
+    (!isProduction ? 'http://localhost:9000' : undefined);
+  if (resolvedEndpoint) {
+    config.endpoint = resolvedEndpoint;
+    config.s3ForcePathStyle = true;
+  }
+
+  if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+    config.credentials = {
+      accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+    };
+  }
+
+  return new AWS.S3(config);
+}
+
+const s3 = createS3Client();
 
 const app = new Koa();
 const router = new Router();
@@ -71,36 +318,116 @@ const router = new Router();
 // Guest user endpoints
 router.post('/guest/match/create', async (ctx) => {
   try {
-    const { findAvailableBotForGuest, createMatch } = await import('./lib/matchCreation');
+    const { findAvailableBotForGuest, createMatch, preflightValidatePlayers } = await import('./lib/matchCreation');
     const redis = getRedis();
-    
-    // Find an available bot
-    const bot = await findAvailableBotForGuest();
+
+    // Generate guest user ID up-front (used for emergency deployment signal)
+    const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Helper to select an eligible queued bot
+    async function selectQueuedBot() {
+      const candidate = await findAvailableBotForGuest();
+      return candidate;
+    }
+
+    const pollIntervalMs = parseInt(process.env.GUEST_BOT_POLL_INTERVAL_MS || '1000', 10);
+    const timeoutMs = parseInt(process.env.GUEST_BOT_WAIT_TIMEOUT_MS || '45000', 10);
+
+    let bot = await selectQueuedBot();
     if (!bot) {
-      ctx.status = 404;
-      ctx.body = { success: false, error: 'No bots available for guest match' };
+      // Trigger emergency deployment signal for bots service
+      try {
+        await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
+          type: 'playerQueued',
+          playerId: guestId,
+        }));
+        console.log(`[guest] Triggered emergency bot deployment for ${guestId}`);
+      } catch (e) {
+        console.warn('[guest] Failed to publish emergency deployment signal:', e);
+      }
+
+      // Poll for a queued bot to appear within timeout window
+      const start = Date.now();
+      while (!bot && (Date.now() - start) < timeoutMs) {
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+        bot = await selectQueuedBot();
+      }
+    }
+
+    if (!bot) {
+      console.warn(`[guest] No bots became available within ${timeoutMs}ms for ${guestId}`);
+      ctx.status = 200;
+      ctx.body = {
+        success: false,
+        timedOut: true,
+        error: 'Still searching for an available bot opponent. Please stay in the queue.',
+      };
       return;
     }
-    
-    // Generate guest user ID
-    const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Create match between guest and bot
+
+    // Additional preflight (non-atomic) before atomic reservation
+    try {
+      await preflightValidatePlayers(guestId, bot.userId);
+    } catch (e) {
+      ctx.status = 409;
+      ctx.body = { success: false, error: 'Bot no longer available' };
+      return;
+    }
+
+    // Atomically reserve guest and bot, remove bot from queue, and mark bot active
+    const watchKeys = [
+      RedisKeys.eloQueue,
+      `queue:reservation:${guestId}`,
+      `queue:reservation:${bot.userId}`,
+      RedisKeys.botsActiveSet,
+    ];
+    await (redis as any).watch(...watchKeys);
+
+    const [stillInQueue, guestReservation, botReservation, botIsActive] = await Promise.all([
+      (redis as any).zscore(RedisKeys.eloQueue, bot.userId),
+      (redis as any).get(`queue:reservation:${guestId}`),
+      (redis as any).get(`queue:reservation:${bot.userId}`),
+      (redis as any).sismember(RedisKeys.botsActiveSet, bot.userId),
+    ]);
+
+    if (!stillInQueue || guestReservation || botReservation || botIsActive) {
+      await (redis as any).unwatch();
+      ctx.status = 409;
+      ctx.body = { success: false, error: 'Bot no longer available' };
+      return;
+    }
+
+    const tempReservation = JSON.stringify({ status: 'creating' });
+    const multi = (redis as any).multi();
+    multi.setex(`queue:reservation:${guestId}`, 60, tempReservation);
+    multi.setex(`queue:reservation:${bot.userId}`, 60, tempReservation);
+    multi.zrem(RedisKeys.eloQueue, bot.userId);
+    multi.del(RedisKeys.queueJoinedAtKey(bot.userId));
+    multi.sadd(RedisKeys.botsActiveSet, bot.userId);
+
+    const execResult = await multi.exec();
+    if (!execResult) {
+      ctx.status = 409;
+      ctx.body = { success: false, error: 'Bot selection conflicted, please retry' };
+      return;
+    }
+
+    // Create match between guest and bot (createMatch will set long-lived reservations)
     const matchResult = await createMatch(
       { userId: guestId, rating: 1200, username: 'Guest' },
       bot,
-      undefined, // Let createMatch calculate difficulty based on ratings
-      false // Not private
+      undefined,
+      false
     );
-    
+
     // Store guest session in Redis with 7-day TTL
     await redis.setex(RedisKeys.guestSessionKey(guestId), 7 * 24 * 3600, JSON.stringify({
       guestId,
       matchId: matchResult.matchId,
       roomId: matchResult.roomId,
-      createdAt: Date.now()
+      createdAt: Date.now(),
     }));
-    
+
     ctx.body = {
       success: true,
       guestId,
@@ -108,8 +435,8 @@ router.post('/guest/match/create', async (ctx) => {
       roomId: matchResult.roomId,
       bot: {
         username: bot.username,
-        rating: bot.rating
-      }
+        rating: bot.rating,
+      },
     };
   } catch (error: any) {
     console.error('Error creating guest match:', error);
@@ -253,9 +580,12 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
     }
     
     // Create a separate Redis connection for admin operations
+    if (!process.env.REDIS_HOST || !process.env.REDIS_PORT) {
+      throw new Error('REDIS_HOST and REDIS_PORT environment variables are required');
+    }
     const redis = new Redis({
-      host: process.env.REDIS_HOST || '127.0.0.1',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      host: process.env.REDIS_HOST,
+      port: parseInt(process.env.REDIS_PORT, 10),
       password: process.env.REDIS_PASSWORD,
       maxRetriesPerRequest: 3,
     });
@@ -291,17 +621,10 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
 
 router.get('/admin/bots/rotation/status', adminAuthMiddleware(), async (ctx) => {
   try {
-    // Create a separate Redis connection for admin operations
-    const redis = new Redis({
-      host: process.env.REDIS_HOST || '127.0.0.1',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
-      password: process.env.REDIS_PASSWORD,
-      maxRetriesPerRequest: 3,
-    });
-    
-    // Test Redis connection first
+    const redis = getRedis();
+
+    // Verify Redis connectivity (works for both single node and cluster clients)
     await redis.ping();
-    console.log('Redis connection successful');
     
     // Get rotation config, initialize if it doesn't exist
     const configExists = await redis.exists(RedisKeys.botsRotationConfig);
@@ -327,20 +650,22 @@ router.get('/admin/bots/rotation/status', adminAuthMiddleware(), async (ctx) => 
     const maxDeployed = parseInt((config as any).maxDeployed || '5');
     const totalBots = parseInt((config as any).totalBots || '0');
     
-    // Get current deployed count
-    const deployedCount = await redis.scard(RedisKeys.botsDeployedSet);
-    
-    // Get deployed bot IDs
     const deployedBots = await redis.smembers(RedisKeys.botsDeployedSet);
-    
-    // Get rotation queue
+    const activeSet = await redis.smembers(RedisKeys.botsActiveSet);
+    const matchActiveBots = await getBotsInActiveMatches(redis);
     const rotationQueue = await redis.lrange(RedisKeys.botsRotationQueue, 0, -1);
+
+    const activeBotSet = new Set<string>([...activeSet, ...matchActiveBots]);
+    const activeBotIds = Array.from(activeBotSet);
+    const activeCount = activeBotIds.length;
+
+    const deployedSet = new Set<string>(deployedBots);
+    const totalDeployedSet = new Set<string>([...deployedBots, ...activeBotIds]);
+    const deployedCount = totalDeployedSet.size;
+    const allDeployedBots = Array.from(totalDeployedSet);
     
-    // Get active bots count
-    const activeCount = await redis.scard(RedisKeys.botsActiveSet);
-    
-    // Get queued players count
     const queuedPlayersCount = await redis.scard(RedisKeys.queuedPlayersSet);
+    const queuedHumansCount = await redis.scard(RedisKeys.humanPlayersSet);
     
     ctx.body = {
       success: true,
@@ -348,12 +673,14 @@ router.get('/admin/bots/rotation/status', adminAuthMiddleware(), async (ctx) => 
         maxDeployed,
         totalBots,
         deployedCount,
-        deployedBots, // Add deployed bot IDs
+        deployedBots: allDeployedBots,
         activeCount,
+        activeBots: activeBotIds,
         rotationQueue,
         queueLength: rotationQueue.length,
         queuedPlayersCount,
-        targetDeployed: maxDeployed + queuedPlayersCount
+        queuedHumansCount,
+        targetDeployed: maxDeployed
       }
     };
   } catch (error: any) {
@@ -368,9 +695,12 @@ router.get('/admin/bots/rotation/status', adminAuthMiddleware(), async (ctx) => 
 router.post('/admin/bots/rotation/init', adminAuthMiddleware(), async (ctx) => {
   try {
     // Create a separate Redis connection for admin operations
+    if (!process.env.REDIS_HOST || !process.env.REDIS_PORT) {
+      throw new Error('REDIS_HOST and REDIS_PORT environment variables are required');
+    }
     const redis = new Redis({
-      host: process.env.REDIS_HOST || '127.0.0.1',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      host: process.env.REDIS_HOST,
+      port: parseInt(process.env.REDIS_PORT, 10),
       password: process.env.REDIS_PASSWORD,
       maxRetriesPerRequest: 3,
     });
@@ -413,7 +743,7 @@ router.post('/admin/bots/rotation/init', adminAuthMiddleware(), async (ctx) => {
 
 app.use(bodyParser());
 app.use(cors({ 
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000', 
+  origin: process.env.CORS_ORIGIN || (process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:3000'), 
   allowMethods: ['GET','POST','PUT','DELETE','OPTIONS'], 
   allowHeaders: ['Content-Type','Authorization','X-Internal-Secret','X-Bot-Secret','X-Service-Name','Cookie'],
   credentials: true 
@@ -461,44 +791,45 @@ router.get('/queue/size', rateLimitMiddleware(queueLimiter), async (ctx) => {
 router.get('/global/general-stats', rateLimitMiddleware(queueLimiter), async (ctx) => {
   try {
     const redis = getRedis();
-    const cacheKey = 'global:general-stats';
-    
-    // Try to get cached stats first (cache for 30 seconds)
-    const cached = await redis.get(cacheKey);
-    if (cached) {
-      ctx.body = JSON.parse(cached);
-      return;
-    }
-    
-    const mongoClient = await getMongoClient();
-    const db = mongoClient.db(DB_NAME);
-    
-    // Get current queue size (includes players, bots, and guests)
-    const queueSize = await redis.zcard(RedisKeys.eloQueue);
-    
-    // Get active matches count
-    const activeMatches = await redis.scard(RedisKeys.activeMatchesSet);
-    
-    // Each active match has 2 players, so total players in matches = activeMatches * 2
-    // Total active players = players in queue + players in matches
-    const activePlayers = queueSize + (activeMatches * 2);
-    
-    // Get total matches completed
-    const matchesCompleted = await db.collection('matches').countDocuments({
-      status: 'finished'
-    });
-    
-    const stats = {
-      activePlayers,
-      matchesCompleted,
+    const results = await redis
+      .multi()
+      .zcard(RedisKeys.eloQueue) // 0
+      .scard(RedisKeys.activeMatchesSet) // 1
+      .scard(RedisKeys.queuedPlayersSet) // 2
+      .scard(RedisKeys.humanPlayersSet) // 3
+      .scard(RedisKeys.botsDeployedSet) // 4
+      .scard(RedisKeys.botsActiveSet) // 5
+      .llen(RedisKeys.botsRotationQueue) // 6
+      .exec();
+
+    const [
+      [, queueSizeRaw],
+      [, activeMatchesRaw],
+      [, queuedPlayersCountRaw],
+      [, queuedHumansCountRaw],
+      [, botsDeployedCountRaw],
+      [, botsActiveCountRaw],
+      [, botRotationQueueLengthRaw],
+    ] = results || [];
+
+    const queueSize = Number(queueSizeRaw || 0);
+    const activeMatches = Number(activeMatchesRaw || 0);
+    const queuedPlayersCount = Number(queuedPlayersCountRaw || 0);
+    const queuedHumansCount = Number(queuedHumansCountRaw || 0);
+    const botsDeployedCount = Number(botsDeployedCountRaw || 0);
+    const botsActiveCount = Number(botsActiveCountRaw || 0);
+    const botRotationQueueLength = Number(botRotationQueueLengthRaw || 0);
+
+    ctx.body = {
+      activePlayers: queueSize + (activeMatches * 2),
       inProgressMatches: activeMatches,
-      inQueue: queueSize
+      inQueue: queueSize,
+      queuedPlayersCount,
+      queuedHumansCount,
+      botsDeployedCount,
+      botsActiveCount,
+      botRotationQueueLength,
     };
-    
-    // Cache the results for 30 seconds to keep stats more real-time
-    await redis.setex(cacheKey, 30, JSON.stringify(stats));
-    
-    ctx.body = stats;
   } catch (error: any) {
     console.error('Error fetching general stats:', error);
     ctx.status = 500;
@@ -645,7 +976,6 @@ router.post('/private/create', async (ctx) => {
   }
   
   try {
-    const { matchMaker } = await import('colyseus');
     const redis = getRedis();
     
     // Generate a unique room code
@@ -1018,10 +1348,11 @@ router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
     console.log('Request body size:', JSON.stringify(ctx.request.body).length);
     console.log('Request headers:', ctx.headers);
     
-    const { signature, solutions, testCases } = ctx.request.body as {
+    const { signature, solutions, testCases, specialInputs } = ctx.request.body as {
       signature: { functionName: string; parameters: Array<{ name: string; type: string }>; returnType: string };
       solutions: { python?: string; cpp?: string; java?: string; js?: string };
-      testCases: Array<{ input: Record<string, unknown>; output: unknown }>;
+      testCases: ProblemTestCase[];
+      specialInputs?: SpecialInputConfig[];
     };
     
     console.log('Parsed data:', {
@@ -1061,7 +1392,11 @@ router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
       };
 
       console.log('Starting validation process...');
-      console.log('Test cases count:', testCases.length);
+      const preparedTestCases = prepareTestCasesForExecution(
+        testCases,
+        specialInputs || []
+      );
+      console.log('Test cases count:', preparedTestCases.length);
       console.log('Solutions available:', Object.keys(solutions));
 
       for (const [langKey, langValue] of Object.entries(languageMap)) {
@@ -1072,13 +1407,17 @@ router.post('/admin/validate-solutions', adminAuthMiddleware(), async (ctx) => {
         continue;
       }
 
+      if (langKey === 'cpp') {
+        console.log('C++ solution snippet:', solution.slice(0, 200));
+      }
+
       try {
         console.log(`Starting verification for ${langKey}...`);
         const validationResult = await executeAllTestCases(
           langValue,
           solution,
           signature,
-          testCases
+          preparedTestCases
         );
 
         verificationResults[langKey] = {
@@ -1272,10 +1611,33 @@ router.get('/admin/bots', adminAuthMiddleware(), async (ctx) => {
     const bots = db.collection('bots');
     
     const allBots = await bots.find({}).sort({ createdAt: -1 }).toArray();
+
+    // Overlay real-time deployment state from Redis so the admin UI reflects actual bot status
+    const redis = getRedis();
+    const [deployedIds, activeIds, matchActiveIds] = await Promise.all([
+      redis.smembers(RedisKeys.botsDeployedSet),
+      redis.smembers(RedisKeys.botsActiveSet),
+      getBotsInActiveMatches(redis),
+    ]);
+    const deployedSet = new Set(deployedIds);
+    const activeSet = new Set(activeIds);
+    const matchActiveSet = new Set(matchActiveIds);
+
+    const botsWithRealtimeState = allBots.map((bot) => {
+      const botId = bot._id.toString();
+      const isActive = activeSet.has(botId) || matchActiveSet.has(botId);
+      const isDeployed = deployedSet.has(botId) || isActive;
+      // Bot is considered "deployed" if it's in deployed set OR active set (in a match)
+      return {
+        ...bot,
+        deployed: isDeployed,
+        active: isActive,
+      };
+    });
     
     ctx.body = {
       success: true,
-      bots: allBots
+      bots: botsWithRealtimeState
     };
   } catch (error: any) {
     console.error('Error fetching bots:', error);
@@ -1598,6 +1960,468 @@ router.post('/admin/bots/reset', adminAuthMiddleware(), async (ctx) => {
   }
 });
 
+// Cleanup stale bot entries from botsActiveSet and invalid matches from activeMatchesSet
+router.post('/admin/bots/cleanup-stale', adminAuthMiddleware(), async (ctx) => {
+  try {
+    const redis = getRedis();
+    const activeBots = await redis.smembers(RedisKeys.botsActiveSet);
+    const activeMatchIds = await redis.smembers(RedisKeys.activeMatchesSet);
+    const activeMatchIdsSet = new Set(activeMatchIds);
+    
+    const cleanedBots: string[] = [];
+    const keptBots: string[] = [];
+    const cleanedMatches: string[] = [];
+    
+    // First, clean up matches that don't have match blobs or are finished
+    for (const matchId of activeMatchIds) {
+      const matchKey = RedisKeys.matchKey(matchId);
+      const matchRaw = await redis.get(matchKey);
+      
+      if (!matchRaw) {
+        // Match blob doesn't exist - remove from active set
+        await redis.srem(RedisKeys.activeMatchesSet, matchId);
+        cleanedMatches.push(matchId);
+        console.log(`Cleaned up match without blob: ${matchId}`);
+        continue;
+      }
+      
+      const matchData = JSON.parse(matchRaw);
+      if (matchData.status === 'finished' || matchData.endedAt) {
+        // Match is finished - remove from active set
+        await redis.srem(RedisKeys.activeMatchesSet, matchId);
+        cleanedMatches.push(matchId);
+        console.log(`Cleaned up finished match: ${matchId}`);
+      }
+    }
+    
+    // Update activeMatchIdsSet after cleaning
+    const remainingMatchIds = await redis.smembers(RedisKeys.activeMatchesSet);
+    const remainingMatchIdsSet = new Set(remainingMatchIds);
+    
+    // Now clean up stale bot entries
+    for (const botId of activeBots) {
+      // Check if bot has a current match pointer
+      const currentMatchId = await redis.get(`bot:current_match:${botId}`);
+      
+      if (currentMatchId && remainingMatchIdsSet.has(currentMatchId)) {
+        // Verify the match blob exists and has this bot as a player
+        const matchKey = RedisKeys.matchKey(currentMatchId);
+        const matchRaw = await redis.get(matchKey);
+        
+        if (matchRaw) {
+          const matchData = JSON.parse(matchRaw);
+          const playerIds = Object.keys(matchData.players || {});
+          
+          if (playerIds.includes(botId) && matchData.status !== 'finished' && !matchData.endedAt) {
+            // Bot is in a valid active match
+            keptBots.push(botId);
+            continue;
+          }
+        }
+      }
+      
+      // Bot doesn't have a valid active match - remove from active set
+      await redis.srem(RedisKeys.botsActiveSet, botId);
+      await redis.del(`bot:current_match:${botId}`);
+      cleanedBots.push(botId);
+      console.log(`Cleaned up stale bot entry: ${botId}`);
+    }
+    
+    ctx.body = {
+      success: true,
+      cleanedBotsCount: cleanedBots.length,
+      keptBotsCount: keptBots.length,
+      cleanedMatchesCount: cleanedMatches.length,
+      cleanedBots,
+      keptBots,
+      cleanedMatches
+    };
+  } catch (error: any) {
+    console.error('Error cleaning up stale bot entries:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to clean up stale bot entries' };
+  }
+});
+
+router.get('/admin/matches/active', adminAuthMiddleware(), async (ctx) => {
+  try {
+    const redis = getRedis();
+    const activeMatchIds = await redis.smembers(RedisKeys.activeMatchesSet);
+
+    if (activeMatchIds.length === 0) {
+      ctx.body = { success: true, matches: [] };
+      return;
+    }
+
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    const usersCollection = db.collection('users');
+    const botsCollection = db.collection('bots');
+    const problemsCollection = db.collection('problems');
+
+    const matches: any[] = [];
+
+    for (const matchId of activeMatchIds) {
+      try {
+        const matchRaw = await redis.get(RedisKeys.matchKey(matchId));
+        if (!matchRaw) {
+          continue;
+        }
+
+        const matchData = JSON.parse(matchRaw);
+
+        if (matchData.status === 'finished' || matchData.endedAt) {
+          continue;
+        }
+
+        let problemTitle = 'Unknown Problem';
+        let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
+
+        if (matchData.problem) {
+          problemTitle = matchData.problem.title || problemTitle;
+          const diff = matchData.problem.difficulty || difficulty;
+          difficulty = (diff === 'Easy' || diff === 'Medium' || diff === 'Hard') ? diff : difficulty;
+        } else if (matchData.problemId) {
+          try {
+            const problemDoc = await problemsCollection.findOne({ _id: new ObjectId(matchData.problemId) }, { projection: { title: 1, difficulty: 1 } });
+            if (problemDoc) {
+              problemTitle = problemDoc.title || problemTitle;
+              const diff = problemDoc.difficulty || difficulty;
+              difficulty = (diff === 'Easy' || diff === 'Medium' || diff === 'Hard') ? diff : difficulty;
+            }
+          } catch (error) {
+            console.warn(`Failed to load problem ${matchData.problemId}:`, error);
+          }
+        }
+
+        const players: any[] = [];
+        const playerEntries = matchData.players || {};
+        const playerIds = Array.isArray(playerEntries) ? playerEntries : Object.keys(playerEntries);
+
+        for (const playerId of playerIds) {
+          const defaultInfo = {
+            userId: playerId,
+            username: playerEntries[playerId]?.username || playerId,
+            isBot: false,
+            rating: 1200,
+            linesWritten: matchData.linesWritten?.[playerId] || 0,
+            avatar: undefined,
+            botCompletionInfo: matchData.botCompletionTimes?.[playerId] || null,
+          };
+
+          try {
+            if (ObjectId.isValid(playerId)) {
+              const userDoc = await usersCollection.findOne({ _id: new ObjectId(playerId) }, { projection: { username: 1, 'profile.avatar': 1, 'stats.rating': 1 } });
+              if (userDoc) {
+                players.push({
+                  ...defaultInfo,
+                  username: userDoc.username || defaultInfo.username,
+                  rating: userDoc.stats?.rating || defaultInfo.rating,
+                  avatar: userDoc.profile?.avatar || defaultInfo.avatar,
+                });
+                continue;
+              }
+
+              const botDoc = await botsCollection.findOne({ _id: new ObjectId(playerId) }, { projection: { username: 1, avatar: 1, 'stats.rating': 1 } });
+              if (botDoc) {
+                players.push({
+                  ...defaultInfo,
+                  username: botDoc.username || defaultInfo.username,
+                  isBot: true,
+                  avatar: botDoc.avatar || defaultInfo.avatar,
+                  rating: botDoc.stats?.rating || defaultInfo.rating,
+                });
+                continue;
+              }
+            }
+          } catch (error) {
+            console.warn(`Failed to enrich player ${playerId} for match ${matchId}:`, error);
+          }
+
+          players.push(defaultInfo);
+        }
+
+        const startTime = matchData.startedAt ? new Date(matchData.startedAt).getTime() : Date.now();
+        const now = Date.now();
+        const timeElapsed = now - startTime;
+        const maxDuration = 45 * 60 * 1000;
+        const timeRemaining = Math.max(0, maxDuration - timeElapsed);
+
+        const submissions = (matchData.submissions || []).map((submission: any) => ({
+          userId: submission.userId,
+          timestamp: submission.timestamp,
+          passed: submission.passed,
+          language: submission.language,
+        }));
+
+        matches.push({
+          matchId,
+          problemId: matchData.problemId,
+          problemTitle,
+          difficulty,
+          players,
+          status: matchData.status || 'ongoing',
+          startedAt: matchData.startedAt || new Date(startTime).toISOString(),
+          timeElapsed,
+          timeRemaining,
+          submissions,
+        });
+      } catch (error) {
+        console.warn(`Failed to process active match ${matchId}:`, error);
+      }
+    }
+
+    ctx.body = { success: true, matches };
+  } catch (error) {
+    console.error('Error fetching active matches:', error);
+    ctx.status = 500;
+    ctx.body = {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch active matches',
+      matches: [],
+    };
+  }
+});
+
+// Force a bot to win a match instantly
+router.post('/admin/matches/:matchId/force-bot-win', adminAuthMiddleware(), async (ctx) => {
+  try {
+    const matchId = ctx.params.matchId;
+    const { botUserId } = ctx.request.body as { botUserId: string };
+
+    if (!matchId || !botUserId) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'matchId and botUserId are required' };
+      return;
+    }
+
+    const redis = getRedis();
+    const matchKey = RedisKeys.matchKey(matchId);
+    const matchRaw = await redis.get(matchKey);
+
+    if (!matchRaw) {
+      ctx.status = 404;
+      ctx.body = { success: false, error: 'Match not found' };
+      return;
+    }
+
+    const matchData = JSON.parse(matchRaw);
+
+    // Check if match is already finished
+    if (matchData.status === 'finished' || matchData.endedAt) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'Match is already finished' };
+      return;
+    }
+
+    // Validate botUserId is actually a bot
+    const isBot = await isBotUser(botUserId);
+    if (!isBot) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'User is not a bot' };
+      return;
+    }
+
+    // Validate bot is in the match
+    const playerEntries = matchData.players || {};
+    const playerIds = Array.isArray(playerEntries) ? playerEntries : Object.keys(playerEntries);
+    if (!playerIds.includes(botUserId)) {
+      ctx.status = 400;
+      ctx.body = { success: false, error: 'Bot is not a player in this match' };
+      return;
+    }
+
+    // Get roomId from match blob
+    const roomId = matchData.roomId;
+    if (!roomId) {
+      ctx.status = 500;
+      ctx.body = { success: false, error: 'Room ID not found in match data' };
+      return;
+    }
+
+    // Get the room instance
+    try {
+      const room = await matchMaker.getRoomById(roomId);
+      if (!room) {
+        ctx.status = 404;
+        ctx.body = { success: false, error: 'Match room not found (may have been disposed)' };
+        return;
+      }
+
+      // Verify this is a MatchRoom instance
+      if (room.roomName !== 'match') {
+        ctx.status = 500;
+        ctx.body = { success: false, error: 'Room is not a match room' };
+        return;
+      }
+
+      // Call endMatch with winner reason
+      // Note: endMatch is private, but we can access it via type assertion
+      const matchRoom = room as any;
+      if (typeof matchRoom.endMatch === 'function') {
+        await matchRoom.endMatch(`winner_${botUserId}`);
+        ctx.body = { success: true, message: `Bot ${botUserId} has been forced to win match ${matchId}` };
+      } else {
+        ctx.status = 500;
+        ctx.body = { success: false, error: 'Unable to end match - endMatch method not found' };
+      }
+    } catch (roomError: any) {
+      console.error('Error accessing match room:', roomError);
+      ctx.status = 500;
+      ctx.body = { 
+        success: false, 
+        error: `Failed to access match room: ${roomError.message || 'Unknown error'}` 
+      };
+    }
+  } catch (error: any) {
+    console.error('Error forcing bot win:', error);
+    ctx.status = 500;
+    ctx.body = {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to force bot win',
+    };
+  }
+});
+
+router.get('/match/data', async (ctx) => {
+  const matchId = ctx.request.query.matchId as string | undefined;
+  const userId = ctx.request.query.userId as string | undefined;
+
+  if (!matchId || !userId) {
+    ctx.status = 400;
+    ctx.body = { success: false, error: 'matchId_and_userId_required' };
+    return;
+  }
+
+  try {
+    const redis = getRedis();
+    const matchKey = RedisKeys.matchKey(matchId);
+    const matchRaw = await redis.get(matchKey);
+
+    if (!matchRaw) {
+      ctx.status = 404;
+      ctx.body = { success: false, error: 'match_not_found' };
+      return;
+    }
+
+    const matchData = JSON.parse(matchRaw);
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    const usersCollection = db.collection('users');
+    const botsCollection = db.collection('bots');
+    const problemsCollection = db.collection('problems');
+
+    // Determine opponent ID
+    const playerEntries = matchData.players || {};
+    const playerIds: string[] = Array.isArray(playerEntries)
+      ? playerEntries
+      : Object.keys(playerEntries);
+
+    const opponentUserId = playerIds.find((id) => id !== userId) || playerIds[0];
+
+    // Resolve opponent stats
+    const opponentStats = opponentUserId
+      ? await fetchParticipantStats(opponentUserId, db).catch((error) => {
+          console.warn(`Failed to get opponent stats for ${opponentUserId}:`, error);
+          return { rating: 1200, wins: 0, losses: 0, totalMatches: 0, globalRank: 1234 };
+        })
+      : { rating: 1200, wins: 0, losses: 0, totalMatches: 0, globalRank: 1234 };
+
+    const userStats = await fetchParticipantStats(userId, db).catch((error) => {
+      console.warn(`Failed to get user stats for ${userId}:`, error);
+      return { rating: 1200, wins: 0, losses: 0, totalMatches: 0, globalRank: 1234 };
+    });
+
+    // Resolve opponent identity
+    let opponentUsername = 'Opponent';
+    let opponentName = 'Opponent';
+    let opponentAvatar: string | null = null;
+
+    const identity = await fetchParticipantIdentity(opponentUserId, db).catch((error) => {
+      console.warn(`Failed to resolve opponent identity for ${opponentUserId}:`, error);
+      return { username: 'Opponent', fullName: 'Opponent', avatar: null };
+    });
+
+    opponentUsername = identity.username;
+    opponentName = identity.fullName;
+    opponentAvatar = identity.avatar;
+
+    // Sanitize problem data
+    let problem = matchData.problem;
+    if (!problem && matchData.problemId) {
+      try {
+        const problemDoc = await problemsCollection.findOne(
+          { _id: new ObjectId(matchData.problemId) },
+          {
+            projection: {
+              title: 1,
+              description: 1,
+              difficulty: 1,
+              topics: 1,
+              signature: 1,
+              starterCode: 1,
+              examples: 1,
+              constraints: 1,
+              testCases: 0,
+              solutions: 0,
+              testCasesCount: 1,
+            },
+          }
+        );
+        if (problemDoc) {
+          problem = {
+            _id: problemDoc._id,
+            title: problemDoc.title,
+            description: problemDoc.description,
+            difficulty: problemDoc.difficulty,
+            topics: problemDoc.topics,
+            signature: problemDoc.signature,
+            starterCode: problemDoc.starterCode,
+            examples: problemDoc.examples,
+            constraints: problemDoc.constraints,
+            testCasesCount: problemDoc.testCasesCount,
+          };
+        }
+      } catch (error) {
+        console.warn(`Failed to load problem ${matchData.problemId}:`, error);
+      }
+    } else if (problem) {
+      const { testCases, solutions, ...sanitized } = problem;
+      problem = sanitized;
+    }
+
+    // Ensure starter code exists
+    if (problem && !problem.starterCode && matchData.problem?.starterCode) {
+      problem.starterCode = matchData.problem.starterCode;
+    }
+
+    const opponentData = {
+      userId: opponentUserId,
+      username: opponentUsername,
+      name: opponentName,
+      avatar: opponentAvatar,
+      globalRank: opponentStats.globalRank ?? 1234,
+      gamesWon: opponentStats.wins ?? 0,
+      winRate: opponentStats.totalMatches > 0
+        ? Math.round(((opponentStats.wins ?? 0) / opponentStats.totalMatches) * 100)
+        : 0,
+      rating: opponentStats.rating ?? 1200,
+    };
+
+    ctx.body = {
+      success: true,
+      matchId,
+      problem,
+      opponent: opponentData,
+      userStats,
+    };
+  } catch (error) {
+    console.error('Error fetching match data:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'failed_to_fetch_match_data' };
+  }
+});
+
 // Helper functions for bot generation
 
 async function deleteBotAvatar(avatarUrl: string): Promise<void> {
@@ -1743,41 +2567,40 @@ async function generateBotAvatars(botDocs: any[]) {
       let avatarUrl = '';
       
       try {
-        // Generate avatar with DALL-E 3
-        let prompt = '';
-        
-        if (bot.gender === 'female') {
-          // For female profiles: NO FACES, use abstract/nature/objects
-          const femaleStyles = [
-            "abstract watercolor art",
-            "geometric patterns", 
-            "nature photography (flowers/butterflies/leaves)",
-            "celestial bodies (moon/stars)",
-            "minimalist shapes",
-            "botanical illustration",
-            "crystal/gemstone art",
-            "ocean waves",
-            "mountain landscape"
-          ];
-          const selectedStyle = femaleStyles[Math.floor(Math.random() * femaleStyles.length)];
-          prompt = `Create a profile picture with NO human faces. Style: ${selectedStyle}`;
-        } else {
-          // For male profiles: can have people, objects, or abstract
-          const maleStyles = [
-            "professional headshot photo",
-            "minimalist geometric avatar", 
-            "abstract tech-themed art",
-            "pixel art character",
-            "illustrated portrait",
-            "neon cyberpunk style",
-            "flat design icon"
-          ];
-          const selectedStyle = maleStyles[Math.floor(Math.random() * maleStyles.length)];
-          prompt = `Create a profile picture for a coding competition participant. Style: ${selectedStyle}`;
-        }
-        
+        // Generate avatar with GPT Image (gender-agnostic, privacy-focused)
+        const styles = [
+          "cinematic silhouette with soft backlighting",
+          "over-the-shoulder shot with blurred facial features",
+          "person sitting at a desk with face out of frame",
+          "aesthetic workspace with laptop and ambient lighting",
+          "bokeh photography with a vague human outline",
+          "minimalist geometric tech avatar",
+          "soft ambient abstract gradient art",
+          "nature macro photography (leaves, petals, water droplets)",
+          "urban street silhouette during golden hour",
+          "shadowed figure with strong rim light (no visible face)",
+          "flat modern icon with subtle shading",
+          "profile shot with the head turned away from camera",
+          "cinematic coder-themed environment (no faces)",
+          "pixel art character with non-specific features",
+          "cyberpunk silhouette with masked/unseen facial area"
+        ];
+
+        const selectedStyle = styles[Math.floor(Math.random() * styles.length)];
+        const prompt = `
+Create a realistic, anonymous profile picture. 
+
+Style: ${selectedStyle}. 
+
+Do NOT show any identifiable human facial features. 
+
+Faces must be blurred, shadowed, turned away, cropped out, or replaced by silhouettes. 
+
+Use soft ambient lighting, a square 1:1 frame, no text, no watermarks, and no distortions.
+`;
+
         const imageResponse = await openai.images.generate({
-          model: "dall-e-3",
+          model: "gpt-image-1",
           prompt: prompt,
           size: "1024x1024",
           quality: "standard",
@@ -1786,7 +2609,7 @@ async function generateBotAvatars(botDocs: any[]) {
         
         const imageUrl = imageResponse.data?.[0]?.url;
         if (!imageUrl) {
-          throw new Error('No image URL from DALL-E');
+          throw new Error('No image URL from OpenAI image generation');
         }
         
         // Download the image
@@ -1802,13 +2625,13 @@ async function generateBotAvatars(botDocs: any[]) {
           ACL: 'public-read'
         };
         
-        // await s3.upload(uploadParams).promise(); // Commented out for now
+        await s3.upload(uploadParams).promise();
         
         // Store just the filename, not the full URL
         avatarUrl = fileName;
         
       } catch (dalleError) {
-        console.error(`DALL-E avatar generation failed for ${bot._id}, using fallback:`, dalleError);
+        console.error(`OpenAI avatar generation failed for ${bot._id}, using fallback:`, dalleError);
         
         // Fallback to placeholder avatar
         avatarUrl = 'placeholder_avatar.png';
@@ -1825,7 +2648,12 @@ async function generateBotAvatars(botDocs: any[]) {
 }
 
 const port = parseInt(process.env.PORT || '2567', 10);
-const gameServer = new Server({ server: createServer(app.callback()) });
+const httpServer = createServer(app.callback());
+const gameServer = new Server({
+  server: httpServer,
+  presence: redisPresence,
+  driver: redisDriver,
+});
 
 gameServer.define('queue', QueueRoom);
 gameServer.define('match', MatchRoom);
@@ -1835,4 +2663,16 @@ gameServer.define('private', PrivateRoom)
 gameServer.listen(port).then(async () => {
   console.log(`Colyseus listening on :${port}`);
   console.log('Integrated matchmaking enabled in QueueRoom');
+  if (process.env.COLYSEUS_RESERVATION_SECRET) {
+    console.log('Reservation secret configured.');
+  } else {
+    console.warn('Reservation secret not configured; using default dev secret.');
+  }
+
+  try {
+    const bootstrapRoom = await matchMaker.createRoom('queue', { bootstrap: true });
+    console.log(`QueueRoom bootstrap complete - persistent roomId=${bootstrapRoom.roomId}`);
+  } catch (bootstrapError) {
+    console.error('Failed to bootstrap persistent QueueRoom:', bootstrapError);
+  }
 });

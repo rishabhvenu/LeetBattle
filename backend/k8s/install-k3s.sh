@@ -19,8 +19,9 @@ echo "Installing k3s..."
 # Install k3s with the following configuration:
 # - Disable Traefik (we'll use standard Services)
 # - Enable privileged containers (required for Judge0 workers)
+# - Allow NodePort range 1-65535 (enables standard ports like 27017, 6379, 2567, 2358)
 # - Write kubeconfig with proper permissions (readable by runner user)
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --secrets-encryption --write-kubeconfig-mode 644" sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable traefik --secrets-encryption --write-kubeconfig-mode 644 --service-node-port-range=1-65535" sh -
 
 # Wait for k3s to be ready
 echo "Waiting for k3s to be ready..."

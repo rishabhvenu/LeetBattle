@@ -1,32 +1,42 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { X, Trophy, Target, CheckCircle, User, Mail, Lock } from "lucide-react";
+import { X, User, Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from 'react-toastify';
 import { registerUser } from '@/lib/actions';
-import { claimGuestMatch, clearGuestSession } from '@/lib/guest-actions';
+import MatchResultAnimation from '@/components/MatchResultAnimation';
+import { motion } from "framer-motion";
 
 interface GuestSignUpModalProps {
   matchResult: { winner: boolean; draw: boolean } | null;
   testsPassed: number;
   totalTests: number;
   opponentName: string;
+  opponentAvatar?: string | null;
+  username: string;
+  userAvatar?: string | null;
   onClose: () => void;
 }
 
 const GuestSignUpModal: React.FC<GuestSignUpModalProps> = ({
   matchResult,
-  testsPassed,
-  totalTests,
+  testsPassed: _testsPassed,
+  totalTests: _totalTests,
   opponentName,
+  opponentAvatar,
+  username,
+  userAvatar,
   onClose
 }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showResultAnimation, setShowResultAnimation] = useState(matchResult?.winner ?? false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -36,6 +46,29 @@ const GuestSignUpModal: React.FC<GuestSignUpModalProps> = ({
     lastName: ''
   });
   const router = useRouter();
+  useEffect(() => {
+    if (matchResult?.winner) {
+      setShowResultAnimation(true);
+      const timeoutId = setTimeout(() => setShowResultAnimation(false), 3500);
+      return () => clearTimeout(timeoutId);
+    }
+
+    setShowResultAnimation(false);
+  }, [matchResult]);
+
+  const getInitials = (name: string) => {
+    if (!name) return "G";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) {
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  };
+
+  const handleClose = () => {
+    router.push('/landing');
+    onClose();
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -48,13 +81,17 @@ const GuestSignUpModal: React.FC<GuestSignUpModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    setFormError(null);
+
     if (formData.password !== formData.confirmPassword) {
       toast.error('Passwords do not match');
+      setFormError('Passwords do not match.');
       return;
     }
 
     if (formData.password.length < 8) {
       toast.error('Password must be at least 8 characters long');
+      setFormError('Password must be at least 8 characters long.');
       return;
     }
 
@@ -75,6 +112,7 @@ const GuestSignUpModal: React.FC<GuestSignUpModalProps> = ({
       
       if (result.error) {
         toast.error(result.error);
+        setFormError(result.error);
         return;
       }
 
@@ -85,6 +123,7 @@ const GuestSignUpModal: React.FC<GuestSignUpModalProps> = ({
     } catch (error) {
       console.error('Registration error:', error);
       toast.error('Failed to create account. Please try again.');
+      setFormError('Failed to create account. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -97,183 +136,274 @@ const GuestSignUpModal: React.FC<GuestSignUpModalProps> = ({
     return 'You Lost';
   };
 
-  const getResultColor = () => {
-    if (!matchResult) return 'text-blue-600';
-    if (matchResult.winner) return 'text-green-600';
-    if (matchResult.draw) return 'text-yellow-600';
-    return 'text-red-600';
-  };
+  const guestDisplayName = username || 'Guest Player';
+  const opponentDisplayName = opponentName || 'Opponent';
+
+  if (showResultAnimation && matchResult?.winner) {
+    const handleAnimationDismiss = () => setShowResultAnimation(false);
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <MatchResultAnimation
+          player1={{
+            name: guestDisplayName,
+            username: guestDisplayName,
+            avatar: userAvatar ?? null,
+            isWinner: true,
+          }}
+          player2={{
+            name: opponentDisplayName,
+            username: opponentDisplayName,
+            avatar: opponentAvatar ?? null,
+            isWinner: false,
+          }}
+          onBackToHome={handleAnimationDismiss}
+          onJoinQueue={handleAnimationDismiss}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <Card className="w-full max-w-2xl bg-white shadow-2xl">
-        <CardHeader className="relative">
+        <CardHeader className="relative pb-4">
           <CardTitle className="text-2xl font-bold text-center text-black">
             {getResultText()}
           </CardTitle>
           <Button
             variant="ghost"
             size="sm"
-            onClick={onClose}
+            onClick={handleClose}
             className="absolute top-4 right-4 text-gray-500 hover:text-gray-700"
           >
             <X className="h-5 w-5" />
           </Button>
         </CardHeader>
         
-        <CardContent className="p-6">
-          {/* Match Stats */}
-          <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-            <h3 className="text-lg font-semibold text-black mb-3">Your Match Results</h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex items-center gap-2">
-                <Trophy className="h-5 w-5 text-yellow-600" />
-                <span className="text-sm text-black/70">Result: <span className={getResultColor()}>{getResultText()}</span></span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Target className="h-5 w-5" style={{ color: '#2599D4' }} />
-                <span className="text-sm text-black/70">Opponent: {opponentName}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <CheckCircle className="h-5 w-5 text-green-600" />
-                <span className="text-sm text-black/70">Tests Passed: {testsPassed}/{totalTests}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <User className="h-5 w-5 text-gray-600" />
-                <span className="text-sm text-black/70">Mode: Guest Match</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Sign Up Prompt */}
-          <div className="mb-6 text-center">
-            <h2 className="text-xl font-bold text-black mb-2">
-              Sign up to save this match and play more!
-            </h2>
-            <p className="text-gray-600">
-              Create an account to keep your progress and compete with other players.
-            </p>
-          </div>
-
+        <CardContent className="p-6 pt-0">
           {/* Registration Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="firstName" className="text-sm font-medium text-black">
-                  First Name
-                </Label>
-                <Input
-                  id="firstName"
-                  name="firstName"
-                  type="text"
-                  required
-                  value={formData.firstName}
-                  onChange={handleInputChange}
-                  className="mt-1"
-                />
+          <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <motion.div
+                  className="space-y-2"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.1 }}
+                >
+                  <Label htmlFor="firstName" className="text-sm font-medium text-black">
+                    First Name
+                  </Label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-black/60" />
+                    <Input
+                      id="firstName"
+                      name="firstName"
+                      type="text"
+                      placeholder="John"
+                      required
+                      value={formData.firstName}
+                      onChange={handleInputChange}
+                      className="bg-white border-blue-200 text-black placeholder:text-black/60 pl-10 focus:border-blue-500"
+                    />
+                  </div>
+                </motion.div>
+                <motion.div
+                  className="space-y-2"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.2 }}
+                >
+                  <Label htmlFor="lastName" className="text-sm font-medium text-black">
+                    Last Name
+                  </Label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-black/60" />
+                    <Input
+                      id="lastName"
+                      name="lastName"
+                      type="text"
+                      placeholder="Doe"
+                      required
+                      value={formData.lastName}
+                      onChange={handleInputChange}
+                      className="bg-white border-blue-200 text-black placeholder:text-black/60 pl-10 focus:border-blue-500"
+                    />
+                  </div>
+                </motion.div>
               </div>
-              <div>
-                <Label htmlFor="lastName" className="text-sm font-medium text-black">
-                  Last Name
+
+              <motion.div
+                className="space-y-2"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+              >
+                <Label htmlFor="username" className="text-sm font-medium text-black">
+                  Username
                 </Label>
-                <Input
-                  id="lastName"
-                  name="lastName"
-                  type="text"
-                  required
-                  value={formData.lastName}
-                  onChange={handleInputChange}
-                  className="mt-1"
-                />
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-black/60" />
+                  <Input
+                    id="username"
+                    name="username"
+                    type="text"
+                    placeholder="leetbattler123"
+                    required
+                    value={formData.username}
+                    onChange={handleInputChange}
+                    className="bg-white border-blue-200 text-black placeholder:text-black/60 pl-10 focus:border-blue-500"
+                  />
+                </div>
+              </motion.div>
+
+              <motion.div
+                className="space-y-2"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.4 }}
+              >
+                <Label htmlFor="email" className="text-sm font-medium text-black">
+                  Email
+                </Label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-black/60" />
+                  <Input
+                    id="email"
+                    name="email"
+                    type="email"
+                    placeholder="john.doe@example.com"
+                    required
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    className="bg-white border-blue-200 text-black placeholder:text-black/60 pl-10 focus:border-blue-500"
+                  />
+                </div>
+              </motion.div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <motion.div
+                  className="space-y-2"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.5 }}
+                >
+                  <Label htmlFor="password" className="text-sm font-medium text-black">
+                    Password
+                  </Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-black/60" />
+                    <Input
+                      id="password"
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      value={formData.password}
+                      onChange={handleInputChange}
+                      className="bg-white border-blue-200 text-black pl-10 pr-10 focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-black/60"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </motion.div>
+                <motion.div
+                  className="space-y-2"
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.6 }}
+                >
+                  <Label htmlFor="confirmPassword" className="text-sm font-medium text-black">
+                    Confirm Password
+                  </Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-black/60" />
+                    <Input
+                      id="confirmPassword"
+                      name="confirmPassword"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      value={formData.confirmPassword}
+                      onChange={handleInputChange}
+                      className="bg-white border-blue-200 text-black pl-10 pr-10 focus:border-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-black/60"
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </motion.div>
               </div>
-            </div>
 
-            <div>
-              <Label htmlFor="username" className="text-sm font-medium text-black">
-                Username
-              </Label>
-              <Input
-                id="username"
-                name="username"
-                type="text"
-                required
-                value={formData.username}
-                onChange={handleInputChange}
-                className="mt-1"
-              />
-            </div>
+              {formError && (
+                <motion.div
+                  className="text-red-600 text-sm text-center p-2 bg-red-50 rounded-md border border-red-200"
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                >
+                  {formError}
+                </motion.div>
+              )}
 
-            <div>
-              <Label htmlFor="email" className="text-sm font-medium text-black">
-                Email
-              </Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                required
-                value={formData.email}
-                onChange={handleInputChange}
-                className="mt-1"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="password" className="text-sm font-medium text-black">
-                Password
-              </Label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                required
-                value={formData.password}
-                onChange={handleInputChange}
-                className="mt-1"
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="confirmPassword" className="text-sm font-medium text-black">
-                Confirm Password
-              </Label>
-              <Input
-                id="confirmPassword"
-                name="confirmPassword"
-                type="password"
-                required
-                value={formData.confirmPassword}
-                onChange={handleInputChange}
-                className="mt-1"
-              />
-            </div>
-
-            <div className="flex gap-3 pt-4">
-              <Button
-                type="submit"
-                disabled={isSubmitting}
-                className="flex-1 px-6 py-3 text-white font-semibold rounded-full transition-colors duration-300"
-                style={{ backgroundColor: '#2599D4' }}
-              >
-                {isSubmitting ? (
-                  <>
-                    <div className="h-4 w-4 mr-2 border-2 border-t-white border-white/30 rounded-full animate-spin" />
-                    Creating Account...
-                  </>
-                ) : (
-                  'Create Account & Save Match'
-                )}
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onClose}
-                className="px-6 py-3 text-black font-semibold rounded-full border-2 border-gray-300"
-              >
-                Maybe Later
-              </Button>
-            </div>
-          </form>
+              <div className="space-y-4 pt-2">
+                <motion.div
+                  className="w-full"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.97 }}
+                >
+                  <Button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="w-full px-6 py-3 text-white font-semibold rounded-full transition-colors duration-300"
+                    style={{ backgroundColor: '#2599D4' }}
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <div className="h-4 w-4 mr-2 border-2 border-t-white border-white/30 rounded-full animate-spin" />
+                        Creating Account...
+                      </>
+                    ) : (
+                      'Create Account'
+                    )}
+                  </Button>
+                </motion.div>
+                <motion.div
+                  className="w-full"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.6 }}
+                >
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleClose}
+                    className="w-full px-6 py-3 text-black font-semibold rounded-full border-2 border-gray-300"
+                  >
+                    Maybe Later
+                  </Button>
+                </motion.div>
+                <motion.p
+                  className="text-center text-sm text-black/70"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.7 }}
+                >
+                  Already have an account?{" "}
+                  <a href="/login" className="hover:underline" style={{ color: '#2599D4' }}>
+                    Sign in
+                  </a>
+                </motion.p>
+              </div>
+            </form>
         </CardContent>
       </Card>
     </div>

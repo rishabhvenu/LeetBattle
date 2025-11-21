@@ -7,6 +7,7 @@ import { Loader2, Users, X, Zap, Clock, Copy, Check, Search, Play } from "lucide
 import { toast } from 'react-toastify';
 import { motion, AnimatePresence } from "framer-motion";
 import { Client, Room } from 'colyseus.js';
+import { useQueueWebSocket } from '@/lib/hooks/useQueueWebSocket';
 
 interface MatchQueueProps { userId: string; username: string; rating: number; }
 
@@ -34,10 +35,6 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
   const isPrivate = searchParams?.get('private') === 'true';
   const roomCodeParam = searchParams?.get('roomCode');
   
-  const [queueStatus, setQueueStatus] = useState<
-    "waiting" | "matched" | "error" | "cancelled"
-  >("waiting");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [queueStats, setQueueStats] = useState({ playersInQueue: 0, ongoingMatches: 0, averageWaitTime: 0 });
   const [privateRoomData, setPrivateRoomData] = useState<PrivateRoomData | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -49,13 +46,32 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
   const [isStartingMatch, setIsStartingMatch] = useState(false);
   const router = useRouter();
   const roomRef = useRef<Room | null>(null);
-  const shouldCancelRef = useRef(true);
   const statePollActiveRef = useRef(false);
   const isCreatorLockedRef = useRef(false);
-  const joinPromiseRef = useRef<Promise<void> | null>(null); // Guard against duplicate joins
+  const joinPromiseRef = useRef<Promise<unknown> | null>(null); // Guard against duplicate joins
+  // Track initial mount/unmount in React 18 StrictMode so we don't tear down the real
+  // websocket connection on the first (test) unmount.
+  const hasInitializedRef = useState(false)[0];
+  const firstUnmountSkippedRef = useRef(false);
+
+  // Use shared hook for public queue WebSocket logic
+  const {
+    queueStatus,
+    setQueueStatus,
+    errorMessage,
+    setErrorMessage,
+    shouldCancelRef,
+    leaveQueue,
+  } = useQueueWebSocket({
+    userId,
+    rating,
+    isGuest: false,
+    enabled: !isPrivate, // Only enable for public queue
+  });
 
   useEffect(() => {
     let isMounted = true;
+    let initialized = hasInitializedRef as boolean;
 
     if (isPrivate && roomCodeParam) {
       // Guard: Prevent duplicate joins from React Strict Mode
@@ -286,8 +302,9 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
         }
       };
 
-      // Initial join - wrap in promise ref to prevent duplicates
-      if (!joinPromiseRef.current) {
+      // Initial join - guard against React StrictMode double invocation by only joining once
+      if (!initialized) {
+        initialized = true;
         joinPromiseRef.current = joinPrivateRoom()
           .catch(() => {})
           .finally(() => {
@@ -297,60 +314,19 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
       
           return () => {
         isMounted = false;
-            statePollActiveRef.current = false;
+        statePollActiveRef.current = false;
         if (roomRef.current && shouldCancelRef.current) {
-          console.log('Leaving private room due to component unmount');
-          roomRef.current.leave();
+          if (firstUnmountSkippedRef.current) {
+            console.log('Leaving private room due to actual component unmount');
+            roomRef.current.leave();
+          } else {
+            console.log('Skipping private room leave on initial StrictMode unmount');
+            firstUnmountSkippedRef.current = true;
+          }
         }
       };
     } else {
-      // Public queue logic (existing)
-      const joinQueue = async () => {
-        try {
-          console.log('Connecting to queue room...', userId, rating);
-          
-          const client = new Client(process.env.NEXT_PUBLIC_COLYSEUS_WS_URL!);
-          const room = await client.joinOrCreate('queue', { userId, rating });
-          roomRef.current = room;
-          
-          console.log('Joined queue room:', room.id);
-          
-          room.onMessage('match_found', (data) => {
-            console.log('Match found!', data);
-            setQueueStatus('matched');
-            shouldCancelRef.current = false;
-            try { room.leave(); } catch {}
-            router.push('/match');
-          });
-          
-          room.onMessage('already_in_match', (data) => {
-            console.log('Already in active match:', data);
-            shouldCancelRef.current = false;
-            toast.info('Redirecting to your active match...');
-            try { room.leave(); } catch {}
-            router.push('/match');
-          });
-          
-          room.onError((code, message) => {
-            console.error('Queue room error:', code, message);
-            toast.error('Queue error: ' + message);
-            setQueueStatus('error');
-          });
-          
-          room.onLeave((code) => {
-            console.log('Left queue room:', code);
-            if (shouldCancelRef.current && isMounted) {
-              setQueueStatus('cancelled');
-            }
-          });
-          
-        } catch (error) {
-          console.error('Failed to join queue:', error);
-          toast.error('Failed to join queue.');
-          setQueueStatus("error");
-        }
-      };
-
+      // Public queue - stats fetching only (WebSocket handled by hook)
       const fetchQueueStats = async () => {
         try {
           const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
@@ -372,30 +348,24 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
         }
       };
 
-      joinQueue();
       fetchQueueStats();
-
       const statsInterval = setInterval(fetchQueueStats, 5000);
 
       return () => {
         isMounted = false;
         clearInterval(statsInterval);
-        if (roomRef.current && shouldCancelRef.current) {
-          try {
-            roomRef.current.leave();
-          } catch {}
-        }
       };
     }
-  }, [userId, username, rating, router, isPrivate, roomCodeParam, availableProblems]);
+  }, [userId, username, rating, router, isPrivate, roomCodeParam, availableProblems, hasInitializedRef, isCreator, setErrorMessage, setQueueStatus, shouldCancelRef]);
 
   // Handle page unload/close/navigation - ensure cleanup happens
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (roomRef.current && shouldCancelRef.current) {
+      // For private rooms
+      if (roomRef.current && shouldCancelRef.current && isPrivate) {
         try {
           roomRef.current.leave();
-          console.log('Left queue room on page unload');
+          console.log('Left private room on page unload');
         } catch {
           // Ignore errors on leave
         }
@@ -419,27 +389,14 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
       roomRef.current = null;
     };
 
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden' && roomRef.current && shouldCancelRef.current) {
-        try {
-          roomRef.current.leave();
-          console.log('Left queue room on page hidden');
-        } catch {
-          // Ignore errors on leave
-        }
-      }
-    };
-
     if (typeof window !== 'undefined') {
       window.addEventListener('beforeunload', handleBeforeUnload);
-      document.addEventListener('visibilitychange', handleVisibilityChange);
       
       return () => {
         window.removeEventListener('beforeunload', handleBeforeUnload);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
       };
     }
-  }, [isPrivate, roomCodeParam, userId]);
+  }, [isPrivate, roomCodeParam, userId, shouldCancelRef]);
 
   // Fetch available problems when component mounts
   useEffect(() => {
@@ -502,14 +459,8 @@ const MatchQueue: React.FC<MatchQueueProps> = ({ userId, username, rating }) => 
           }
         }
       } else {
-        // Leave public queue room
-        if (roomRef.current) {
-          try {
-            await roomRef.current.leave();
-          } catch (error) {
-            console.warn('Failed to leave queue room:', error);
-          }
-        }
+        // Leave public queue room using hook
+        await leaveQueue();
       }
       
       router.push("/play");

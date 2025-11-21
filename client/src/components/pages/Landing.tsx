@@ -6,8 +6,6 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import CountUp from "react-countup";
 import { getGeneralStats } from "@/lib/server-actions";
-// Image import removed - using regular img tags instead
-// Logo will be referenced directly from public directory
 
 interface GlobalStats {
   activePlayers: number;
@@ -52,7 +50,13 @@ const Landing: React.FC = () => {
         {/* Navbar */}
         <nav className="flex justify-between items-center pl-20 pr-20 py-6 relative z-10">
           <div className="flex items-center gap-1">
-            <img src="/logo.png" alt="LeetBattle Logo" width={56} height={56} className="w-14 h-14" />
+            <img
+              src="/logo.png"
+              alt="LeetBattle Logo"
+              width={56}
+              height={56}
+              className="h-14 w-14"
+            />
             <div className="text-2xl font-semibold font-mono" style={{ color: '#2599D4' }}>LeetBattle</div>
           </div>
           <button

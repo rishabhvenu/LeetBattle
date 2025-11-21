@@ -1,0 +1,150 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: judge0-server
+  namespace: codeclashers-dev
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: judge0-server
+  template:
+    metadata:
+      labels:
+        app: judge0-server
+    spec:
+      # Wait for PostgreSQL to be ready
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:15-alpine
+        command: ['sh', '-c', 'until pg_isready -h postgres -p 5432; do echo waiting for postgres; sleep 2; done;']
+      - name: run-migrations
+        image: judge0/judge0:latest
+        command: ['sh', '-c', 'rails db:create db:migrate db:seed']
+        env:
+        - name: RAILS_ENV
+          value: "production"
+        - name: DISABLE_DATABASE_ENVIRONMENT_CHECK
+          value: "1"
+        - name: SCHEMA
+          value: "/tmp/schema.rb"
+        - name: JUDGE0_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_PORT
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_PASSWORD
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_POSTGRES_DB
+      containers:
+      - name: judge0-server
+        image: judge0/judge0:latest
+        ports:
+        - name: http
+          containerPort: 2358
+        env:
+        - name: RAILS_ENV
+          value: "production"
+        - name: JUDGE0_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_PORT
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_PASSWORD
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: JUDGE0_POSTGRES_DB
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+

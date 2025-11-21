@@ -3,35 +3,10 @@
  * Fetches complete problem data including testCases from MongoDB
  */
 
-import { MongoClient, ObjectId } from 'mongodb';
+import { ObjectId } from 'mongodb';
+import { getMongoClient, getDbName } from './mongo';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
-const DB_NAME = 'codeclashers';
-
-let clientCache: MongoClient | null = null;
-
-async function getMongoClient(): Promise<MongoClient> {
-  if (clientCache) {
-    try {
-      // Test connection with ping
-      await clientCache.db(DB_NAME).admin().ping();
-      return clientCache;
-    } catch (error) {
-      // Connection lost, create new one
-      clientCache = null;
-    }
-  }
-  
-  // Create MongoDB client with logging disabled
-  clientCache = new MongoClient(MONGODB_URI, {
-    monitorCommands: false,
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-    maxPoolSize: 10,
-  });
-  await clientCache.connect();
-  return clientCache;
-}
+const DB_NAME = getDbName();
 
 /**
  * Get complete problem data including testCases
@@ -59,7 +34,12 @@ export async function getProblemWithTestCases(problemId: string) {
       description: problem.description,
       difficulty: problem.difficulty,
       signature: problem.signature,
-      testCases: problem.testCases || [],
+      specialInputs: problem.specialInputs || problem.specialInputConfigs || [],
+      testCases: (problem.testCases || []).map((testCase: { input: Record<string, unknown>; output: unknown; specialInputData?: Record<string, Record<string, unknown>>; specialInputs?: Record<string, Record<string, unknown>> }) => ({
+        input: testCase.input,
+        output: testCase.output,
+        specialInputData: testCase.specialInputData || testCase.specialInputs || {},
+      })),
       testCasesCount: (problem.testCases || []).length,
       solutions: problem.solutions || {},
       timeComplexity: problem.timeComplexity,

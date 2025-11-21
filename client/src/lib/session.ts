@@ -26,10 +26,25 @@ export async function getSession(): Promise<SessionData> {
     const sessionId = await getSessionCookie();
 
     if (!sessionId) {
+      console.warn('[session] no session cookie found when requesting session data');
       return { authenticated: false };
     }
 
-    return await getSessionFromDB(sessionId);
+    const session = await getSessionFromDB(sessionId);
+    // Optional verbose logging is now disabled by default to avoid log noise.
+    // Uncomment for debugging:
+    // if (session.authenticated) {
+    //   console.debug('[session] session retrieved', {
+    //     userId: session.userId,
+    //     email: session.user?.email,
+    //     isAdmin: session.user?.isAdmin,
+    //   });
+    // } else {
+    //   console.warn('[session] session lookup returned unauthenticated', {
+    //     sessionId,
+    //   });
+    // }
+    return session;
   } catch (error) {
     console.error('Session lookup failed:', error);
     return { authenticated: false };
@@ -71,13 +86,17 @@ export async function assertAdminSession(): Promise<SessionData> {
   const session = await getSession();
 
   if (!session.authenticated || !session.userId) {
+    // Keep a single concise warning for real auth failures
+    console.warn('[session] assertAdminSession authentication failure');
     throw new Error('Authentication required');
   }
 
   const adminStatus = await isAdminUser(session.userId, session.user?.email);
   if (!adminStatus) {
+    console.warn('[session] assertAdminSession admin check failed');
     throw new Error('Admin privileges required');
   }
 
+  // Success case doesn't need logging; avoid noisy debug logs on every admin call
   return session;
 }

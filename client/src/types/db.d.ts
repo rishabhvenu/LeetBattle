@@ -1,5 +1,20 @@
 import type { ObjectId } from 'mongodb';
 
+export type SpecialInputType =
+  | 'linked_list_cycle';
+
+export interface SpecialInputConfig {
+  id: string;
+  type: SpecialInputType;
+  label?: string;
+  description?: string;
+  targets: Array<{
+    parameter: string;
+    role?: 'input' | 'output';
+  }>;
+  options?: Record<string, unknown>;
+}
+
 // Core User document - stores identity, auth, avatar URL, and linkage to matches
 export interface UserDoc {
   _id: ObjectId;
@@ -37,7 +52,9 @@ export interface ProblemDoc {
   testCases?: Array<{
     input: Record<string, unknown>;
     output: unknown;
+    specialInputData?: Record<string, Record<string, unknown>>;
   }>;
+  specialInputs?: SpecialInputConfig[];
   verified?: boolean;
   verifiedAt?: Date;
   verificationResults?: Record<string, unknown>;

@@ -312,16 +312,33 @@
           NODE_ENV: 'production',
           // Avatar bucket name for internal Lambda operations
           S3_BUCKET_NAME: avatarBucket.bucketName,
+          // AWS S3 configuration (IAM role used for credentials in Lambda, no explicit keys needed)
+          AWS_REGION: process.env.AWS_REGION || region,
+          // S3_ENDPOINT: Only set for MinIO or S3-compatible services (NOT AWS S3)
+          // For AWS S3, leave empty/undefined - SDK automatically determines endpoint from region
+          S3_ENDPOINT: process.env.S3_ENDPOINT || undefined,
+          // MongoDB connection string (must include credentials)
           MONGODB_URI: process.env.MONGODB_URI || '',
+          // Next.js Authentication
           NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET || '',
           AUTH_TRUST_HOST: 'true',
           NEXTAUTH_URL: 'https://leetbattle.net',
+          // Redis configuration
           REDIS_HOST: process.env.REDIS_HOST || '',
-          REDIS_PORT: process.env.REDIS_PORT || '',
+          REDIS_PORT: process.env.REDIS_PORT || '6379',
           REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
+          // Redis Cluster configuration
+          REDIS_CLUSTER_ENABLED: process.env.REDIS_CLUSTER_ENABLED || 'true',
+          // Optional: Comma-separated list of cluster nodes (e.g., "node1:6379,node2:6379")
+          // If not set, uses REDIS_HOST:REDIS_PORT as entry point
+          REDIS_CLUSTER_NODES: process.env.REDIS_CLUSTER_NODES || '',
+          // Colyseus backend URLs
           NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE || '',
           NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '',
           NEXT_PUBLIC_COLYSEUS_WS_URL: process.env.NEXT_PUBLIC_COLYSEUS_WS_URL || '',
+          // Internal service authentication (REQUIRED for protected endpoints)
+          INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET || '',
+          // OpenNext cache configuration
           CACHE_BUCKET_NAME: cacheBucket.bucketName,
           CACHE_BUCKET_REGION: region,
           // DynamoDB table for tag cache (required even for dynamodb-lite mode)

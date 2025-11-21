@@ -10,7 +10,6 @@ interface PlayerInfo {
   name: string;
   username: string;
   avatar: string | null;
-  initials: string;
   isWinner: boolean;
   ratingChange?: {
     oldRating: number;
@@ -101,7 +100,7 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
   }));
 
   // Helper function to render profile picture
-  const renderProfilePicture = (avatar: string | null, initials: string, isWinner: boolean, isDraw: boolean) => {
+  const renderProfilePicture = (avatar: string | null, isWinner: boolean, isDraw: boolean) => {
     const avatarUrl = getAvatarUrl(avatar);
     const avatarClasses = `w-24 h-24 ${
       isWinner
@@ -113,14 +112,16 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
 
     return (
       <Avatar className={avatarClasses}>
-        {avatarUrl ? (
-          <AvatarImage
-            src={avatarUrl}
-            alt="Profile"
+        <AvatarImage
+          src={avatarUrl || "/placeholder_avatar.png"}
+          alt="Profile"
+        />
+        <AvatarFallback className="bg-gray-200">
+          <img
+            src="/placeholder_avatar.png"
+            alt="Placeholder avatar"
+            className="w-full h-full object-cover"
           />
-        ) : null}
-        <AvatarFallback className="bg-gray-200 text-gray-600 font-bold text-xl">
-          {initials}
         </AvatarFallback>
       </Avatar>
     );
@@ -137,7 +138,7 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
             <Crown className="w-8 h-8 text-yellow-400 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]" />
           </animated.div>
         )}
-        {renderProfilePicture(player.avatar, player.initials, player.isWinner, isDraw)}
+        {renderProfilePicture(player.avatar, player.isWinner, isDraw)}
       </div>
       <span className="mt-2 text-slate-200 font-bold text-lg">
         {player.name}

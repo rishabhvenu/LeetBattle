@@ -1,6 +1,7 @@
 import { Client, Room } from 'colyseus';
 import { getRedis, RedisKeys, addHumanPlayer, removeHumanPlayer, isHumanPlayer, isBotUser } from '../lib/redis';
 import { createMatch } from '../lib/matchCreation';
+// MongoDB is not used directly here anymore for bot fallback selection
 
 type QueueEntry = { userId: string; rating: number; joinedAt: number };
 
@@ -52,24 +53,31 @@ export class QueueRoom extends Room {
   private redis = getRedis();
   private userIdToClient = new Map<string, Client>(); // userId -> client mapping
   private processingUsers = new Set<string>(); // Track users currently being processed
-  private emergencyBotTimers = new Map<string, any>(); // userId -> timer for emergency bot deployment
+  private needsBotTimers = new Map<string, any>(); // userId -> timer for marking player as needing bot
   private matchmakingInProgress = false;
 
   async onCreate(options: any) {
+    this.autoDispose = false;
     console.log('QueueRoom created - integrated matchmaking enabled');
+    console.log('♾️ QueueRoom autoDispose disabled - matchmaking loop will persist after last client disconnects');
+    
+    // CRITICAL: Set longer seat reservation time to prevent "seat reservation expired" errors
+    // This is especially important for bots that may have network latency or processing delays
+    this.setSeatReservationTime(60); // 60 seconds should be plenty for WebSocket upgrade
     
     // Run matchmaking every 5 seconds (not 10 seconds)
     this.clock.setInterval(async () => {
       await this.runMatchmakingCycle();
     }, 5000);
     
-    console.log('✅ Matchmaking interval set up - will run every 5 seconds');
+    console.log('✅ Matchmaking interval set up - will run every 5 seconds (startup bootstrap if available)');
   }
 
   async onJoin(client: Client, options: { userId: string; rating: number }) {
     const { userId, rating } = options;
     
     console.log(`Player ${userId} attempting to join queue with rating ${rating}`);
+    const joinStartTs = Date.now();
     
     // Store client mapping
     this.userIdToClient.set(userId, client);
@@ -98,9 +106,8 @@ export class QueueRoom extends Room {
           redirectToMatch: true
         });
         
-        // Clean up and kick them from queue room
+        // Clean up and let the client close the connection after processing the message
         this.cleanupClient(userId);
-        client.leave();
         return;
       }
     }
@@ -162,14 +169,17 @@ export class QueueRoom extends Room {
     this.processingUsers.add(userId);
     
     // Don't match immediately - let matchmaking loop handle it
-    // Only schedule emergency deployment timer
-    this.scheduleEmergencyBotDeployment(userId);
+    // Only schedule marking timer for humans (to mark as needing bot after 15s)
+    if (!isBot) {
+      this.scheduleNeedsBotMarking(userId);
+    }
     
     // Remove from processing set
     this.processingUsers.delete(userId);
     
     // Send confirmation to client
     client.send('queued', { position: await this.redis.zcard(RedisKeys.eloQueue) });
+    console.log(`Player ${userId} join queue completed in ${Date.now() - joinStartTs}ms`);
   }
 
   async onLeave(client: Client, consented: boolean) {
@@ -210,8 +220,8 @@ export class QueueRoom extends Room {
         console.log(`Notified bot service that human player ${userId} left queue`);
       }
       
-      // Cancel emergency bot deployment timer if exists
-      this.cancelEmergencyBotDeployment(userId);
+      // Unmark player as needing bot if they were marked
+      await this.unmarkNeedsBot(userId);
       
       // Let the matchmaking loop handle re-evaluation (no manual attemptMatch)
     } else {
@@ -241,6 +251,8 @@ export class QueueRoom extends Room {
     }
   }
 
+  // Queue-only policy: no DB fallback for additional bots
+
   async onDispose() {
     console.log('QueueRoom disposed');
     this.userIdToClient.clear();
@@ -263,22 +275,15 @@ export class QueueRoom extends Room {
       const entries = await this.redis.zrange(RedisKeys.eloQueue, 0, -1, 'WITHSCORES');
       console.log(`🔍 Attempting match - found ${entries.length / 2} players in queue`);
       
-      if (entries.length < 2) {
-        // Check for bot matching if only one player
-        if (entries.length === 1) {
-          console.log('🔍 Only 1 player in queue, attempting bot match');
-          return await this.attemptBotMatch(entries);
-        }
-        console.log('🔍 Not enough players for matching');
-        return false;
-      }
+      // Don't return early - process all players through normal flow
+      // This allows bot-bot matching when there are 2+ bots, and human-bot matching when appropriate
 
       // Convert to QueueEntry format and separate humans from bots
       // Filter out players who haven't waited long enough
       const queued: QueueEntry[] = [];
       const humanPlayers: QueueEntry[] = [];
       const botPlayers: QueueEntry[] = [];
-      
+
       for (let i = 0; i < entries.length; i += 2) {
         const userId = entries[i];
         const rating = parseFloat(entries[i + 1]);
@@ -290,8 +295,6 @@ export class QueueRoom extends Room {
         } catch {}
         
         const waitTime = now() - joinedAt;
-        
-        // Only include players who have waited minimum time
         if (waitTime >= MIN_QUEUE_WAIT_MS) {
           const player = { userId, rating, joinedAt };
           queued.push(player);
@@ -301,7 +304,14 @@ export class QueueRoom extends Room {
           if (isHuman) {
             humanPlayers.push(player);
           } else {
-            botPlayers.push(player);
+            // For bots, check if they're already active in a match
+            const isBotActive = await this.redis.sismember(RedisKeys.botsActiveSet, userId);
+            const currentMatch = await this.redis.get(`bot:current_match:${userId}`);
+            if (!isBotActive && !currentMatch) {
+              botPlayers.push(player);
+            } else {
+              console.log(`⚠️ Bot ${userId} is already active or linked to match ${currentMatch || ''}, skipping from matchmaking`);
+            }
           }
         } else {
           console.log(`⏰ Player ${userId} has only waited ${waitTime}ms, needs ${MIN_QUEUE_WAIT_MS}ms minimum`);
@@ -385,27 +395,35 @@ export class QueueRoom extends Room {
       }
 
       // PRIORITY 3: Only if no humans are waiting, allow bot-bot matches
-      if (humanPlayers.length === 0 && botPlayers.length >= 2) {
-        console.log(`No human players waiting, allowing bot-bot matches`);
+      if (humanPlayers.length === 0 && botPlayers.length >= 1) {
+        console.log(`No human players waiting, allowing bot-bot matches (${botPlayers.length} bot(s) in queue)`);
         
-        // Find the best bot-bot match
-        let bestBotMatch: [QueueEntry, QueueEntry] | null = null;
-        let bestEloDiff = Number.POSITIVE_INFINITY;
+        // If we have 2+ bots in queue, match them together
+        if (botPlayers.length >= 2) {
+          // Find the best bot-bot match
+          let bestBotMatch: [QueueEntry, QueueEntry] | null = null;
+          let bestEloDiff = Number.POSITIVE_INFINITY;
 
-        for (const player of botPlayers) {
-          const match = findCompatibleMatch(player, botPlayers);
-          if (match) {
-            const eloDiff = Math.abs(player.rating - match.rating);
-            if (eloDiff < bestEloDiff) {
-              bestEloDiff = eloDiff;
-              bestBotMatch = [player, match];
+          for (const player of botPlayers) {
+            const match = findCompatibleMatch(player, botPlayers);
+            if (match) {
+              const eloDiff = Math.abs(player.rating - match.rating);
+              if (eloDiff < bestEloDiff) {
+                bestEloDiff = eloDiff;
+                bestBotMatch = [player, match];
+              }
             }
           }
-        }
 
-        if (bestBotMatch) {
-          await this.createPlayerMatch(bestBotMatch[0], bestBotMatch[1]);
-          return true;
+          if (bestBotMatch) {
+            await this.createPlayerMatch(bestBotMatch[0], bestBotMatch[1]);
+            return true;
+          }
+        } else if (botPlayers.length === 1) {
+          // Queue-only policy: do not source bots from MongoDB fallback
+          const queuedBot = botPlayers[0];
+          console.log(`Only 1 bot in queue (${queuedBot.userId}); queue-only policy forbids DB fallback. Waiting for another queued bot.`);
+          // Optionally, a separate component can react to queue state to deploy more bots
         }
       }
 
@@ -456,6 +474,15 @@ export class QueueRoom extends Room {
       return;
     }
     
+    let p1InQueue: string | null = null;
+    let p2InQueue: string | null = null;
+    let p1Reservation: string | null = null;
+    let p2Reservation: string | null = null;
+    let p1IsBotActive = 0;
+    let p2IsBotActive = 0;
+    let p1IsHuman = false;
+    let p2IsHuman = false;
+
     try {
       console.log(`Creating match - ${player1.userId} (${player1.rating}) vs ${player2.userId} (${player2.rating}), diff: ${Math.abs(player1.rating - player2.rating)}`);
       
@@ -465,21 +492,58 @@ export class QueueRoom extends Room {
         `queue:reservation:${player1.userId}`,
         `queue:reservation:${player2.userId}`,
         RedisKeys.botStateKey(player1.userId),
-        RedisKeys.botStateKey(player2.userId)
+        RedisKeys.botStateKey(player2.userId),
+        RedisKeys.botsActiveSet
       );
       
       // Verify players still available
-      const [p1InQueue, p2InQueue, p1Reservation, p2Reservation] = await Promise.all([
+      // Note: player2 might not be in queue if it's a deployed/undeployed bot for bot-bot matching
+      const availabilityResults = await Promise.all([
         this.redis.zscore(RedisKeys.eloQueue, player1.userId),
         this.redis.zscore(RedisKeys.eloQueue, player2.userId),
         this.redis.get(`queue:reservation:${player1.userId}`),
-        this.redis.get(`queue:reservation:${player2.userId}`)
+        this.redis.get(`queue:reservation:${player2.userId}`),
+        this.redis.sismember(RedisKeys.botsActiveSet, player1.userId),
+        this.redis.sismember(RedisKeys.botsActiveSet, player2.userId)
       ]);
+      p1InQueue = availabilityResults[0];
+      p2InQueue = availabilityResults[1];
+      p1Reservation = availabilityResults[2];
+      p2Reservation = availabilityResults[3];
+      p1IsBotActive = availabilityResults[4];
+      p2IsBotActive = availabilityResults[5];
       
-      if (!p1InQueue || !p2InQueue || p1Reservation || p2Reservation) {
+      // Player1 must be in queue, but player2 might not be (for bot-bot matching with deployed bots)
+      const p2IsBot = await isBotUser(player2.userId);
+      const p2CanBeNonQueued = p2IsBot; // Bots can be matched even if not in queue
+      
+      // CRITICAL: For bots, check BOTH reservation AND active set
+      // A bot with a reservation (even if expired) or in active set should NOT be matched
+      if (!p1InQueue || p1Reservation || p1IsBotActive || 
+          (!p2CanBeNonQueued && !p2InQueue) || p2Reservation || p2IsBotActive) {
         await this.redis.unwatch();
-        console.log('Players no longer available for matching');
+        console.log(`Players no longer available for matching: p1InQueue=${!!p1InQueue}, p2InQueue=${!!p2InQueue} (canBeNonQueued=${p2CanBeNonQueued}), p1Reservation=${!!p1Reservation}, p2Reservation=${!!p2Reservation}, p1IsBotActive=${p1IsBotActive}, p2IsBotActive=${p2IsBotActive}`);
         return;
+      }
+      
+      // ADDITIONAL SAFETY CHECK: For bots, verify they're not in any active match
+      // by checking if they have a current_match pointer
+      if (p2IsBot) {
+        const p2CurrentMatch = await this.redis.get(`bot:current_match:${player2.userId}`);
+        if (p2CurrentMatch) {
+          await this.redis.unwatch();
+          console.log(`Bot ${player2.userId} already has current_match ${p2CurrentMatch}, rejecting match`);
+          return;
+        }
+      }
+      const p1IsBot = await isBotUser(player1.userId);
+      if (p1IsBot) {
+        const p1CurrentMatch = await this.redis.get(`bot:current_match:${player1.userId}`);
+        if (p1CurrentMatch) {
+          await this.redis.unwatch();
+          console.log(`Bot ${player1.userId} already has current_match ${p1CurrentMatch}, rejecting match`);
+          return;
+        }
       }
       
       // Step 3: Create reservations BEFORE creating match room
@@ -487,11 +551,15 @@ export class QueueRoom extends Room {
       const multi = this.redis.multi();
       multi.setex(`queue:reservation:${player1.userId}`, 60, tempReservation);
       multi.setex(`queue:reservation:${player2.userId}`, 60, tempReservation);
-      multi.zrem(RedisKeys.eloQueue, player1.userId, player2.userId);
+      // Only remove from queue if they're actually in queue
+      multi.zrem(RedisKeys.eloQueue, player1.userId);
+      if (p2InQueue) {
+        multi.zrem(RedisKeys.eloQueue, player2.userId);
+      }
       
       // Remove humans from both queued players set and human players set
-      const p1IsHuman = !(await isBotUser(player1.userId));
-      const p2IsHuman = !(await isBotUser(player2.userId));
+      p1IsHuman = !(await isBotUser(player1.userId));
+      p2IsHuman = !(await isBotUser(player2.userId));
       if (p1IsHuman) {
         multi.srem(RedisKeys.queuedPlayersSet, player1.userId);
         multi.srem(RedisKeys.humanPlayersSet, player1.userId);
@@ -499,6 +567,17 @@ export class QueueRoom extends Room {
       if (p2IsHuman) {
         multi.srem(RedisKeys.queuedPlayersSet, player2.userId);
         multi.srem(RedisKeys.humanPlayersSet, player2.userId);
+      }
+      
+      // CRITICAL: Add bots to active set IMMEDIATELY to prevent duplicate matches
+      // Also set current_match pointer for additional safety
+      if (!p1IsHuman) {
+        multi.sadd(RedisKeys.botsActiveSet, player1.userId);
+        // Will be set after match is created, but we mark it here to prevent race conditions
+      }
+      if (!p2IsHuman) {
+        multi.sadd(RedisKeys.botsActiveSet, player2.userId);
+        // Will be set after match is created, but we mark it here to prevent race conditions
       }
       
       const execResult = await multi.exec();
@@ -515,35 +594,91 @@ export class QueueRoom extends Room {
         false
       );
       
-      // Cancel emergency bot deployment timers for both players
-      this.cancelEmergencyBotDeployment(player1.userId);
-      this.cancelEmergencyBotDeployment(player2.userId);
+      // Unmark both players as needing bot if they were marked
+      await this.unmarkNeedsBot(player1.userId);
+      await this.unmarkNeedsBot(player2.userId);
 
       // Notify both players via WebSocket
+      // Get client references BEFORE cleanup - don't cleanup until after we try to send
       const player1Client = this.userIdToClient.get(player1.userId);
       const player2Client = this.userIdToClient.get(player2.userId);
+      console.log(
+        `Attempting to notify players for match ${result.matchId}:`,
+        {
+          player1: {
+            userId: player1.userId,
+            hasClient: !!player1Client,
+          },
+          player2: {
+            userId: player2.userId,
+            hasClient: !!player2Client,
+          },
+          activeClientSessionIds: this.clients.map(c => c.sessionId),
+        }
+      );
+      
+      let player1Notified = false;
+      let player2Notified = false;
       
       if (player1Client) {
-        player1Client.send('match_found', {
-          matchId: result.matchId,
-          roomId: result.roomId,
-          problemId: result.problemId
-        });
+        try {
+          // Verify client is still connected to the room
+          const isStillConnected = this.clients.find(c => c.sessionId === player1Client.sessionId);
+          if (isStillConnected) {
+            player1Client.send('match_found', {
+              matchId: result.matchId,
+              roomId: result.roomId,
+              problemId: result.problemId
+            });
+            player1Notified = true;
+            console.log(`✅ Sent match_found to player1 ${player1.userId} (session ${player1Client.sessionId})`);
+          } else {
+            console.warn(
+              `⚠️ Player1 ${player1.userId} client ${player1Client.sessionId} is no longer connected to room; active sessions:`,
+              this.clients.map(c => c.sessionId)
+            );
+          }
+        } catch (error) {
+          console.error(`❌ Failed to send match_found to player1 ${player1.userId}:`, error);
+        }
+        // Only cleanup after we've attempted to send the message
         this.cleanupClient(player1.userId);
-        // Don't call client.leave() - let the client disconnect naturally when they join the match room
+      } else {
+        console.warn(`⚠️ Player1 ${player1.userId} client not found in userIdToClient map`);
       }
       
       if (player2Client) {
-        player2Client.send('match_found', {
-          matchId: result.matchId,
-          roomId: result.roomId,
-          problemId: result.problemId
-        });
+        try {
+          // Verify client is still connected to the room
+          const isStillConnected = this.clients.find(c => c.sessionId === player2Client.sessionId);
+          if (isStillConnected) {
+            player2Client.send('match_found', {
+              matchId: result.matchId,
+              roomId: result.roomId,
+              problemId: result.problemId
+            });
+            player2Notified = true;
+            console.log(`✅ Sent match_found to player2 ${player2.userId} (session ${player2Client.sessionId})`);
+          } else {
+            console.warn(
+              `⚠️ Player2 ${player2.userId} client ${player2Client.sessionId} is no longer connected to room; active sessions:`,
+              this.clients.map(c => c.sessionId)
+            );
+          }
+        } catch (error) {
+          console.error(`❌ Failed to send match_found to player2 ${player2.userId}:`, error);
+        }
+        // Only cleanup after we've attempted to send the message
         this.cleanupClient(player2.userId);
-        // Don't call client.leave() - let the client disconnect naturally when they join the match room
+      } else {
+        console.warn(`⚠️ Player2 ${player2.userId} client not found in userIdToClient map`);
       }
 
-      console.log(`Match ${result.matchId} created and players notified`);
+      if (player1Notified && player2Notified) {
+        console.log(`✅ Match ${result.matchId} created and both players notified`);
+      } else {
+        console.warn(`⚠️ Match ${result.matchId} created but not all players notified (p1: ${player1Notified}, p2: ${player2Notified})`);
+      }
       
       // Notify bot service if humans were matched (so it can reduce deployed bot count)
       if (p1IsHuman || p2IsHuman) {
@@ -561,6 +696,55 @@ export class QueueRoom extends Room {
       }
     } catch (e) {
       console.error('Error creating match:', e);
+      try {
+        await this.redis.unwatch();
+      } catch {}
+
+      try {
+        const multi = this.redis.multi();
+
+        // Always clear temporary reservations that were set before match creation.
+        multi.del(
+          `queue:reservation:${player1.userId}`,
+          `queue:reservation:${player2.userId}`
+        );
+
+        // Ensure bots no longer appear as active if match creation failed.
+        if (!p1IsHuman) {
+          multi.srem(RedisKeys.botsActiveSet, player1.userId);
+        }
+        if (!p2IsHuman) {
+          multi.srem(RedisKeys.botsActiveSet, player2.userId);
+        }
+
+        // Restore queue membership that was removed prior to match creation.
+        if (p1InQueue) {
+          multi.zadd(RedisKeys.eloQueue, player1.rating, player1.userId);
+        }
+        if (p2InQueue) {
+          multi.zadd(RedisKeys.eloQueue, player2.rating, player2.userId);
+        }
+
+        // Re-add human tracking state if it was removed.
+        if (p1IsHuman) {
+          multi.sadd(RedisKeys.queuedPlayersSet, player1.userId);
+          multi.sadd(RedisKeys.humanPlayersSet, player1.userId);
+        }
+        if (p2IsHuman) {
+          multi.sadd(RedisKeys.queuedPlayersSet, player2.userId);
+          multi.sadd(RedisKeys.humanPlayersSet, player2.userId);
+        }
+
+        await multi.exec();
+        console.warn(
+          `Rolled back reservations for players ${player1.userId} and ${player2.userId} after match creation failure`
+        );
+      } catch (rollbackError) {
+        console.error(
+          'Failed to rollback reservations after match creation error:',
+          rollbackError
+        );
+      }
     } finally {
       await this.releaseMatchLock(player1.userId, player2.userId);
     }
@@ -628,12 +812,50 @@ export class QueueRoom extends Room {
     }
 
     try {
-      // Remove both players from queue
-      await this.redis.zrem(RedisKeys.eloQueue, userId, botMatch.userId);
-      await this.redis.del(RedisKeys.queueJoinedAtKey(userId));
-      await this.redis.del(RedisKeys.queueJoinedAtKey(botMatch.userId));
+      // Use atomic transaction to prevent duplicate matches
+      await this.redis.watch(
+        RedisKeys.eloQueue,
+        `queue:reservation:${userId}`,
+        `queue:reservation:${botMatch.userId}`,
+        RedisKeys.botsActiveSet
+      );
+      
+      // Re-check availability atomically (both human and bot)
+      const [stillInQueue, humanReservation, botStillInQueue, botReservation, botIsActive] = await Promise.all([
+        this.redis.zscore(RedisKeys.eloQueue, userId),
+        this.redis.get(`queue:reservation:${userId}`),
+        this.redis.zscore(RedisKeys.eloQueue, botMatch.userId),
+        this.redis.get(`queue:reservation:${botMatch.userId}`),
+        this.redis.sismember(RedisKeys.botsActiveSet, botMatch.userId)
+      ]);
+      
+      if (!stillInQueue || humanReservation || !botStillInQueue || botReservation || botIsActive) {
+        await this.redis.unwatch();
+        console.log(`Match no longer available: humanInQueue=${!!stillInQueue}, humanReservation=${!!humanReservation}, botInQueue=${!!botStillInQueue}, botReservation=${!!botReservation}, botIsActive=${botIsActive}`);
+        return false;
+      }
+      
+      // Atomically remove from queue, create reservations, and add to active set
+      const tempReservation = JSON.stringify({ status: 'creating' });
+      const multi = this.redis.multi();
+      multi.setex(`queue:reservation:${userId}`, 60, tempReservation);
+      multi.setex(`queue:reservation:${botMatch.userId}`, 60, tempReservation);
+      multi.zrem(RedisKeys.eloQueue, userId, botMatch.userId);
+      multi.del(RedisKeys.queueJoinedAtKey(userId));
+      multi.del(RedisKeys.queueJoinedAtKey(botMatch.userId));
+      multi.sadd(RedisKeys.botsActiveSet, botMatch.userId); // CRITICAL: Mark bot as active immediately
+      
+      // Remove human from queued players set and human players set
+      multi.srem(RedisKeys.queuedPlayersSet, userId);
+      multi.srem(RedisKeys.humanPlayersSet, userId);
+      
+      const execResult = await multi.exec();
+      if (!execResult) {
+        console.log('Transaction failed - bot was matched by another process');
+        return false;
+      }
 
-      // Create human vs bot match
+      // Create human vs bot match (players are now locked out of queue)
       const result = await createMatch(
         { userId, rating },
         { userId: botMatch.userId, rating: botMatch.rating },
@@ -641,89 +863,170 @@ export class QueueRoom extends Room {
         false
       );
 
+      // Unmark player as needing bot if they were marked
+      await this.unmarkNeedsBot(userId);
+
       // Notify human player
       const playerClient = this.userIdToClient.get(userId);
+      let playerNotified = false;
       if (playerClient) {
-        playerClient.send('match_found', {
-          matchId: result.matchId,
-          roomId: result.roomId,
-          problemId: result.problemId
-        });
+        try {
+          // Verify client is still connected to the room
+          const isStillConnected = this.clients.find(c => c.sessionId === playerClient.sessionId);
+          if (isStillConnected) {
+            playerClient.send('match_found', {
+              matchId: result.matchId,
+              roomId: result.roomId,
+              problemId: result.problemId
+            });
+            playerNotified = true;
+            console.log(`✅ Sent match_found to human player ${userId} (session ${playerClient.sessionId})`);
+          } else {
+            console.warn(`⚠️ Human player ${userId} client ${playerClient.sessionId} is no longer connected to room`);
+          }
+        } catch (error) {
+          console.error(`❌ Failed to send match_found to human player ${userId}:`, error);
+        }
+        // Only cleanup after we've attempted to send the message
         this.cleanupClient(userId);
-        // Don't call client.leave() - let the client disconnect naturally when they join the match room
+      } else {
+        console.warn(`⚠️ Human player ${userId} client not found in userIdToClient map`);
       }
 
       // Notify bot via WebSocket (if bot is connected to queue room)
       const botClient = this.userIdToClient.get(botMatch.userId);
+      let botNotified = false;
       if (botClient) {
-        botClient.send('match_found', {
-          matchId: result.matchId,
-          roomId: result.roomId,
-          problemId: result.problemId
-        });
+        try {
+          // Verify client is still connected to the room
+          const isStillConnected = this.clients.find(c => c.sessionId === botClient.sessionId);
+          if (isStillConnected) {
+            botClient.send('match_found', {
+              matchId: result.matchId,
+              roomId: result.roomId,
+              problemId: result.problemId
+            });
+            botNotified = true;
+            console.log(`✅ Sent match_found to bot ${botMatch.userId} (session ${botClient.sessionId})`);
+          } else {
+            console.warn(`⚠️ Bot ${botMatch.userId} client ${botClient.sessionId} is no longer connected to room`);
+          }
+        } catch (error) {
+          console.error(`❌ Failed to send match_found to bot ${botMatch.userId}:`, error);
+        }
+        // Only cleanup after we've attempted to send the message
         this.cleanupClient(botMatch.userId);
+      } else {
+        console.log(`ℹ️ Bot ${botMatch.userId} client not found in userIdToClient map (may not be connected to queue room)`);
       }
 
       console.log(`Matchmaker: Created human-vs-bot match ${result.matchId} (${userId} vs ${botMatch.userId})`);
       return true;
     } catch (e) {
       console.warn('Failed to create bot match:', e);
+      try {
+        await this.redis.unwatch();
+      } catch {}
+
+      try {
+        const multi = this.redis.multi();
+
+        multi.del(
+          `queue:reservation:${userId}`,
+          `queue:reservation:${botMatch.userId}`
+        );
+        multi.srem(RedisKeys.botsActiveSet, botMatch.userId);
+
+        // Restore queue membership and tracking for both players.
+        multi.zadd(RedisKeys.eloQueue, rating, userId);
+        multi.zadd(RedisKeys.eloQueue, botMatch.rating, botMatch.userId);
+        multi.sadd(RedisKeys.queuedPlayersSet, userId);
+        multi.sadd(RedisKeys.humanPlayersSet, userId);
+
+        // Restore joined timestamps so wait-time logic remains consistent.
+        multi.setex(RedisKeys.queueJoinedAtKey(userId), 3600, Date.now().toString());
+        multi.setex(
+          RedisKeys.queueJoinedAtKey(botMatch.userId),
+          3600,
+          Date.now().toString()
+        );
+
+        await multi.exec();
+        console.warn(
+          `Rolled back reservations for human ${userId} and bot ${botMatch.userId} after failed bot match`
+        );
+      } catch (rollbackError) {
+        console.error(
+          'Failed to rollback bot match reservations after error:',
+          rollbackError
+        );
+      }
       return false;
     }
   }
 
   /**
-   * Schedule emergency bot deployment for a player who's been waiting too long
+   * Schedule marking a player as needing bot deployment after waiting too long
    */
-  private scheduleEmergencyBotDeployment(userId: string) {
+  private scheduleNeedsBotMarking(userId: string) {
     // Cancel any existing timer for this player
-    this.cancelEmergencyBotDeployment(userId);
+    this.cancelNeedsBotTimer(userId);
     
-    // Schedule emergency bot deployment after 15 seconds
+    // Schedule marking after 7 seconds
     const timer = this.clock.setTimeout(async () => {
       try {
         // Check if player is still in queue
         const isInQueue = await this.redis.zscore(RedisKeys.eloQueue, userId);
         if (!isInQueue) {
-          console.log(`Player ${userId} no longer in queue, cancelling emergency bot deployment`);
+          console.log(`Player ${userId} no longer in queue, skipping needsBot marking`);
           return;
         }
         
         // Check if player already has a reservation
         const existingReservation = await this.redis.get(`queue:reservation:${userId}`);
         if (existingReservation) {
-          console.log(`Player ${userId} already has a reservation, cancelling emergency bot deployment`);
+          console.log(`Player ${userId} already has a reservation, skipping needsBot marking`);
           return;
         }
         
-        console.log(`Emergency bot deployment triggered for player ${userId}`);
+        // Mark player as needing bot deployment
+        await this.redis.sadd(RedisKeys.needsBotSet, userId);
+        console.log(`Marked player ${userId} as needing bot deployment (waited >7s)`);
         
-        // Request additional bot deployment
-        await this.redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
-          type: 'playerQueued',
-          playerId: userId
-        }));
-        
-        // Let the matchmaking loop handle matching (no manual attempts)
+        // The bot system will check this set when calculating required bot count
         
       } catch (error) {
-        console.error(`Error in emergency bot deployment for ${userId}:`, error);
+        console.error(`Error marking player ${userId} as needing bot:`, error);
       }
-    }, 15000); // 15 seconds
+    }, 7000); // 7 seconds
     
-    this.emergencyBotTimers.set(userId, timer);
-    console.log(`Scheduled emergency bot deployment for player ${userId} in 15 seconds`);
+    this.needsBotTimers.set(userId, timer);
+    console.log(`Scheduled needsBot marking for player ${userId} in 7 seconds`);
   }
 
   /**
-   * Cancel emergency bot deployment timer for a player
+   * Cancel needsBot marking timer for a player
    */
-  private cancelEmergencyBotDeployment(userId: string) {
-    const timer = this.emergencyBotTimers.get(userId);
+  private cancelNeedsBotTimer(userId: string) {
+    const timer = this.needsBotTimers.get(userId);
     if (timer) {
       timer.clear();
-      this.emergencyBotTimers.delete(userId);
-      console.log(`Cancelled emergency bot deployment timer for player ${userId}`);
+      this.needsBotTimers.delete(userId);
+      console.log(`Cancelled needsBot marking timer for player ${userId}`);
+    }
+  }
+
+  /**
+   * Unmark a player as needing bot deployment
+   */
+  private async unmarkNeedsBot(userId: string) {
+    // Cancel any pending timer
+    this.cancelNeedsBotTimer(userId);
+    
+    // Remove from needsBot set if marked
+    const removed = await this.redis.srem(RedisKeys.needsBotSet, userId);
+    if (removed > 0) {
+      console.log(`Unmarked player ${userId} as needing bot deployment`);
     }
   }
 
@@ -752,10 +1055,14 @@ export class QueueRoom extends Room {
         
         const waitTime = now() - joinedAt;
         
-        // If player has been waiting for more than 15 seconds and doesn't have an emergency timer
-        if (waitTime > 15000 && !this.emergencyBotTimers.has(userId)) {
-          console.log(`Player ${userId} has been waiting for ${waitTime}ms, scheduling emergency bot deployment`);
-          this.scheduleEmergencyBotDeployment(userId);
+        // If player has been waiting for more than 7 seconds and doesn't have a marking timer
+        if (waitTime > 7000 && !this.needsBotTimers.has(userId)) {
+          // Check if already marked
+          const isMarked = await this.redis.sismember(RedisKeys.needsBotSet, userId);
+          if (!isMarked) {
+            console.log(`Player ${userId} has been waiting for ${waitTime}ms, marking as needing bot`);
+            await this.redis.sadd(RedisKeys.needsBotSet, userId);
+          }
         }
         
         // Let the matchmaking loop handle matching (no manual attemptMatch)

@@ -1,35 +1,18 @@
-import { Client, Room } from 'colyseus';
+import type { Client } from 'colyseus';
+import { Room } from 'colyseus';
 import { getRedis, RedisKeys } from '../lib/redis';
 import { executeAllTestCases } from '../lib/testExecutor';
 import { getProblemWithTestCases } from '../lib/problemData';
 import { analyzeTimeComplexity } from '../lib/complexityAnalyzer';
-import { MongoClient, ObjectId } from 'mongodb';
+import { ObjectId } from 'mongodb';
 import { calculateDifficultyMultiplier, applyDifficultyAdjustment } from '../lib/eloSystem';
 import { createHash } from 'crypto';
+import { getMongoClient, getDbName } from '../lib/mongo';
+import { getPlayerRatings } from '../services/playerService';
+import { configureRoomLifecycle } from '../services/roomLifecycle';
+import { prepareTestCasesForExecution } from '../lib/specialInputs';
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://codeclashers-mongodb:27017/codeclashers';
-const DB_NAME = 'codeclashers';
-
-let mongoClientCache: MongoClient | null = null;
-
-async function getMongoClient(): Promise<MongoClient> {
-  if (mongoClientCache) {
-    try {
-      await mongoClientCache.db(DB_NAME).admin().ping();
-      return mongoClientCache;
-    } catch {
-      mongoClientCache = null;
-    }
-  }
-  mongoClientCache = new MongoClient(MONGODB_URI, {
-    monitorCommands: false,
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-    maxPoolSize: 10,
-  });
-  await mongoClientCache.connect();
-  return mongoClientCache;
-}
+const DB_NAME = getDbName();
 
 type PlayerState = {
   code: Record<string, string>;             // language -> code
@@ -125,8 +108,7 @@ export class MatchRoom extends Room {
     (this as any).player1Id = options.player1Id;
     (this as any).player2Id = options.player2Id;
     
-    // Don't auto-dispose when all clients leave - only dispose on match end
-    this.autoDispose = false;
+    configureRoomLifecycle(this, { autoDispose: false, seatReservationSeconds: 3600, isPrivate: false });
 
     console.log(`MatchRoom onCreate - matchId: ${this.matchId}, maxClients: ${this.maxClients}`);
 
@@ -156,32 +138,66 @@ export class MatchRoom extends Room {
       }
     }
 
+    if (problemData) {
+      problemData.testCases = prepareTestCasesForExecution(
+        problemData.testCases || [],
+        problemData.specialInputs || problemData.specialInputConfigs || []
+      );
+      this.problemData = problemData;
+    }
+
     // Don't use setState - we're not syncing state via Colyseus
     // Everything is stored in Redis
     
-    // CRITICAL: Configure room to stay unlocked and alive
-    this.setSeatReservationTime(3600); // 60 minute timeout for players to join
-    this.setPrivate(false); // Not private
-    
-    // Explicitly unlock the room
-    this.unlock();
+    console.log(`Room configured and unlocked via lifecycle helper`);
+
+    // Ensure participants are synchronized with Redis (handles room recovery scenarios)
+    await this.syncParticipantsWithRedis(options);
     console.log(`Room created and unlocked. Locked: ${this.locked}`);
     
-    // initialize redis match blob with TTL 1 hour
+    // Initialize or update redis match blob with TTL 1 hour
+    // Note: The blob may already exist from createMatch, so we preserve existing data
+    const matchKey = RedisKeys.matchKey(this.matchId);
+    const existingBlob = await this.redis.get(matchKey);
+    if (existingBlob) {
+      const existingData = JSON.parse(existingBlob);
+      console.log(`MatchRoom.onCreate: Found existing match blob for ${this.matchId} with ${Object.keys(existingData.players || {}).length} players`);
+    } else {
+      console.warn(`MatchRoom.onCreate: WARNING - No existing match blob found for ${this.matchId}! Creating new one.`);
+    }
+    
     await this.updateMatchBlob((obj) => {
-      obj.matchId = this.matchId;
-      obj.problemId = this.problemId;
-      obj.status = 'ongoing';
-      obj.startedAt = new Date().toISOString();
-      obj.players = obj.players || {}; // Use object map for players
+      // Only set these if they don't exist (preserve existing values)
+      if (!obj.matchId) obj.matchId = this.matchId;
+      if (!obj.problemId) obj.problemId = this.problemId;
+      if (!obj.status) obj.status = 'ongoing';
+      if (!obj.startedAt) obj.startedAt = new Date().toISOString();
+      
+      // Preserve existing players object if it exists, otherwise initialize
+      const existingPlayerCount = Object.keys(obj.players || {}).length;
+      obj.players = obj.players || {};
       obj.playersCode = obj.playersCode || {};
       obj.linesWritten = obj.linesWritten || {};
       obj.submissions = obj.submissions || [];
-      obj.isPrivate = false; // Default to false, can be updated later
+      if (obj.isPrivate === undefined) obj.isPrivate = false;
       obj.ratings = obj.ratings || {};
       
-      // Always set problem data if we have it
-      if (problemData) {
+      // Log if players object was empty
+      if (existingPlayerCount === 0 && (this as any).player1Id && (this as any).player2Id) {
+        console.warn(`MatchRoom.onCreate: Players object was empty for ${this.matchId}, initializing with player1Id: ${(this as any).player1Id}, player2Id: ${(this as any).player2Id}`);
+        // Initialize players if they don't exist
+        obj.players[(this as any).player1Id] = { 
+          username: (this as any).player1Id,
+          rating: obj.ratings?.player1 || 1200
+        };
+        obj.players[(this as any).player2Id] = { 
+          username: (this as any).player2Id,
+          rating: obj.ratings?.player2 || 1200
+        };
+      }
+      
+      // Always set problem data if we have it and it's not already set
+      if (problemData && !obj.problem) {
         // Sanitize problem data for client (remove test cases and solutions)
         const sanitizedProblem = {
           _id: problemData._id,
@@ -199,6 +215,16 @@ export class MatchRoom extends Room {
       }
     });
     
+    // Verify the blob after update
+    const verifyBlob = await this.redis.get(matchKey);
+    if (verifyBlob) {
+      const verifyData = JSON.parse(verifyBlob);
+      const playerCount = Object.keys(verifyData.players || {}).length;
+      console.log(`MatchRoom.onCreate: Verified match blob for ${this.matchId} has ${playerCount} players`);
+    } else {
+      console.error(`MatchRoom.onCreate: CRITICAL - Match blob missing after update for ${this.matchId}!`);
+    }
+    
     // Create initial match document in MongoDB
     await this.createInitialMatchDocument();
 
@@ -207,29 +233,37 @@ export class MatchRoom extends Room {
     console.log(`MatchRoom: Player IDs - player1Id: ${(this as any).player1Id}, player2Id: ${(this as any).player2Id}`);
     await this.calculateAndStoreBotCompletionTimes();
     
-    // Add player information to match data
+    // Ensure player information is in match data (preserve existing if already set)
     await this.updateMatchBlob((obj) => {
       if ((this as any).player1Id && (this as any).player2Id) {
-        obj.players = {
-          [(this as any).player1Id]: { 
-            username: (this as any).player1Id,
-            rating: 1200 // Default rating, will be updated when players join
-          },
-          [(this as any).player2Id]: { 
-            username: (this as any).player2Id,
-            rating: 1200 // Default rating, will be updated when players join
+        // Only update players if they don't exist or are incomplete
+        if (!obj.players || !obj.players[(this as any).player1Id] || !obj.players[(this as any).player2Id]) {
+          obj.players = obj.players || {};
+          if (!obj.players[(this as any).player1Id]) {
+            obj.players[(this as any).player1Id] = { 
+              username: (this as any).player1Id,
+              rating: obj.ratings?.player1 || 1200
+            };
           }
-        };
+          if (!obj.players[(this as any).player2Id]) {
+            obj.players[(this as any).player2Id] = { 
+              username: (this as any).player2Id,
+              rating: obj.ratings?.player2 || 1200
+            };
+          }
+        }
         
-        // Add ratings from Redis if available
+        // Add ratings from Redis if available and not already set
         const ratingsKey = `match:${this.matchId}:ratings`;
         this.redis.hgetall(ratingsKey).then(ratings => {
           if (ratings && ratings.player1 && ratings.player2) {
             this.updateMatchBlob((obj) => {
-              obj.ratings = {
-                player1: parseInt(ratings.player1),
-                player2: parseInt(ratings.player2)
-              };
+              if (!obj.ratings || !obj.ratings.player1 || !obj.ratings.player2) {
+                obj.ratings = {
+                  player1: parseInt(ratings.player1),
+                  player2: parseInt(ratings.player2)
+                };
+              }
             });
           }
         }).catch(err => console.warn('Failed to fetch ratings:', err));
@@ -294,7 +328,17 @@ export class MatchRoom extends Room {
     this.onMessage('submit_code', async (client, message: { userId: string; language: string; source_code: string }) => {
       const { userId, language, source_code } = message;
       
-      console.log(`Received submit_code from ${userId} with language ${language}`);
+      console.log(`[SUBMIT_CODE] Received submit_code from ${userId} with language ${language}, code length: ${source_code?.length || 0}`);
+      
+      if (!userId || !language || !source_code) {
+        console.error(`[SUBMIT_CODE] Missing required fields:`, { userId: !!userId, language: !!language, source_code: !!source_code });
+        client.send('submission_result', {
+          userId,
+          success: false,
+          error: 'Missing required fields in submission'
+        });
+        return;
+      }
       
       // rate limit: 1 submit per 2s per user
       const now = Date.now();
@@ -312,6 +356,12 @@ export class MatchRoom extends Room {
           console.log(`Fetching problem data for ${this.problemId}`);
           this.problemData = await getProblemWithTestCases(this.problemId);
           console.log(`Problem data fetched:`, this.problemData ? 'Success' : 'Failed');
+          if (this.problemData) {
+            this.problemData.testCases = prepareTestCasesForExecution(
+              this.problemData.testCases || [],
+              this.problemData.specialInputs || this.problemData.specialInputConfigs || []
+            );
+          }
         }
         const problem = this.problemData;
         
@@ -364,7 +414,8 @@ export class MatchRoom extends Room {
             totalTests: cachedResult.totalTests,
             testResults: cachedResult.testResults,
             averageTime: cachedResult.averageTime,
-            averageMemory: cachedResult.averageMemory
+            averageMemory: cachedResult.averageMemory,
+            submission: cachedResult.submission
           });
           
           // Broadcast cached submission to both players
@@ -637,7 +688,8 @@ export class MatchRoom extends Room {
           totalTests: executionResult.totalTests,
           testResults,
           averageTime: executionResult.averageTime,
-          averageMemory: executionResult.averageMemory
+          averageMemory: executionResult.averageMemory,
+          submission
         });
         
         // Broadcast new submission to both players
@@ -672,12 +724,17 @@ export class MatchRoom extends Room {
         }
 
       } catch (e) {
-        console.error('Submit error:', e);
-        client.send('submission_result', {
-          userId,
-          success: false,
-          error: (e as Error).message || 'Submission failed'
-        });
+        console.error(`[SUBMIT_CODE] Error processing submission for ${userId}:`, e);
+        console.error(`[SUBMIT_CODE] Error stack:`, e instanceof Error ? e.stack : 'No stack trace');
+        try {
+          client.send('submission_result', {
+            userId,
+            success: false,
+            error: (e as Error).message || 'Submission failed'
+          });
+        } catch (sendError) {
+          console.error(`[SUBMIT_CODE] Failed to send error response to client:`, sendError);
+        }
       }
     });
 
@@ -700,6 +757,12 @@ export class MatchRoom extends Room {
         // Fetch problem with testCases from MongoDB (cached after first fetch)
         if (!this.problemData) {
           this.problemData = await getProblemWithTestCases(this.problemId);
+          if (this.problemData) {
+            this.problemData.testCases = prepareTestCasesForExecution(
+              this.problemData.testCases || [],
+              this.problemData.specialInputs || this.problemData.specialInputConfigs || []
+            );
+          }
         }
         const problem = this.problemData;
         
@@ -848,30 +911,68 @@ export class MatchRoom extends Room {
     
     console.log(`onAuth - userId: ${userId}, sessionId: ${client.sessionId}, existing clients: ${this.clients.length}, connecting: ${Array.from(this.connectingUserIds).join(', ')}`);
     
-    // Check if this userId is already connected or currently connecting
+    // Check if this userId is already connected
     if (this.userIdToSession[userId]) {
       const existingSession = this.userIdToSession[userId];
+      const existingClient = this.clients.find((c) => c.sessionId === existingSession);
+      
       if (existingSession !== client.sessionId) {
-        // Different session - allow reconnection, kick old one
-        console.log(`User ${userId} reconnecting, kicking old session ${existingSession}`);
-        const prev = this.clients.find((c) => c.sessionId === existingSession);
-        if (prev) {
+        // Different session - allow reconnection, kick old one if it exists
+        console.log(`User ${userId} reconnecting with different session, kicking old session ${existingSession}`);
+        if (existingClient) {
           this.connectingUserIds.delete(userId);
           delete this.userIdToSession[userId];
-          try { await prev.leave(1000); } catch {}
+          try { 
+            await existingClient.leave(1000); 
+          } catch (err) {
+            console.log(`Error leaving old client: ${err}`);
+          }
           await new Promise(resolve => setTimeout(resolve, 100));
+        } else {
+          // Old session disconnected but entry still exists - clean it up
+          console.log(`Old session ${existingSession} no longer connected, cleaning up stale entry`);
+          this.connectingUserIds.delete(userId);
+          delete this.userIdToSession[userId];
         }
       } else {
-        // Same session - duplicate join
-        console.log(`REJECTING duplicate join from same session`);
-        return false;
+        // Same session
+        if (existingClient) {
+          // Same session and client is still connected - duplicate join attempt
+          console.log(`REJECTING duplicate join from same session (client still connected)`);
+          return false;
+        } else {
+          // Same session but client disconnected - allow reconnection
+          console.log(`Same session reconnecting after disconnect, cleaning up stale entry`);
+          this.connectingUserIds.delete(userId);
+          delete this.userIdToSession[userId];
+        }
       }
     }
     
     // Check if this userId is currently in the process of connecting
+    // But only reject if we can't find a connected client (stale entry cleanup)
     if (this.connectingUserIds.has(userId)) {
-      console.log(`REJECTING - User ${userId} is already connecting to this room`);
-      return false;
+      // Check if there's actually a client connecting/connected for this userId
+      // First check if userIdToSession has an entry (means onJoin completed)
+      const sessionForUserId = this.userIdToSession[userId];
+      if (sessionForUserId) {
+        // Check if the client with that session is still connected
+        const isActuallyConnecting = this.clients.some(c => c.sessionId === sessionForUserId);
+        if (isActuallyConnecting) {
+          console.log(`REJECTING - User ${userId} is already connected to this room (session: ${sessionForUserId})`);
+          return false;
+        } else {
+          // Session exists but client disconnected - clean up both
+          console.log(`Cleaning up stale entries for ${userId} (session ${sessionForUserId} but client disconnected)`);
+          this.connectingUserIds.delete(userId);
+          delete this.userIdToSession[userId];
+        }
+      } else {
+        // connectingUserIds has entry but userIdToSession doesn't - stale connecting state
+        // This can happen if onAuth passed but onJoin never completed
+        console.log(`Cleaning up stale connectingUserIds entry for ${userId} (onJoin never completed)`);
+        this.connectingUserIds.delete(userId);
+      }
     }
     
     // Mark this userId as connecting
@@ -983,9 +1084,12 @@ export class MatchRoom extends Room {
       this.stopBotSimulation(botUserId);
     }
     
-    // Clean up bot states and notify bot service of match completion
+    // NOTE: Bot cleanup is now handled in endMatch() to prevent race conditions
+    // This onDispose() method is called after endMatch() completes, so we don't
+    // need to duplicate the cleanup here. However, we keep this as a safety net
+    // in case endMatch() wasn't called properly.
     try {
-      // Get player information from Redis instead of undefined state
+      // Get player information from Redis
       const matchKey = RedisKeys.matchKey(this.matchId);
       const matchRaw = await this.redis.get(matchKey);
       
@@ -998,30 +1102,22 @@ export class MatchRoom extends Room {
             ? Object.keys(playersField)
             : [];
 
+        // Only clean up if bots are still in active set (safety net)
         for (const playerId of playerIds) {
-          // Check if this player is a bot
           const isBot = await this.redis.get(`bots:state:${playerId}`);
           if (isBot) {
-            console.log(`Cleaning up bot state for ${playerId} after match completion`);
-            
-            // Remove bot from active matches set
-            await this.redis.srem(RedisKeys.botsActiveSet, playerId);
-            
-            // Clear bot state
-            await this.redis.del(RedisKeys.botStateKey(playerId));
-            
-            // Notify bot service that this bot completed a match
-            await this.redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
-              type: 'botMatchComplete',
-              botId: playerId
-            }));
-            
-            console.log(`Notified bot service that bot ${playerId} completed match`);
+            const stillActive = await this.redis.sismember(RedisKeys.botsActiveSet, playerId);
+            if (stillActive) {
+              console.log(`[onDispose] Safety cleanup: Bot ${playerId} still in active set, removing`);
+              await this.redis.srem(RedisKeys.botsActiveSet, playerId);
+              await this.redis.del(RedisKeys.botStateKey(playerId));
+              await this.redis.del(`bot:current_match:${playerId}`);
+            }
           }
         }
       }
     } catch (error) {
-      console.error('Error cleaning up bot states:', error);
+      console.error('Error in onDispose bot cleanup (safety net):', error);
     }
   }
 
@@ -1122,65 +1218,100 @@ export class MatchRoom extends Room {
     }
 
     const matchKeyForCleanup = RedisKeys.matchKey(this.matchId);
+    
+    // CRITICAL: Get player IDs from ratings key (most reliable source)
+    // This ensures we clean up the same players that were in the match
+    const ratingsKey = `match:${this.matchId}:ratings`;
+    let playerIds: string[] = [];
+    
     try {
-      // Clear reservations for both players ONLY when match actually ends
-      const matchRaw = await this.redis.get(matchKeyForCleanup);
-      if (matchRaw) {
-        const matchData = JSON.parse(matchRaw);
-        const playersField = matchData.players;
-        const playerIds: string[] = Array.isArray(playersField)
-          ? playersField
-          : (playersField && typeof playersField === 'object')
-            ? Object.keys(playersField)
-            : [];
-
-        for (const playerId of playerIds) {
-          try {
-            await this.redis.del(`queue:reservation:${playerId}`);
-            console.log(`Cleared reservation for player ${playerId} - match ended`);
-          } catch (err) {
-            console.warn(`Failed clearing reservation for ${playerId}:`, err);
-          }
+      const [userId1, userId2] = await Promise.all([
+        this.redis.hget(ratingsKey, 'userId1'),
+        this.redis.hget(ratingsKey, 'userId2')
+      ]);
+      playerIds = [userId1, userId2].filter(Boolean) as string[];
+      
+      // Fallback: if ratings key doesn't have player IDs, try match data
+      if (playerIds.length === 0) {
+        const matchRaw = await this.redis.get(matchKeyForCleanup);
+        if (matchRaw) {
+          const matchData = JSON.parse(matchRaw);
+          const playersField = matchData.players;
+          playerIds = Array.isArray(playersField)
+            ? playersField
+            : (playersField && typeof playersField === 'object')
+              ? Object.keys(playersField)
+              : [];
         }
       }
-    } finally {
-      // Always publish end event and remove from active set
-      try {
-        await this.redis.publish(
-          RedisKeys.matchEventsChannel,
-          JSON.stringify({ type: 'match_end', matchId: this.matchId, reason, at: Date.now() })
-        );
-      } catch (err) {
-        console.warn('Failed publishing match_end event:', err);
-      }
-      try {
-        await this.redis.srem(RedisKeys.activeMatchesSet, this.matchId);
-        
-        // Remove bots from active set
-        const ratingsKey = `match:${this.matchId}:ratings`;
-        const userId1 = await this.redis.hget(ratingsKey, 'userId1');
-        const userId2 = await this.redis.hget(ratingsKey, 'userId2');
-        const players = [userId1, userId2].filter(Boolean) as string[];
-        
-          for (const playerId of players) {
-            if (playerId && await this.isBotUser(playerId)) {
-              const wasActive = await this.redis.srem(RedisKeys.botsActiveSet, playerId);
-              if (wasActive) {
-                // This was a bot that was active, trigger rotation
-                console.log(`Bot ${playerId} completed match, triggering rotation`);
-                await this.redis.publish(
-                  RedisKeys.botsCommandsChannel,
-                  JSON.stringify({ type: 'botMatchComplete', botId: playerId })
-                );
-              }
-            }
-          }
-      } catch (err) {
-        console.warn('Failed removing match from active set:', err);
-      }
-      // Disconnect room regardless to trigger disposal
-      this.disconnect();
+    } catch (err) {
+      console.warn('Failed to get player IDs for cleanup:', err);
     }
+    
+    // CRITICAL: Atomically clear reservations AND remove from bots:active
+    // This prevents race conditions where a bot could be matched again
+    // before cleanup completes
+    try {
+      const multi = this.redis.multi();
+      
+      // Clear reservations for all players
+      for (const playerId of playerIds) {
+        multi.del(`queue:reservation:${playerId}`);
+      }
+      
+      // Remove bots from active set and clear their state
+      for (const playerId of playerIds) {
+        if (playerId && await this.isBotUser(playerId)) {
+          multi.srem(RedisKeys.botsActiveSet, playerId);
+          multi.del(`bot:current_match:${playerId}`);
+          multi.del(RedisKeys.botStateKey(playerId));
+        }
+      }
+      
+      // Execute all cleanup operations atomically
+      await multi.exec();
+      
+      console.log(`Atomically cleaned up ${playerIds.length} players from match ${this.matchId}`);
+      
+      // Notify bot service for each bot that completed
+      for (const playerId of playerIds) {
+        if (playerId && await this.isBotUser(playerId)) {
+          console.log(`Bot ${playerId} completed match, triggering rotation`);
+          await this.redis.publish(
+            RedisKeys.botsCommandsChannel,
+            JSON.stringify({ type: 'botMatchComplete', botId: playerId })
+          );
+        }
+      }
+    } catch (err) {
+      console.error('Failed atomic cleanup of players:', err);
+      // Fallback: try individual cleanup
+      for (const playerId of playerIds) {
+        try {
+          await this.redis.del(`queue:reservation:${playerId}`);
+          if (playerId && await this.isBotUser(playerId)) {
+            await this.redis.srem(RedisKeys.botsActiveSet, playerId);
+            await this.redis.del(`bot:current_match:${playerId}`);
+          }
+        } catch (cleanupErr) {
+          console.warn(`Failed cleanup for player ${playerId}:`, cleanupErr);
+        }
+      }
+    }
+    
+    // Always publish end event and remove from active matches set
+    try {
+      await this.redis.publish(
+        RedisKeys.matchEventsChannel,
+        JSON.stringify({ type: 'match_end', matchId: this.matchId, reason, at: Date.now() })
+      );
+      await this.redis.srem(RedisKeys.activeMatchesSet, this.matchId);
+    } catch (err) {
+      console.warn('Failed publishing match_end event:', err);
+    }
+    
+    // Disconnect room regardless to trigger disposal
+    this.disconnect();
   }
 
   private async handleGuestMatchStorage() {
@@ -1257,10 +1388,19 @@ export class MatchRoom extends Room {
     const key = RedisKeys.matchKey(this.matchId);
     const raw = await this.redis.get(key);
     let obj: any = raw ? JSON.parse(raw) : {};
+    const beforePlayerCount = Object.keys(obj.players || {}).length;
     mutator(obj);
-    await this.redis.set(key, JSON.stringify(obj));
-    // Extend expiration time to ensure data persists for match history
-    await this.redis.expire(key, 86400); // 24 hours
+    const afterPlayerCount = Object.keys(obj.players || {}).length;
+    
+    // Use setex for atomic set+expire to avoid race conditions
+    await this.redis.setex(key, 86400, JSON.stringify(obj)); // 24 hours
+    
+    // Log if players were added
+    if (beforePlayerCount === 0 && afterPlayerCount > 0) {
+      console.log(`updateMatchBlob: Added ${afterPlayerCount} players to match ${this.matchId}`);
+    } else if (beforePlayerCount > afterPlayerCount) {
+      console.warn(`updateMatchBlob: WARNING - Player count decreased from ${beforePlayerCount} to ${afterPlayerCount} for match ${this.matchId}`);
+    }
   }
 
   private async createInitialMatchDocument() {
@@ -1269,7 +1409,38 @@ export class MatchRoom extends Room {
       const db = client.db(DB_NAME);
       const matches = db.collection('matches') as any;
       
-      // Create initial match document with startedAt
+      // Check if document already exists to prevent duplicate creation
+      const existing = await matches.findOne({ _id: new ObjectId(this.matchId) });
+      if (existing && existing.status === 'finished') {
+        console.warn(`Match ${this.matchId} already exists and is finished, skipping document creation`);
+        return;
+      }
+      
+      // Get player IDs from room options
+      const player1Id = (this as any).player1Id;
+      const player2Id = (this as any).player2Id;
+      const playerIds: ObjectId[] = [];
+      const playerIdStrings: string[] = [];
+
+      const addPlayerId = (rawId: string | undefined | null, label: 'player1Id' | 'player2Id') => {
+        if (!rawId) {
+          return;
+        }
+
+        playerIdStrings.push(rawId);
+
+        if (ObjectId.isValid(rawId)) {
+          playerIds.push(new ObjectId(rawId));
+        } else {
+          // Guests and other non-ObjectId identifiers should not trigger errors.
+          console.warn(`Skipping ${label} with non-ObjectId value: ${rawId}`);
+        }
+      };
+
+      addPlayerId(player1Id, 'player1Id');
+      addPlayerId(player2Id, 'player2Id');
+
+      // Create initial match document with startedAt and playerIds
       await matches.updateOne(
         { _id: new ObjectId(this.matchId) },
         {
@@ -1277,7 +1448,8 @@ export class MatchRoom extends Room {
             startedAt: new Date(this.startTime),
             problemId: new ObjectId(this.problemId),
             status: 'ongoing',
-            playerIds: []
+            playerIds,
+            playerIdStrings,
           },
           $setOnInsert: {
             submissionIds: []
@@ -1286,7 +1458,48 @@ export class MatchRoom extends Room {
         { upsert: true }
       );
       
-      console.log(`Created initial match document for ${this.matchId} with startedAt: ${new Date(this.startTime).toISOString()}`);
+      console.log(`Created initial match document for ${this.matchId} with startedAt: ${new Date(this.startTime).toISOString()}, playerIds: [${playerIds.map(id => id.toString()).join(', ')}]`);
+      
+      // Add matchId to players' matchIds arrays immediately upon match creation
+      const users = db.collection('users');
+      const bots = db.collection('bots');
+      const matchObjectId = new ObjectId(this.matchId);
+      
+      for (const playerIdString of playerIdStrings) {
+        // Skip guests and invalid ObjectIds
+        if (!ObjectId.isValid(playerIdString) || playerIdString.startsWith('guest_')) {
+          continue;
+        }
+        
+        try {
+          const playerObjectId = new ObjectId(playerIdString);
+          const isBot = await this.isBotUser(playerIdString);
+          
+          if (isBot) {
+            // Update bot's matchIds
+            await bots.updateOne(
+              { _id: playerObjectId },
+              {
+                $setOnInsert: { matchIds: [] },
+                $addToSet: { matchIds: matchObjectId }
+              }
+            );
+            console.log(`Added match ${this.matchId} to bot ${playerIdString} matchIds`);
+          } else {
+            // Update user's matchIds
+            await users.updateOne(
+              { _id: playerObjectId },
+              {
+                $setOnInsert: { matchIds: [] },
+                $addToSet: { matchIds: matchObjectId }
+              }
+            );
+            console.log(`Added match ${this.matchId} to user ${playerIdString} matchIds`);
+          }
+        } catch (err) {
+          console.warn(`Failed to add match ${this.matchId} to player ${playerIdString} matchIds:`, err);
+        }
+      }
     } catch (error) {
       console.error('Failed to create initial match document:', error);
     }
@@ -1620,7 +1833,7 @@ export class MatchRoom extends Room {
                   'stats.timeCoded': this.matchDuration || 0 // Add time coded in milliseconds, default to 0 if undefined
                 },
                 $set: { 'stats.rating': newRating, updatedAt: new Date() },
-                $push: { matchIds: new ObjectId(this.matchId) } as any
+                $addToSet: { matchIds: new ObjectId(this.matchId) }
               }
             );
             
@@ -1721,6 +1934,104 @@ export class MatchRoom extends Room {
     }
   }
 
+  /**
+   * Resolve participant IDs for this match. Prefers explicit options but falls back to Redis caches.
+   */
+  private async resolveParticipantIds(options: { player1Id?: string; player2Id?: string }): Promise<string[]> {
+    const ids = new Set<string>();
+    if (options.player1Id) {
+      ids.add(options.player1Id);
+    }
+    if (options.player2Id) {
+      ids.add(options.player2Id);
+    }
+
+    // Fall back to ratings hash written by createMatch
+    if (ids.size < 2) {
+      try {
+        const ratingsKey = `match:${this.matchId}:ratings`;
+        const [userId1, userId2] = await this.redis.hmget(ratingsKey, 'userId1', 'userId2');
+        if (userId1) ids.add(userId1);
+        if (userId2) ids.add(userId2);
+      } catch (error) {
+        console.warn(`Failed to read ratings hash for match ${this.matchId}:`, error);
+      }
+    }
+
+    // Fall back to persisted match blob
+    if (ids.size < 2) {
+      try {
+        const matchKey = RedisKeys.matchKey(this.matchId);
+        const raw = await this.redis.get(matchKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed?.players)) {
+            parsed.players.forEach((playerId: string) => ids.add(playerId));
+          } else if (parsed?.players && typeof parsed.players === 'object') {
+            Object.keys(parsed.players).forEach((playerId) => ids.add(playerId));
+          } else if (Array.isArray(parsed?.playerIdStrings)) {
+            parsed.playerIdStrings.forEach((playerId: string) => ids.add(playerId));
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to read match blob for ${this.matchId}:`, error);
+      }
+    }
+
+    return Array.from(ids);
+  }
+
+  /**
+   * When rooms are recovered (e.g., after server restart), ensure Redis queue state
+   * matches the fact that these participants are already in a match.
+   */
+  private async syncParticipantsWithRedis(options: { player1Id?: string; player2Id?: string }): Promise<void> {
+    try {
+      const participantIds = await this.resolveParticipantIds(options);
+      if (participantIds.length === 0) {
+        console.warn(`Match ${this.matchId} started without identifiable participants.`);
+        return;
+      }
+
+      const reservationPayload = JSON.stringify({
+        roomId: this.roomId,
+        roomName: 'match',
+        matchId: this.matchId,
+        problemId: this.problemId,
+      });
+
+      const multi = this.redis.multi();
+      for (const playerId of participantIds) {
+        multi.zrem(RedisKeys.eloQueue, playerId);
+        multi.del(RedisKeys.queueJoinedAtKey(playerId));
+        multi.srem(RedisKeys.queuedPlayersSet, playerId);
+        multi.srem(RedisKeys.humanPlayersSet, playerId);
+      }
+      multi.sadd(RedisKeys.activeMatchesSet, this.matchId);
+      await multi.exec();
+
+      for (const playerId of participantIds) {
+        try {
+          await this.redis.setex(`queue:reservation:${playerId}`, 3600, reservationPayload);
+
+          const isBot = await this.isBotUser(playerId);
+          if (isBot) {
+            const botStateMulti = this.redis.multi();
+            botStateMulti.sadd(RedisKeys.botsActiveSet, playerId);
+            botStateMulti.srem(RedisKeys.botsDeployedSet, playerId);
+            botStateMulti.setex(`bot:current_match:${playerId}`, 3600, this.matchId);
+            botStateMulti.setex(RedisKeys.botStateKey(playerId), 3600, 'playing');
+            await botStateMulti.exec();
+          }
+        } catch (playerError) {
+          console.warn(`Failed to synchronize participant ${playerId} for match ${this.matchId}:`, playerError);
+        }
+      }
+    } catch (error) {
+      console.warn(`Failed to synchronize participants for match ${this.matchId}:`, error);
+    }
+  }
+
   // Sample completion time in ms from configured distribution. If no config, return +Infinity.
   private sampleBotCompletionMs(difficulty: 'Easy' | 'Medium' | 'Hard', matchId: string, botId: string): number {
     const dist = (process.env.BOT_TIME_DIST || 'lognormal').toLowerCase();
@@ -1808,55 +2119,9 @@ export class MatchRoom extends Room {
         return {};
       }
 
-      // Get player ratings from MongoDB (check both users and bots collections)
-      const mongoClient = await getMongoClient();
-      const db = mongoClient.db(DB_NAME);
-      const users = db.collection('users');
-      const bots = db.collection('bots');
-
-      // Validate and convert player IDs to ObjectIds
-      let player1Id: ObjectId;
-      let player2Id: ObjectId;
-      
-      try {
-        player1Id = new ObjectId(playerIds[0]);
-      } catch (error) {
-        console.error(`Invalid player1 ID format: ${playerIds[0]}`, error);
-        return {};
-      }
-      
-      try {
-        player2Id = new ObjectId(playerIds[1]);
-      } catch (error) {
-        console.error(`Invalid player2 ID format: ${playerIds[1]}`, error);
-        return {};
-      }
-
-      // Get ratings for both players, checking both users and bots collections
-      let player1Rating = 1200;
-      let player2Rating = 1200;
-
-      // Check if player1 is a bot
-      const player1Bot = await bots.findOne({ _id: player1Id }, { projection: { 'stats.rating': 1 } });
-      if (player1Bot) {
-        player1Rating = player1Bot.stats?.rating || 1200;
-        console.log(`Player1 ${playerIds[0]} is a bot with rating ${player1Rating}`);
-      } else {
-        const player1User = await users.findOne({ _id: player1Id }, { projection: { 'stats.rating': 1 } });
-        player1Rating = player1User?.stats?.rating || 1200;
-        console.log(`Player1 ${playerIds[0]} is a user with rating ${player1Rating}`);
-      }
-
-      // Check if player2 is a bot
-      const player2Bot = await bots.findOne({ _id: player2Id }, { projection: { 'stats.rating': 1 } });
-      if (player2Bot) {
-        player2Rating = player2Bot.stats?.rating || 1200;
-        console.log(`Player2 ${playerIds[1]} is a bot with rating ${player2Rating}`);
-      } else {
-        const player2User = await users.findOne({ _id: player2Id }, { projection: { 'stats.rating': 1 } });
-        player2Rating = player2User?.stats?.rating || 1200;
-        console.log(`Player2 ${playerIds[1]} is a user with rating ${player2Rating}`);
-      }
+      const ratingResults = await getPlayerRatings(playerIds);
+      const player1Rating = ratingResults[playerIds[0]]?.rating ?? 1200;
+      const player2Rating = ratingResults[playerIds[1]]?.rating ?? 1200;
 
       // Difficulty-aware scaling using problemElo from ratings hash
       const problemEloRaw = await this.redis.hget(`match:${this.matchId}:ratings`, 'problemElo');
@@ -2062,5 +2327,7 @@ export class MatchRoom extends Room {
     }
   }
 }
+
+
 
 

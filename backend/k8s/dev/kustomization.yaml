@@ -1,0 +1,104 @@
+# Kustomization for Local Development (k3d)
+# This overlay simplifies the production setup for local development
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: codeclashers-dev
+
+resources:
+  # Namespace
+  - namespace-dev.yaml
+  
+  # Local Dev: Single MongoDB instance (not replica set)
+  - mongodb-dev.yaml
+  
+  # Local Dev: Single Redis instance (not cluster)
+  - redis-dev.yaml
+  
+  # Local Dev: MinIO for S3 (instead of AWS S3)
+  - minio-dev.yaml
+  
+  # Services (local copies in dev/)
+  - services/postgres-service.yaml
+  - services/judge0-server-service.yaml
+  - services/colyseus-service.yaml
+  - services/bots-service.yaml
+  
+  # Deployments (local copies in dev/)
+  - deployments/postgres.yaml
+  - deployments/judge0-server.yaml
+  - deployments/judge0-worker.yaml
+  - deployments/colyseus.yaml
+  - deployments/bots.yaml
+  
+  # Monitoring Stack (dev)
+  - monitoring/rbac/prometheus-serviceaccount.yaml
+  - monitoring/rbac/prometheus-role.yaml
+  - monitoring/rbac/prometheus-rolebinding.yaml
+  - monitoring/rbac/prometheus-clusterrole.yaml
+  - monitoring/rbac/prometheus-clusterrolebinding.yaml
+  - monitoring/rbac/kube-state-metrics-serviceaccount.yaml
+  - monitoring/rbac/kube-state-metrics-role.yaml
+  - monitoring/rbac/kube-state-metrics-rolebinding.yaml
+  - monitoring/rbac/promtail-serviceaccount.yaml
+  - monitoring/rbac/promtail-role.yaml
+  - monitoring/rbac/promtail-rolebinding.yaml
+  - monitoring/configmaps/prometheus-config.yaml
+  - monitoring/configmaps/grafana-datasource.yaml
+  - monitoring/configmaps/grafana-dashboard-provisioning.yaml
+  - monitoring/configmaps/grafana-dashboards.yaml
+  - monitoring/configmaps/grafana-pod-logs-dashboard.yaml
+  - monitoring/configmaps/loki-config.yaml
+  - monitoring/configmaps/promtail-config.yaml
+  - monitoring/deployments/prometheus.yaml
+  - monitoring/deployments/grafana.yaml
+  - monitoring/deployments/node-exporter.yaml
+  - monitoring/deployments/kube-state-metrics.yaml
+  - monitoring/deployments/loki.yaml
+  - monitoring/deployments/promtail.yaml
+  - monitoring/services/prometheus-service.yaml
+  - monitoring/services/grafana-service.yaml
+  - monitoring/services/node-exporter-service.yaml
+  - monitoring/services/kube-state-metrics-service.yaml
+  - monitoring/services/loki-service.yaml
+
+# ConfigMaps
+configMapGenerator:
+  - name: app-config
+    options:
+      disableNameSuffixHash: true
+    literals:
+      - NODE_ENV=development
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MONGODB_HOST=mongodb-dev
+      - MONGODB_PORT=27017
+      - POSTGRES_HOST=postgres
+      - JUDGE0_HOST=judge0-server
+      - JUDGE0_PORT=2358
+      - COLYSEUS_HOST=colyseus
+      - CORS_ORIGIN=http://localhost:3000
+      - BOTS_ENABLED=true
+      - BOT_FILL_DELAY_MS=15000
+      - BOT_TIME_DIST=lognormal
+      - BOT_TIME_PARAMS_EASY={"muMinutes":30,"sigma":0.35}
+      - BOT_TIME_PARAMS_MEDIUM={"muMinutes":35,"sigma":0.35}
+      - BOT_TIME_PARAMS_HARD={"muMinutes":40,"sigma":0.35}
+
+# Common labels for dev environment
+commonLabels:
+  environment: development
+
+# Namespace transformer
+namespace: codeclashers-dev
+
+# Image transformers (optional - can override image tags)
+# images:
+#   - name: ghcr.io/rishabhvenu/codeclashers-colyseus
+#     newName: codeclashers-colyseus
+#     newTag: dev
+#   - name: ghcr.io/rishabhvenu/codeclashers-bots
+#     newName: codeclashers-bots
+#     newTag: dev
+

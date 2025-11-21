@@ -9,10 +9,16 @@ data:
   POSTGRES_PORT: "5432"
   MONGODB_HOST: "mongodb"
   MONGODB_PORT: "27017"
-  REDIS_HOST: "redis"
+  REDIS_HOST: "redis-cluster"  # Default, can be overridden via secrets
+  REDIS_CLUSTER_NODES: ""  # Optional comma-separated host:port list for Redis Cluster clients
+  REDIS_DB: "0"
+  REDIS_TLS: "false"
+  REDIS_TLS_REJECT_UNAUTHORIZED: "true"
   POSTGRES_HOST: "postgres"
   JUDGE0_HOST: "judge0-server"
   JUDGE0_PORT: "2358"
+  COLYSEUS_HOST: "colyseus"
+  CORS_ORIGIN: ""  # Should be set via env var in deployment
   NODE_ENV: "production"
   BOTS_ENABLED: "true"
   BOT_FILL_DELAY_MS: "15000"
@@ -20,4 +26,5 @@ data:
   BOT_TIME_PARAMS_EASY: '{"muMinutes":30,"sigma":0.35}'
   BOT_TIME_PARAMS_MEDIUM: '{"muMinutes":35,"sigma":0.35}'
   BOT_TIME_PARAMS_HARD: '{"muMinutes":40,"sigma":0.35}'
+  BOT_LEADER_TTL_MS: "15000"
 

@@ -4,6 +4,8 @@ import Play from "@/components/pages/Play";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 
+export const dynamic = 'force-dynamic';
+
 export default async function PlayPage() {
   const session = await getSession();
 

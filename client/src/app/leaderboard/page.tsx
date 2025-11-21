@@ -4,6 +4,8 @@ import Leaderboard from "@/components/pages/Leaderboard";
 import Layout from "@/components/Layout";
 import { logoutUser } from '@/lib/actions';
 
+export const dynamic = 'force-dynamic';
+
 export default async function LeaderboardPage() {
   const session = await getSession();
 

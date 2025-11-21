@@ -1,18 +1,48 @@
-const JUDGE0_URL = process.env.JUDGE0_URL || 'http://codeclashers-judge0:2358';
+if (!process.env.JUDGE0_URL) {
+  throw new Error('JUDGE0_URL environment variable is required');
+}
+const JUDGE0_URL = process.env.JUDGE0_URL;
 
 export async function submitToJudge0(language_id: number, source_code: string, stdin?: string) {
   try {
     // Encode source code and stdin to base64 to handle special characters
     const encodedSourceCode = Buffer.from(source_code, 'utf8').toString('base64');
     
+    // Judge0 default limits (128MB memory, 2s CPU) are too low for Java compilation.
+    // Set higher limits for Java and other compiled languages.
+    // Language IDs: 62 = Java, 91 = Java (OpenJDK 13), 93 = Java (OpenJDK 14+)
+    const isJava = [62, 91, 93].includes(language_id);
+    const isCompiledLanguage = [54, 50, 51, 52, 61, 62, 91, 93].includes(language_id); // C++, C, C#, Go, Java variants
+    
     const payload: any = { 
       language_id, 
       source_code: encodedSourceCode,
     };
     
+    // Set resource limits based on language type
+    // Note: Only set memory_limit for Java (needed for compilation). Other limits use Judge0 defaults
+    // to avoid potential issues with invalid parameters causing submissions to hang.
+    if (isJava) {
+      // Java needs more memory for compilation (javac can use 200-400MB)
+      payload.memory_limit = 512000; // 512 MB in KB
+      // Let Judge0 use its defaults for other limits to avoid hanging issues
+    }
+    // Don't set limits for other languages - let Judge0 use defaults
+    
     if (stdin !== undefined) {
       payload.stdin = Buffer.from(stdin, 'utf8').toString('base64');
     }
+    
+    // Log payload limits for debugging (without logging the full source code)
+    console.log(`Judge0 submission payload limits:`, {
+      language_id,
+      isJava,
+      isCompiledLanguage,
+      memory_limit: payload.memory_limit,
+      cpu_time_limit: payload.cpu_time_limit,
+      wall_time_limit: payload.wall_time_limit,
+      source_code_length: source_code.length
+    });
     
     const res = await fetch(`${JUDGE0_URL}/submissions?base64_encoded=true&wait=false`, {
       method: 'POST',

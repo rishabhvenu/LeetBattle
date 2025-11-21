@@ -2,7 +2,6 @@ export type OpponentStats = {
   _id: string;
   username: string;
   name: string;
-  initials: string;
   globalRank: number;
   gamesWon: number;
   winRate: number;

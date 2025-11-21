@@ -8,7 +8,6 @@ interface PlayerInfo {
   name: string;
   username: string;
   avatar: string | null;
-  initials: string;
 }
 
 interface MatchupAnimationProps {
@@ -60,19 +59,21 @@ const MatchupAnimation: React.FC<MatchupAnimationProps> = ({
   }));
 
   // Helper function to render profile picture
-  const renderProfilePicture = (avatar: string | null, initials: string, size: string = "w-24 h-24") => {
+const renderProfilePicture = (avatar: string | null, size: string = "w-24 h-24") => {
     const avatarUrl = getAvatarUrl(avatar);
     return (
       <Avatar className={size}>
-        {avatarUrl ? (
-          <AvatarImage
-            src={avatarUrl}
-            alt="Profile"
-          />
-        ) : null}
-        <AvatarFallback className="bg-gray-200 text-gray-600 font-bold text-xl">
-          {initials}
-        </AvatarFallback>
+      <AvatarImage
+        src={avatarUrl || "/placeholder_avatar.png"}
+        alt="Profile"
+      />
+      <AvatarFallback className="bg-gray-200">
+        <img
+          src="/placeholder_avatar.png"
+          alt="Placeholder avatar"
+          className="w-full h-full object-cover"
+        />
+      </AvatarFallback>
       </Avatar>
     );
   };
@@ -83,7 +84,7 @@ const MatchupAnimation: React.FC<MatchupAnimationProps> = ({
       <div className="relative flex items-center justify-center gap-12 z-10">
         {/* Player 1 */}
         <div className="flex flex-col items-center">
-          {renderProfilePicture(player1.avatar, player1.initials)}
+          {renderProfilePicture(player1.avatar)}
           <span className="mt-2 text-slate-200 font-bold text-lg">
             {player1.name}
           </span>
@@ -120,7 +121,7 @@ const MatchupAnimation: React.FC<MatchupAnimationProps> = ({
 
         {/* Player 2 */}
         <div className="flex flex-col items-center">
-          {renderProfilePicture(player2.avatar, player2.initials)}
+          {renderProfilePicture(player2.avatar)}
           <span className="mt-2 text-slate-200 font-bold text-lg">
             {player2.name}
           </span>

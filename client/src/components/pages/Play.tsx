@@ -51,21 +51,35 @@ export default function Play({ session, ongoingMatches }: { session: unknown; on
     const fetchStats = async () => {
       try {
         const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
-        const res = await fetch(`${base}/queue/size`);
-        const data = res.ok ? await res.json() : { size: 0 };
-        if (!mounted) return;
-        const inQueue = typeof data.size === 'number' ? data.size : 0;
-        // Basic estimate: active players ≈ ongoing matches * 2
-        setStats({ inQueue, activePlayers: (matchesCount || 0) * 2 });
+        // Fetch general stats which includes match count and active players
+        const res = await fetch(`${base}/global/general-stats`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!mounted) return;
+          const inProgressMatches = data.inProgressMatches || 0;
+          const activePlayers = data.activePlayers || 0;
+          const inQueue = data.inQueue || 0;
+          setMatchesCount(inProgressMatches);
+          setStats({ inQueue, activePlayers });
+        } else {
+          // Fallback to queue/size if general-stats fails
+          const queueRes = await fetch(`${base}/queue/size`);
+          const queueData = queueRes.ok ? await queueRes.json() : { size: 0 };
+          if (!mounted) return;
+          const inQueue = typeof queueData.size === 'number' ? queueData.size : 0;
+          // Use current matchesCount for activePlayers calculation if we can't get updated count
+          setStats({ inQueue, activePlayers: (matchesCount || 0) * 2 });
+        }
       } catch {
         if (!mounted) return;
+        // Fallback calculation
         setStats({ inQueue: 0, activePlayers: (matchesCount || 0) * 2 });
       }
     };
     fetchStats();
     const id = setInterval(fetchStats, 5000);
     return () => { mounted = false; clearInterval(id); };
-  }, [matchesCount]);
+  }, []);
 
   const handleStartQuickMatch = async () => {
     // Check if user already has an active match before queuing

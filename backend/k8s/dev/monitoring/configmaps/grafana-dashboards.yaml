@@ -1,0 +1,380 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: codeclashers-dev
+  labels:
+    app: grafana
+data:
+  kubernetes-pods.json: |
+    {
+        "id": null,
+        "uid": "kubernetes-pods-overview",
+        "title": "Kubernetes Pods Overview",
+        "tags": ["kubernetes", "pods"],
+        "timezone": "browser",
+        "schemaVersion": 16,
+        "version": 0,
+        "refresh": "10s",
+        "time": {
+          "from": "now-15m",
+          "to": "now"
+        },
+        "timepicker": {
+          "refresh_intervals": ["10s", "30s", "1m", "5m"]
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Pod Status",
+            "type": "table",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "kube_pod_status_phase{namespace=\"codeclashers-dev\"}",
+                "refId": "A",
+                "format": "table",
+                "instant": true
+              }
+            ],
+            "transformations": [
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "__name__": true,
+                    "instance": true,
+                    "job": true
+                  },
+                  "indexByName": {},
+                  "renameByName": {
+                    "phase": "Status",
+                    "pod": "Pod Name",
+                    "namespace": "Namespace"
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Running Pods Count",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "count(kube_pod_status_phase{namespace=\"codeclashers-dev\", phase=\"Running\"})",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {"mode": "thresholds"},
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"color": "green", "value": null}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 3,
+            "title": "Pod CPU Usage",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{namespace=\"codeclashers-dev\"}[5m]) * 100",
+                "legendFormat": "{{pod}}",
+                "refId": "A"
+              }
+            ],
+            "yaxes": [
+              {"format": "percent", "label": "CPU %"},
+              {"format": "short"}
+            ]
+          },
+          {
+            "id": 4,
+            "title": "Pod Memory Usage",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+            "targets": [
+              {
+                "expr": "container_memory_usage_bytes{namespace=\"codeclashers-dev\"} / 1024 / 1024",
+                "legendFormat": "{{pod}}",
+                "refId": "A"
+              }
+            ],
+            "yaxes": [
+              {"format": "mbytes", "label": "Memory (MB)"},
+              {"format": "short"}
+            ]
+          },
+          {
+            "id": 5,
+            "title": "Pod List",
+            "type": "table",
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
+            "targets": [
+              {
+                "expr": "kube_pod_info{namespace=\"codeclashers-dev\"}",
+                "refId": "A",
+                "format": "table",
+                "instant": true
+              }
+            ],
+            "transformations": [
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "__name__": true,
+                    "instance": true,
+                    "job": true,
+                    "node": true,
+                    "uid": true
+                  },
+                  "renameByName": {
+                    "pod": "Pod Name",
+                    "namespace": "Namespace",
+                    "host_ip": "Host IP",
+                    "pod_ip": "Pod IP",
+                    "created_by_kind": "Created By",
+                    "created_by_name": "Creator Name"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+    }
+  kubernetes-resources.json: |
+    {
+        "id": null,
+        "uid": "kubernetes-resource-usage",
+        "title": "Kubernetes Resource Usage",
+        "tags": ["kubernetes", "resources"],
+        "timezone": "browser",
+        "schemaVersion": 16,
+        "version": 0,
+        "refresh": "10s",
+        "time": {
+          "from": "now-15m",
+          "to": "now"
+        },
+        "timepicker": {
+          "refresh_intervals": ["10s", "30s", "1m", "5m"]
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "CPU Usage by Pod",
+            "type": "timeseries",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{namespace=\"codeclashers-dev\"}[5m]) * 100",
+                "legendFormat": "{{pod}}",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "min": 0
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "Memory Usage by Pod",
+            "type": "timeseries",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "container_memory_usage_bytes{namespace=\"codeclashers-dev\"} / 1024 / 1024",
+                "legendFormat": "{{pod}}",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "mbytes",
+                "min": 0
+              }
+            }
+          },
+          {
+            "id": 3,
+            "title": "Network Receive",
+            "type": "timeseries",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+            "targets": [
+              {
+                "expr": "rate(container_network_receive_bytes_total{namespace=\"codeclashers-dev\"}[5m])",
+                "legendFormat": "{{pod}}",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps"
+              }
+            }
+          },
+          {
+            "id": 4,
+            "title": "Network Transmit",
+            "type": "timeseries",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+            "targets": [
+              {
+                "expr": "rate(container_network_transmit_bytes_total{namespace=\"codeclashers-dev\"}[5m])",
+                "legendFormat": "{{pod}}",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "Bps"
+              }
+            }
+          }
+        ]
+    }
+  pod-logs-viewer.json: |
+    {
+        "id": null,
+        "uid": "pod-logs-viewer",
+        "title": "Pod Logs Viewer",
+        "tags": ["kubernetes", "logs", "pods"],
+        "timezone": "browser",
+        "schemaVersion": 16,
+        "version": 0,
+        "refresh": "10s",
+        "time": {
+          "from": "now-15m",
+          "to": "now"
+        },
+        "timepicker": {
+          "refresh_intervals": ["10s", "30s", "1m", "5m"]
+        },
+        "templating": {
+          "list": [
+            {
+              "name": "pod",
+              "type": "query",
+              "label": "Select Pod",
+              "datasource": "Prometheus",
+              "definition": "query_result((kube_pod_status_ready{namespace=\"codeclashers-dev\", condition=\"true\"} == 1) and on(pod) kube_pod_info{namespace=\"codeclashers-dev\", pod=~\"^(bots|colyseus|judge0|mongodb|postgres|redis|minio).*\"})",
+              "query": {
+                "query": "query_result((kube_pod_status_ready{namespace=\"codeclashers-dev\", condition=\"true\"} == 1) and on(pod) kube_pod_info{namespace=\"codeclashers-dev\", pod=~\"^(bots|colyseus|judge0|mongodb|postgres|redis|minio).*\"})",
+                "refId": "StandardVariableQuery"
+              },
+              "allValue": null,
+              "includeAll": false,
+              "multi": false,
+              "options": [],
+              "refresh": 1,
+              "regex": "/pod=\"([^\"]+)\"/",
+              "sort": 1,
+              "current": {
+                "selected": false,
+                "text": "",
+                "value": ""
+              }
+            }
+          ]
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "Pod Logs",
+            "type": "logs",
+            "gridPos": {"h": 20, "w": 24, "x": 0, "y": 0},
+            "targets": [
+              {
+                "datasource": "Loki",
+                "expr": "{namespace=\"codeclashers-dev\", filename=~\".*$pod.*\", container!=\"loki\", container!=\"promtail\", container!=\"prometheus\", container!=\"grafana\"}",
+                "refId": "A",
+                "legendFormat": "{{container}}"
+              }
+            ],
+            "options": {
+              "dedupStrategy": "none",
+              "enableLogDetails": true,
+              "prettifyLogMessage": false,
+              "showCommonLabels": false,
+              "showLabels": true,
+              "showTime": true,
+              "sortOrder": "Descending",
+              "wrapLogMessage": true
+            },
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "align": "auto"
+                }
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "All Pods",
+            "type": "table",
+            "gridPos": {"h": 10, "w": 24, "x": 0, "y": 20},
+            "targets": [
+              {
+                "datasource": {
+                  "type": "prometheus",
+                  "uid": "prometheus"
+                },
+                "expr": "kube_pod_info{namespace=\"codeclashers-dev\", pod=~\"^(bots|colyseus|judge0|mongodb|postgres|redis|minio).*\"} and on(pod) (kube_pod_status_ready{namespace=\"codeclashers-dev\", condition=\"true\"} == 1)",
+                "refId": "A",
+                "format": "table",
+                "instant": true
+              }
+            ],
+            "transformations": [
+              {
+                "id": "organize",
+                "options": {
+                  "excludeByName": {
+                    "Time": true,
+                    "__name__": true,
+                    "instance": true,
+                    "job": true,
+                    "uid": true,
+                    "node": true,
+                    "host_ip": true,
+                    "pod_ip": true,
+                    "created_by_kind": true,
+                    "created_by_name": true,
+                    "phase": true
+                  },
+                  "renameByName": {
+                    "pod": "Pod Name",
+                    "namespace": "Namespace",
+                    "app": "App"
+                  }
+                }
+              }
+            ],
+            "options": {
+              "showHeader": true,
+              "sortBy": [
+                {
+                  "desc": false,
+                  "displayName": "Pod Name"
+                }
+              ]
+            }
+          }
+        ]
+    }
+

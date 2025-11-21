@@ -28,26 +28,69 @@ spec:
         env:
         - name: REDIS_HOST
           valueFrom:
-            configMapKeyRef:
-              name: app-config
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_HOST
         - name: REDIS_PORT
           valueFrom:
-            configMapKeyRef:
-              name: app-config
+            secretKeyRef:
+              name: app-secrets
               key: REDIS_PORT
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: REDIS_PASSWORD
+        - name: REDIS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_USERNAME
+              optional: true
+        - name: REDIS_DB
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_DB
+        - name: REDIS_CLUSTER_NODES
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_CLUSTER_NODES
+              optional: true
+        - name: REDIS_TLS
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_TLS
+        - name: REDIS_TLS_REJECT_UNAUTHORIZED
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: REDIS_TLS_REJECT_UNAUTHORIZED
+              optional: true
         - name: BOT_SERVICE_SECRET
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: BOT_SERVICE_SECRET
+        - name: BOT_LEADER_TTL_MS
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: BOT_LEADER_TTL_MS
+        - name: COLYSEUS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: COLYSEUS_HOST
+        - name: COLYSEUS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: COLYSEUS_PORT
         - name: COLYSEUS_URL
-          value: "ws://colyseus:2567"
+          value: "ws://$(COLYSEUS_HOST):$(COLYSEUS_PORT)"
         - name: MONGODB_URI
           valueFrom:
             secretKeyRef:

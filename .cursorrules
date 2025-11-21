@@ -1,0 +1,32 @@
+# Cursor Rules for CodeClashers
+
+## Mandatory: Always Review Rules Folder
+
+**CRITICAL**: Before making any code changes, suggestions, or implementations, you MUST:
+
+1. **Always read and review the `rules/` folder** - Specifically `rules/README.md` and any other files in that directory
+2. **Follow all development guidelines** outlined in the rules folder
+3. **Reference the rules folder** when providing code suggestions or making changes
+
+## Development Guidelines (from rules/README.md)
+
+When working on this codebase, you must follow these guidelines:
+
+- **Clarify the goal before coding**: Confirm requirements, upstream/downstream dependencies, and constraints so the change stays scoped and intentional.
+- **Mirror established structure**: Reuse existing patterns, naming, and architectural boundaries; place new modules alongside their peers and update supporting docs/configs when layout shifts.
+- **Prefer smaller modules**: Split large features across cohesive files or directories instead of letting any single file grow unwieldy; extract shared helpers into reusable utilities.
+- **Keep functions focused**: Ensure functions have a single responsibility, keep control flow linear, enforce type or interface contracts, and comment only when intent isn't immediately obvious.
+- **Manage data deliberately**: Minimize shared mutable state, validate inputs early, and surface errors with actionable context rather than swallowing them silently.
+- **Handle concurrency carefully**: Follow existing async/locking patterns, guard against race conditions, and highlight fragile sections so future maintainers can spot them quickly.
+- **Optimize only after clarity**: Ship the readable solution first, profile before tuning, and document why any optimization or trade-off exists.
+- **Back changes with tests**: Expand unit/integration coverage for new logic or regressions, keep tests deterministic and fast, and record manual verification steps if automation is missing.
+- **Organize the repo continuously**: Clean up dead assets, keep dependency manifests accurate, and ensure feature directories remain coherent as the project evolves.
+- **Communicate cleanly**: Keep diffs scoped, summarize intent and impact when handing off work, and flag follow-up items such as migrations, config tweaks, or deployment steps.
+- **Always review the `context/` folder**: Scan it for design notes, shared constants, and prior art before coding so new work aligns with project-wide decisions.
+
+## Context Awareness
+
+- Always check the `context/` folder for design notes, architecture documentation, and project-wide decisions before implementing new features
+- Review existing code patterns and structures before suggesting changes
+- Maintain consistency with the established codebase architecture
+

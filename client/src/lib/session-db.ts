@@ -82,20 +82,153 @@ export async function getSessionFromDB(sessionId: string): Promise<SessionData> 
     });
 
     if (session && session.userId) {
-      const normalizedUserId =
-        typeof session.userId === 'string'
-          ? session.userId
-          : session.userId?.toString();
+      // Convert userId to string - handle ObjectId properly
+      // Check for ObjectId structure explicitly (has 'head' and 'pos' properties)
+      let normalizedUserId: string;
+      if (typeof session.userId === 'string') {
+        normalizedUserId = session.userId;
+      } else if (session.userId && typeof session.userId === 'object') {
+        // Check for ObjectId structure
+        const obj = session.userId as Record<string, unknown>;
+        if ('head' in obj && 'pos' in obj) {
+          // It's an ObjectId - convert to string using toString()
+          const objId = session.userId as { toString?: () => string };
+          if (objId.toString && typeof objId.toString === 'function') {
+            try {
+              const converted = objId.toString();
+              normalizedUserId = typeof converted === 'string' ? converted : String(session.userId);
+            } catch {
+              normalizedUserId = String(session.userId);
+            }
+          } else {
+            normalizedUserId = String(session.userId);
+          }
+        } else {
+          // Not an ObjectId, but still an object - try to convert
+          normalizedUserId = String(session.userId);
+        }
+      } else {
+        normalizedUserId = String(session.userId);
+      }
 
       if (!normalizedUserId) {
         return { authenticated: false };
       }
 
-      return {
-        authenticated: true,
-        userId: normalizedUserId,
-        user: session.user,
+      // Helper to convert ObjectId to string
+      const convertObjectIdToString = (val: unknown, fallback: string = ''): string => {
+        if (val === null || val === undefined) return fallback;
+        if (typeof val === 'string') return val;
+        if (typeof val === 'object' && val !== null) {
+          const obj = val as Record<string, unknown>;
+          // Check for ObjectId structure
+          if ('head' in obj && 'pos' in obj) {
+            const objId = val as { toString?: () => string };
+            if (objId.toString && typeof objId.toString === 'function') {
+              try {
+                const converted = objId.toString();
+                return typeof converted === 'string' ? converted : fallback;
+              } catch {
+                return fallback;
+              }
+            }
+            return fallback;
+          }
+        }
+        return String(val || fallback);
       };
+
+      // Ensure user object has all string fields - convert any ObjectIds
+      // This is critical for React Server Components which serialize props
+      // Explicitly convert each field to prevent ObjectIds from getting through
+      const user = session.user ? {
+        id: convertObjectIdToString(session.user.id, normalizedUserId),
+        email: convertObjectIdToString(session.user.email || '', ''),
+        username: convertObjectIdToString(session.user.username || '', ''),
+        avatar: (() => {
+          const rawAvatar = session.user!.avatar;
+          if (rawAvatar === null || rawAvatar === undefined) return null;
+          if (typeof rawAvatar === 'string') return rawAvatar;
+          if (typeof rawAvatar === 'object') {
+            // ObjectIds are not valid for avatar URLs
+            return null;
+          }
+          return null;
+        })(),
+        firstName: session.user.firstName ? convertObjectIdToString(session.user.firstName, '') : undefined,
+        lastName: session.user.lastName ? convertObjectIdToString(session.user.lastName, '') : undefined,
+        roles: session.user.roles ? (Array.isArray(session.user.roles) ? session.user.roles.map(r => convertObjectIdToString(r, '')) : []) : undefined,
+        role: session.user.role ? convertObjectIdToString(session.user.role, '') : undefined,
+        isAdmin: session.user.isAdmin,
+      } : undefined;
+
+      // Final step: Use JSON serialization to ensure ALL ObjectIds are converted to strings
+      // This is critical for React Server Components which serialize props
+      // Even if we've converted above, this ensures nothing slips through
+      try {
+        const replacer = (key: string, value: unknown) => {
+          if (value === null || value === undefined) return value;
+          if (typeof value === 'object' && value !== null) {
+            const obj = value as Record<string, unknown>;
+            // Check for ObjectId structure
+            if ('head' in obj && 'pos' in obj) {
+              // It's an ObjectId - convert to string
+              const objId = value as { toString?: () => string };
+              if (objId.toString && typeof objId.toString === 'function') {
+                try {
+                  return objId.toString();
+                } catch {
+                  return '';
+                }
+              }
+              return '';
+            }
+          }
+          return value;
+        };
+
+        // Serialize and parse to force ObjectId conversion
+        const serialized = JSON.stringify({
+          authenticated: true,
+          userId: normalizedUserId,
+          user,
+        }, replacer);
+
+        const parsed = JSON.parse(serialized) as SessionData;
+
+        // Verify userId is a string after parsing
+        if (parsed.userId && typeof parsed.userId !== 'string') {
+          parsed.userId = String(parsed.userId || '');
+        }
+
+        // Verify user fields are strings
+        if (parsed.user) {
+          if (parsed.user.id && typeof parsed.user.id !== 'string') {
+            parsed.user.id = String(parsed.user.id || '');
+          }
+          if (parsed.user.username && typeof parsed.user.username !== 'string') {
+            parsed.user.username = String(parsed.user.username || '');
+          }
+          if (parsed.user.email && typeof parsed.user.email !== 'string') {
+            parsed.user.email = String(parsed.user.email || '');
+          }
+          // Avatar should be string or null
+          if (parsed.user.avatar !== null && typeof parsed.user.avatar !== 'string') {
+            parsed.user.avatar = null;
+          }
+        }
+
+        return parsed;
+      } catch (error) {
+        console.error('Error serializing session data in getSessionFromDB:', error);
+        // If serialization fails, return the converted values directly
+        // (they should already be strings, but just in case)
+        return {
+          authenticated: true,
+          userId: normalizedUserId,
+          user,
+        };
+      }
     }
 
     return { authenticated: false };
@@ -135,7 +268,8 @@ export async function createSessionInDB(
 
     const sessionData: SessionDocument = {
       _id: sessionId,
-      userId: new ObjectId(userId),
+      // Store userId as a string, not ObjectId, to prevent React Server Components serialization issues
+      userId: userId,
       user: {
         id: userId,
         email,
