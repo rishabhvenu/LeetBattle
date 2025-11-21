@@ -169,8 +169,8 @@ jobs:
                   # Create a temporary file with the installation commands
                   # Write the RUN command with proper line continuations
                   {
-                    echo 'RUN apt-get update && \'
-                    echo '    apt-get install -y --no-install-recommends \'
+                    echo 'RUN DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get update && \'
+                    echo '    DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y --no-install-recommends \'
                     echo '      curl \'
                     echo '      git \'
                     echo '      build-essential \'
@@ -196,8 +196,8 @@ jobs:
                   if [ -n "$FIRST_FROM_LINE" ]; then
                     INSERT_LINE=$((FIRST_FROM_LINE + 1))
                     {
-                      echo 'RUN apt-get update && \'
-                      echo '    apt-get install -y --no-install-recommends \'
+                      echo 'RUN DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get update && \'
+                      echo '    DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y --no-install-recommends \'
                       echo '      curl \'
                       echo '      git \'
                       echo '      build-essential \'
