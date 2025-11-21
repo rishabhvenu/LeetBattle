@@ -1,42 +1,34 @@
 # Judge0 Worker Dockerfile for ARM64
-# Based on Judge0 repository with ARM64 compatibility patches
+# Worker does NOT use Ruby/Rails/Bundler - it's a shell-based executor
 
-# Multi-stage build
 FROM ubuntu:22.04 AS production
 
-# Install Ruby, Node.js, and dependencies
+# Install compilers and runtimes used by Judge0 Worker
 RUN DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get update && \
     DEBIAN_FRONTEND=noninteractive TZ=UTC apt-get install -y --no-install-recommends \
-      curl \
-      git \
       build-essential \
+      gcc \
+      g++ \
+      python3 \
+      python3-pip \
+      openjdk-17-jdk \
+      curl \
       ca-certificates \
-      gnupg2 \
-      software-properties-common \
+      git \
       tzdata && \
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
-    apt-get install -y ruby-full ruby-dev libpq-dev && \
-    gem install bundler:2.1.4 && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /api
+# Create working directory
+WORKDIR /worker
 
-# Copy application code
+# Copy worker code
 COPY . .
 
-# Install Ruby gems (required for Rails/Judge0)
-RUN bundle config set --local without "development test" && \
-    bundle install
-
-# Copy scripts explicitly
-COPY scripts/ ./scripts/
-
-# Make scripts executable
+# Copy scripts and ensure they are executable
 RUN chmod +x ./scripts/* || true
 
 # Development stage (inherits from production)
 FROM production AS development
 
-# Default command for worker
-ENTRYPOINT ["/api/scripts/workers"]
+# Use Judge0 worker entrypoint
+ENTRYPOINT ["./scripts/workers"]
