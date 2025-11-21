@@ -1,0 +1,11 @@
+.git
+tmp/
+log/
+vendor/bundle
+node_modules
+test/
+docs/
+*.md
+.gitignore
+.rspec
+.rubocop.yml
