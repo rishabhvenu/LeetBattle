@@ -145,20 +145,24 @@ jobs:
               fi
               
               # Now replace base images
+              # CRITICAL: Only replace the judge0/compilers base, NOT "FROM production"
               sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
               
               # Check if development stage inherits from production
               if grep -q "^FROM production" Dockerfile; then
-                echo "   Development stage inherits from production - this is good"
-                # Keep the inheritance, but we need to ensure production has everything
-                # The development stage will automatically get it
+                echo "   ✓ Development stage inherits from production - keeping this!"
+                echo "   Development stage will automatically get all code and scripts from production"
               else
                 # If development doesn't inherit, we need to fix it
-                sed -i 's|^FROM.*AS development|FROM production AS development|' Dockerfile
-                echo "   ✓ Fixed development stage to inherit from production"
+                # But don't replace if it says "FROM production AS development"
+                if ! grep -q "FROM production AS development" Dockerfile; then
+                  sed -i 's|^FROM.*AS development|FROM production AS development|' Dockerfile
+                  echo "   ✓ Fixed development stage to inherit from production"
+                fi
               fi
               
-              echo "   ✓ Replaced base images with ubuntu:22.04"
+              echo "   ✓ Replaced judge0/compilers base with ubuntu:22.04"
+              echo "   ✓ Development stage inherits from production (preserved)"
             else
               echo "✓ Dockerfile doesn't use judge0/compilers"
             fi
