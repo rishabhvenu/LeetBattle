@@ -98,12 +98,61 @@ jobs:
             
             echo "Patching Dockerfile for ARM64 compatibility..."
             
-            # Replace ALL base stages with Ubuntu 22.04
-            sed -i 's|^FROM judge0/compilers:.*|FROM ubuntu:22.04 AS production|' Dockerfile
-            sed -i 's|^FROM production.*|FROM ubuntu:22.04 AS development|' Dockerfile
+            # Save original Dockerfile for reference
+            cp Dockerfile Dockerfile.original
             
-            echo "Patched Dockerfile:"
-            grep "^FROM" Dockerfile
+            # Check if Dockerfile uses judge0/compilers base image
+            if grep -q "judge0/compilers" Dockerfile; then
+              echo "⚠️  Dockerfile uses judge0/compilers which doesn't support ARM64"
+              echo "   Creating ARM64-compatible Dockerfile that builds Judge0 from source..."
+              
+              # Create a new Dockerfile that builds Judge0 properly for ARM64
+              # We'll use the official Judge0 build process but with ARM64 base
+              cat > Dockerfile.arm64 << 'DOCKERFILE_EOF'
+FROM ubuntu:22.04 AS base
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    libpq-dev \
+    postgresql-client \
+    redis-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Ruby
+RUN curl -sSL https://rvm.io/mpapis.asc | gpg --import - && \
+    curl -sSL https://get.rvm.io | bash -s stable && \
+    /bin/bash -l -c "rvm install 3.1.0 && rvm use 3.1.0 --default"
+
+# Set working directory
+WORKDIR /app
+
+# Copy application files
+COPY . .
+
+# Install Ruby dependencies
+RUN /bin/bash -l -c "gem install bundler && bundle install"
+
+# Copy scripts
+COPY scripts/ ./scripts/
+RUN chmod +x ./scripts/*
+
+# Set entrypoint
+ENTRYPOINT ["./scripts/server"]
+DOCKERFILE_EOF
+              
+              # Use the ARM64 Dockerfile
+              mv Dockerfile.arm64 Dockerfile
+              echo "✓ Created ARM64-compatible Dockerfile"
+            else
+              echo "✓ Dockerfile doesn't use judge0/compilers, checking structure..."
+              # Just ensure scripts are copied (handled below)
+            fi
+            
+            echo "Dockerfile FROM statements:"
+            grep "^FROM" Dockerfile | head -5
             
             # Ensure scripts directory exists and workers script is present
             echo "Verifying scripts directory..."
