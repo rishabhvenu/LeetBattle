@@ -21,23 +21,13 @@ spec:
         image: mongo:7.0
         command:
         - mongod
-        - --replSet
-        - $(REPLICA_SET_NAME)
         - --bind_ip_all
         - --dbpath
         - /data/db
-        - --keyFile
-        - /etc/mongodb-keyfile/keyfile
         ports:
         - containerPort: 27017
           name: mongodb
         env:
-        - name: REPLICA_SET_NAME
-          valueFrom:
-            configMapKeyRef:
-              name: mongodb-config
-              key: REPLICA_SET_NAME
-              optional: false
         - name: MONGO_INITDB_ROOT_USERNAME
           valueFrom:
             secretKeyRef:
@@ -51,9 +41,6 @@ spec:
         volumeMounts:
         - name: data
           mountPath: /data/db
-        - name: mongodb-keyfile
-          mountPath: /etc/mongodb-keyfile
-          readOnly: true
         resources:
           requests:
             memory: 512Mi
@@ -83,11 +70,6 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 5
           failureThreshold: 3
-      volumes:
-      - name: mongodb-keyfile
-        secret:
-          secretName: mongodb-keyfile
-          defaultMode: 0400
   volumeClaimTemplates:
   - metadata:
       name: data
