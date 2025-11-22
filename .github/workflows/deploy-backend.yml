@@ -18,8 +18,33 @@ permissions:
   packages: write
 
 jobs:
+  changed-files:
+    runs-on: ubuntu-latest
+    outputs:
+      judge0_api: ${{ steps.filter.outputs.judge0_api }}
+      judge0_worker: ${{ steps.filter.outputs.judge0_worker }}
+      judge0: ${{ steps.filter.outputs.judge0 }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need at least 2 commits to compare
+
+      - name: Check for changed files
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            judge0_api:
+              - 'backend/judge0/api/**'
+            judge0_worker:
+              - 'backend/judge0/worker/**'
+            judge0:
+              - 'backend/judge0/**'
+
   deploy:
     runs-on: self-hosted  # Runs on your Oracle VM runner
+    needs: changed-files
     
     steps:
       - name: Checkout code
@@ -61,6 +86,11 @@ jobs:
           cache-to: type=gha
 
       - name: Build and push Judge0 API image
+        if: |
+          needs.changed-files.outputs.judge0_api == 'true' ||
+          needs.changed-files.outputs.judge0 == 'true' ||
+          github.event_name == 'workflow_dispatch' ||
+          (github.event.head_commit != null && contains(github.event.head_commit.message, '[judge0]'))
         uses: docker/build-push-action@v5
         with:
           context: ./backend/judge0/api
@@ -71,6 +101,11 @@ jobs:
           cache-to: type=gha
 
       - name: Build and push Judge0 Worker image
+        if: |
+          needs.changed-files.outputs.judge0_worker == 'true' ||
+          needs.changed-files.outputs.judge0 == 'true' ||
+          github.event_name == 'workflow_dispatch' ||
+          (github.event.head_commit != null && contains(github.event.head_commit.message, '[judge0]'))
         uses: docker/build-push-action@v5
         with:
           context: ./backend/judge0/worker
