@@ -21,6 +21,8 @@ jobs:
   changed-files:
     runs-on: ubuntu-latest
     outputs:
+      colyseus: ${{ steps.filter.outputs.colyseus }}
+      bots: ${{ steps.filter.outputs.bots }}
       judge0_api: ${{ steps.filter.outputs.judge0_api }}
       judge0_worker: ${{ steps.filter.outputs.judge0_worker }}
       judge0: ${{ steps.filter.outputs.judge0 }}
@@ -35,6 +37,10 @@ jobs:
         id: filter
         with:
           filters: |
+            colyseus:
+              - 'backend/colyseus/**'
+            bots:
+              - 'backend/bots/**'
             judge0_api:
               - 'backend/judge0/api/**'
             judge0_worker:
@@ -68,6 +74,11 @@ jobs:
           echo "Image tag: $IMAGE_TAG"
 
       - name: Build and push Colyseus image
+        id: build-colyseus
+        if: |
+          needs.changed-files.outputs.colyseus == 'true' ||
+          github.event_name == 'workflow_dispatch' ||
+          (github.event.head_commit != null && contains(github.event.head_commit.message, '[colyseus]'))
         uses: docker/build-push-action@v5
         with:
           context: ./backend/colyseus
@@ -77,6 +88,11 @@ jobs:
           cache-to: type=gha
 
       - name: Build and push Bots image
+        id: build-bots
+        if: |
+          needs.changed-files.outputs.bots == 'true' ||
+          github.event_name == 'workflow_dispatch' ||
+          (github.event.head_commit != null && contains(github.event.head_commit.message, '[bots]'))
         uses: docker/build-push-action@v5
         with:
           context: ./backend/bots
@@ -86,6 +102,7 @@ jobs:
           cache-to: type=gha
 
       - name: Build and push Judge0 API image
+        id: build-judge0-api
         if: |
           needs.changed-files.outputs.judge0_api == 'true' ||
           needs.changed-files.outputs.judge0 == 'true' ||
@@ -101,6 +118,7 @@ jobs:
           cache-to: type=gha
 
       - name: Build and push Judge0 Worker image
+        id: build-judge0-worker
         if: |
           needs.changed-files.outputs.judge0_worker == 'true' ||
           needs.changed-files.outputs.judge0 == 'true' ||
@@ -115,6 +133,34 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
 
+      - name: Set image tags for deployment
+        id: image-tags
+        run: |
+          # Use IMAGE_TAG if build ran, otherwise use 'latest'
+          if [ "${{ steps.build-colyseus.outcome }}" != "skipped" ]; then
+            echo "COLYSEUS_IMAGE=ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
+          else
+            echo "COLYSEUS_IMAGE=ghcr.io/rishabhvenu/codeclashers-colyseus:latest" >> $GITHUB_ENV
+          fi
+          
+          if [ "${{ steps.build-bots.outcome }}" != "skipped" ]; then
+            echo "BOTS_IMAGE=ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
+          else
+            echo "BOTS_IMAGE=ghcr.io/rishabhvenu/codeclashers-bots:latest" >> $GITHUB_ENV
+          fi
+          
+          if [ "${{ steps.build-judge0-api.outcome }}" != "skipped" ]; then
+            echo "JUDGE0_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
+          else
+            echo "JUDGE0_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:latest" >> $GITHUB_ENV
+          fi
+          
+          if [ "${{ steps.build-judge0-worker.outcome }}" != "skipped" ]; then
+            echo "JUDGE0_WORKER_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
+          else
+            echo "JUDGE0_WORKER_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:latest" >> $GITHUB_ENV
+          fi
+
       - name: Ensure namespace exists
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
@@ -125,11 +171,11 @@ jobs:
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
           KUBECONFIG: /home/ubuntu/.kube/config
-          # Image tags for envsubst
-          COLYSEUS_IMAGE: ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}
-          BOTS_IMAGE: ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}
-          JUDGE0_IMAGE: ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:${{ env.IMAGE_TAG }}
-          JUDGE0_WORKER_IMAGE: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:${{ env.IMAGE_TAG }}
+          # Image tags for envsubst (set by image-tags step above)
+          COLYSEUS_IMAGE: ${{ env.COLYSEUS_IMAGE }}
+          BOTS_IMAGE: ${{ env.BOTS_IMAGE }}
+          JUDGE0_IMAGE: ${{ env.JUDGE0_IMAGE }}
+          JUDGE0_WORKER_IMAGE: ${{ env.JUDGE0_WORKER_IMAGE }}
           # External IP for services
           ORACLE_VM_IP: ${{ vars.COLYSEUS_HOST_IP }}
           # Redis password for ConfigMap substitution
