@@ -1,16 +1,15 @@
 #!/bin/bash
-# Script for running Judge0 server.
-#
-# Usage: ./scripts/server
-#
+
+# Load config (languages.json, DB config variables, etc)
 source ./scripts/load-config
-export | sudo tee /api/environment
 
-for i in $(seq 1 $RESTART_MAX_TRIES); do
-    [[ -f tmp/pids/server.pid ]] && rm -f tmp/pids/server.pid
+# Ensure no leftover PID files
+rm -f tmp/pids/server.pid
 
-    rails db:create db:migrate db:seed
-    rails s -b 0.0.0.0
-    [[ $? -eq 0 ]] && break
-    sleep 2s
-done
+# Rails database setup (safe on repeat)
+bundle exec rails db:create    || true
+bundle exec rails db:migrate   || true
+bundle exec rails db:seed      || true
+
+# Start Judge0 API server on correct port
+exec bundle exec rails server -b 0.0.0.0 -p 2358
