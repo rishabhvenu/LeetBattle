@@ -1,3 +1,4 @@
+// Colyseus server entry point
 import { Server, matchMaker } from 'colyseus';
 import { RedisPresence } from '@colyseus/redis-presence';
 import { RedisDriver } from '@colyseus/redis-driver';

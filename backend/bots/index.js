@@ -1,3 +1,4 @@
+// Bots service entry point
 'use strict';
 
 const Redis = require('ioredis');

@@ -1,3 +1,4 @@
+# Judge0 API application configuration
 require_relative 'boot'
 
 require "rails"
