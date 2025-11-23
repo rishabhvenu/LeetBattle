@@ -80,7 +80,9 @@ jobs:
         with:
           context: ./backend/colyseus
           push: true
-          tags: ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}
+          tags: |
+            ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}
+            ghcr.io/rishabhvenu/codeclashers-colyseus:latest
           cache-from: type=gha
           cache-to: type=gha
 
@@ -91,7 +93,9 @@ jobs:
         with:
           context: ./backend/bots
           push: true
-          tags: ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}
+          tags: |
+            ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}
+            ghcr.io/rishabhvenu/codeclashers-bots:latest
           cache-from: type=gha
           cache-to: type=gha
 
