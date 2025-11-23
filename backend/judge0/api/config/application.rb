@@ -1,4 +1,4 @@
-# Judge0 API application configuration
+# Judge0 API application configuration - Rails app setup
 require_relative 'boot'
 
 require "rails"

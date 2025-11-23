@@ -1,4 +1,4 @@
-// Bots service entry point
+// Bots service entry point - queue cleanup and bot management
 'use strict';
 
 const Redis = require('ioredis');
