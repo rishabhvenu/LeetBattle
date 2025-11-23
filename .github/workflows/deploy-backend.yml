@@ -91,7 +91,7 @@ jobs:
         env:
           KUBECONFIG: /home/ubuntu/.kube/config
         run: |
-          k3s kubectl create namespace codeclashers --dry-run=client -o yaml | k3s kubectl apply -f -
+          sudo k3s kubectl create namespace codeclashers --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 
       - name: Generate image tag
         id: meta
