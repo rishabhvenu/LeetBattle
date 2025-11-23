@@ -7,6 +7,27 @@ on:
       - 'backend/**'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
+    inputs:
+      build_colyseus:
+        description: 'Build Colyseus image'
+        required: false
+        type: boolean
+        default: false
+      build_bots:
+        description: 'Build Bots image'
+        required: false
+        type: boolean
+        default: false
+      build_judge0_api:
+        description: 'Build Judge0 API image'
+        required: false
+        type: boolean
+        default: false
+      build_judge0_worker:
+        description: 'Build Judge0 Worker image'
+        required: false
+        type: boolean
+        default: false
 
 # Ensure only one deployment runs at a time
 concurrency:
@@ -75,7 +96,9 @@ jobs:
 
       - name: Build and push Colyseus image
         id: build-colyseus
-        if: needs.changed-files.outputs.colyseus == 'true'
+        if: |
+          needs.changed-files.outputs.colyseus == 'true' ||
+          github.event_name == 'workflow_dispatch' && github.event.inputs.build_colyseus == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/colyseus
@@ -88,7 +111,9 @@ jobs:
 
       - name: Build and push Bots image
         id: build-bots
-        if: needs.changed-files.outputs.bots == 'true'
+        if: |
+          needs.changed-files.outputs.bots == 'true' ||
+          github.event_name == 'workflow_dispatch' && github.event.inputs.build_bots == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/bots
@@ -103,7 +128,8 @@ jobs:
         id: build-judge0-api
         if: |
           needs.changed-files.outputs.judge0_api == 'true' ||
-          needs.changed-files.outputs.judge0 == 'true'
+          needs.changed-files.outputs.judge0 == 'true' ||
+          github.event_name == 'workflow_dispatch' && github.event.inputs.build_judge0_api == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/judge0/api
@@ -119,7 +145,8 @@ jobs:
         id: build-judge0-worker
         if: |
           needs.changed-files.outputs.judge0_worker == 'true' ||
-          needs.changed-files.outputs.judge0 == 'true'
+          needs.changed-files.outputs.judge0 == 'true' ||
+          github.event_name == 'workflow_dispatch' && github.event.inputs.build_judge0_worker == 'true'
         uses: docker/build-push-action@v5
         with:
           context: ./backend/judge0/worker
