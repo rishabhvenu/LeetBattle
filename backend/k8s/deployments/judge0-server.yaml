@@ -29,6 +29,7 @@ spec:
       containers:
       - name: judge0-server
         image: ${JUDGE0_IMAGE}
+        workingDir: /api
         command: ["/api/scripts/server"]
         ports:
         - name: http
