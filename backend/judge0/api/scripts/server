@@ -37,6 +37,16 @@ echo "Rails location: $(bundle exec which rails 2>/dev/null || echo 'not found')
 echo "Testing: bundle exec rails --version" >&2
 bundle exec rails --version >&2 || echo "Failed to get Rails version" >&2
 
+# Check if we're in a Rails app directory
+if [ ! -f "Gemfile" ]; then
+  echo "ERROR: Gemfile not found in current directory $(pwd)" >&2
+  exit 1
+fi
+
+echo "Current directory: $(pwd)" >&2
+echo "Gemfile exists: $([ -f Gemfile ] && echo 'yes' || echo 'no')" >&2
+
 # Start Rails server - use exec to replace shell process
-echo "Executing: exec bundle exec rails server -b 0.0.0.0 -p 2358" >&2
-exec bundle exec rails server -b 0.0.0.0 -p 2358
+# Try using 's' shortcut instead of 'server' and ensure proper quoting
+echo "Executing: exec bundle exec rails s -b 0.0.0.0 -p 2358" >&2
+exec bundle exec rails s -b 0.0.0.0 -p 2358
