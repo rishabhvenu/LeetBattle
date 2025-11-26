@@ -1,8 +1,11 @@
 #!/bin/bash
-set -e
+# Don't use set -e here as we want to handle errors explicitly
 
 # Load config (languages.json, DB config variables, etc)
-source ./scripts/load-config
+source ./scripts/load-config || {
+  echo "Failed to load config" >&2
+  exit 1
+}
 
 # Ensure no leftover PID files
 rm -f tmp/pids/server.pid
@@ -14,6 +17,17 @@ bundle exec rails db:seed      || true
 
 # Start Judge0 API server on correct port
 # Use exec to replace shell process with Rails server
-# Ensure we're in the right directory and bundle is available
-cd /api || exit 1
-exec bundle exec rails server -b 0.0.0.0 -p 2358 2>&1
+# Ensure we're in the right directory
+cd /api || {
+  echo "Failed to change to /api directory" >&2
+  exit 1
+}
+
+# Verify bundle is available
+if ! command -v bundle &> /dev/null; then
+  echo "bundle command not found" >&2
+  exit 1
+fi
+
+# Start Rails server - use exec to replace shell process
+exec bundle exec rails server -b 0.0.0.0 -p 2358
