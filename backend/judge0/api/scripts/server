@@ -15,5 +15,5 @@ bundle exec rails db:seed      || true
 # Start Judge0 API server on correct port
 # Use exec to replace shell process with Rails server
 # Ensure we're in the right directory and bundle is available
-cd /api
-exec bundle exec rails server -b 0.0.0.0 -p 2358
+cd /api || exit 1
+exec bundle exec rails server -b 0.0.0.0 -p 2358 2>&1
