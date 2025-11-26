@@ -36,5 +36,5 @@ RUN chmod +x ./scripts/* || true
 # Patch server script to handle existing database gracefully
 RUN sed -i "s/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/" /api/scripts/server || true
 
-# Default command for API server
-ENTRYPOINT ["/api/scripts/server"]
+# Default command for API server (can be overridden by deployment command)
+# ENTRYPOINT removed - deployment specifies command explicitly
