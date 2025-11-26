@@ -30,7 +30,7 @@ spec:
       - name: judge0-server
         image: ${JUDGE0_IMAGE}
         workingDir: /api
-        command: ["/api/scripts/server"]
+        command: ["/bin/bash", "/api/scripts/server"]
         ports:
         - name: http
           containerPort: 2358  # Judge0 runs on fixed port 2358 internally
