@@ -29,5 +29,11 @@ if ! command -v bundle &> /dev/null; then
   exit 1
 fi
 
+# Debug: Show what we're about to run
+echo "Starting Rails server with: bundle exec rails server -b 0.0.0.0 -p 2358" >&2
+echo "Bundle location: $(which bundle)" >&2
+echo "Rails location: $(bundle exec which rails 2>/dev/null || echo 'not found')" >&2
+
 # Start Rails server - use exec to replace shell process
+# Use full path to ensure it works
 exec bundle exec rails server -b 0.0.0.0 -p 2358
