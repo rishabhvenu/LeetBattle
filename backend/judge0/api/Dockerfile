@@ -33,8 +33,7 @@ RUN bundle config set --local without 'development test' && \
 # Make scripts executable
 RUN chmod +x ./scripts/* || true
 
-# Patch server script to handle existing database gracefully
-RUN sed -i "s/rails db:create db:migrate db:seed/rails db:create || true; rails db:migrate || true; rails db:seed || true/" /api/scripts/server || true
+# Note: Server script handles database setup gracefully with || true, no patching needed
 
 # Default command for API server (can be overridden by deployment command)
 # ENTRYPOINT removed - deployment specifies command explicitly
