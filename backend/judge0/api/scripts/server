@@ -47,6 +47,17 @@ echo "Current directory: $(pwd)" >&2
 echo "Gemfile exists: $([ -f Gemfile ] && echo 'yes' || echo 'no')" >&2
 
 # Start Rails server - use exec to replace shell process
-# Try using 's' shortcut instead of 'server' and ensure proper quoting
-echo "Executing: exec bundle exec rails s -b 0.0.0.0 -p 2358" >&2
-exec bundle exec rails s -b 0.0.0.0 -p 2358
+# Use explicit bundle exec with full command
+echo "Executing Rails server..." >&2
+echo "Command: bundle exec rails s -b 0.0.0.0 -p 2358" >&2
+
+# Try running without exec first to see actual error
+bundle exec rails s -b 0.0.0.0 -p 2358 &
+RAILS_PID=$!
+echo "Rails server started in background with PID: $RAILS_PID" >&2
+
+# Wait for Rails process
+wait $RAILS_PID
+EXIT_CODE=$?
+echo "Rails server exited with code: $EXIT_CODE" >&2
+exit $EXIT_CODE
