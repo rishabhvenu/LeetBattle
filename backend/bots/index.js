@@ -43,9 +43,10 @@ if (process.env.REDIS_CLUSTER_NODES) {
     redisOptions: {
       password: process.env.REDIS_PASSWORD,
       maxRetriesPerRequest: 3,
+      enableReadyCheck: true,
     },
     clusterRetryStrategy: (times) => Math.min(times * 50, 2000),
-    enableOfflineQueue: false,
+    enableOfflineQueue: true,  // Allow commands while cluster is connecting
     enableReadyCheck: true,
   });
 } else {
