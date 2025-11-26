@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Load config (languages.json, DB config variables, etc)
 source ./scripts/load-config
@@ -12,4 +13,5 @@ bundle exec rails db:migrate   || true
 bundle exec rails db:seed      || true
 
 # Start Judge0 API server on correct port
+# Use exec to replace shell process with Rails server
 exec bundle exec rails server -b 0.0.0.0 -p 2358
