@@ -31,12 +31,32 @@ if (!process.env.REDIS_HOST || !process.env.REDIS_PORT) {
   throw new Error('REDIS_HOST and REDIS_PORT environment variables are required');
 }
 
-const redis = new Redis({
-  host: process.env.REDIS_HOST,
-  port: parseInt(process.env.REDIS_PORT, 10),
-  password: process.env.REDIS_PASSWORD,
-  maxRetriesPerRequest: 3,
-});
+// Use Redis Cluster if REDIS_CLUSTER_NODES is set, otherwise use single instance
+let redis;
+if (process.env.REDIS_CLUSTER_NODES) {
+  // Redis Cluster mode
+  const clusterNodes = process.env.REDIS_CLUSTER_NODES.split(',').map(node => {
+    const [host, port] = node.trim().split(':');
+    return { host: host || process.env.REDIS_HOST, port: parseInt(port || process.env.REDIS_PORT, 10) };
+  });
+  redis = new Redis.Cluster(clusterNodes, {
+    redisOptions: {
+      password: process.env.REDIS_PASSWORD,
+      maxRetriesPerRequest: 3,
+    },
+    clusterRetryStrategy: (times) => Math.min(times * 50, 2000),
+    enableOfflineQueue: false,
+    enableReadyCheck: true,
+  });
+} else {
+  // Single Redis instance mode
+  redis = new Redis({
+    host: process.env.REDIS_HOST,
+    port: parseInt(process.env.REDIS_PORT, 10),
+    password: process.env.REDIS_PASSWORD,
+    maxRetriesPerRequest: 3,
+  });
+}
 
 redis.defineCommand('extendLeader', {
   numberOfKeys: 1,

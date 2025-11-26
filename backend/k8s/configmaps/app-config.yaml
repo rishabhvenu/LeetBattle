@@ -10,7 +10,7 @@ data:
   MONGODB_HOST: "mongodb"
   MONGODB_PORT: "27017"
   REDIS_HOST: "redis-cluster"  # Default, can be overridden via secrets
-  REDIS_CLUSTER_NODES: ""  # Optional comma-separated host:port list for Redis Cluster clients
+  REDIS_CLUSTER_NODES: "redis-cluster-0.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-1.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-2.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-3.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-4.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-5.redis-cluster-headless.codeclashers.svc.cluster.local:6379"  # Redis Cluster node list
   REDIS_DB: "0"
   REDIS_TLS: "false"
   REDIS_TLS_REJECT_UNAUTHORIZED: "true"
