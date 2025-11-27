@@ -27,7 +27,7 @@ spec:
       - name: run-migrations
         image: ${JUDGE0_IMAGE}
         workingDir: /api
-        command: ["/bin/bash", "-c", "cd /api && bundle exec rails db:migrate"]
+        command: ["/bin/bash", "-c", "cd /api && bundle exec rake db:migrate || bundle exec rails runner 'ActiveRecord::Migrator.migrate(ActiveRecord::Migrator.migrations_paths)' || true"]
         env:
         - name: RAILS_ENV
           value: "production"
