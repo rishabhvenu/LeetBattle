@@ -749,14 +749,18 @@ app.use(cors({
   allowHeaders: ['Content-Type','Authorization','X-Internal-Secret','X-Bot-Secret','X-Service-Name','Cookie'],
   credentials: true 
 }));
-// Health check endpoint for Kubernetes probes
-router.get('/health', async (ctx) => {
-  ctx.status = 200;
-  ctx.body = { status: 'ok' };
-});
-
 app.use(router.routes());
 app.use(router.allowedMethods());
+
+// Health check endpoint for Kubernetes probes (registered on app directly to avoid router conflicts)
+app.use(async (ctx, next) => {
+  if (ctx.path === '/health') {
+    ctx.status = 200;
+    ctx.body = { status: 'ok' };
+    return;
+  }
+  await next();
+});
 
 // Queue endpoints with rate limiting
 router.post('/queue/enqueue', combinedAuthMiddleware(), async (ctx) => {
