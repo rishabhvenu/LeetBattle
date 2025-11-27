@@ -126,16 +126,16 @@ spec:
           httpGet:
             path: /
             port: http
-          initialDelaySeconds: 180
-          periodSeconds: 15
+          initialDelaySeconds: 240
+          periodSeconds: 20
           timeoutSeconds: 10
-          failureThreshold: 5
+          failureThreshold: 6
         readinessProbe:
           httpGet:
             path: /
             port: http
-          initialDelaySeconds: 150
-          periodSeconds: 10
+          initialDelaySeconds: 200
+          periodSeconds: 15
           timeoutSeconds: 8
-          failureThreshold: 5
+          failureThreshold: 6
 
