@@ -55,10 +55,10 @@ spec:
             - --quiet
             - --eval
             - "db.adminCommand('ping')"
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 10
-          failureThreshold: 3
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 20
+          failureThreshold: 5
         readinessProbe:
           exec:
             command:
@@ -66,10 +66,10 @@ spec:
             - --quiet
             - --eval
             - "db.adminCommand('ping')"
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          timeoutSeconds: 5
-          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 15
+          failureThreshold: 5
   volumeClaimTemplates:
   - metadata:
       name: data
