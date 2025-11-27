@@ -37,6 +37,12 @@ spec:
         env:
         - name: RAILS_ENV
           value: "production"
+        - name: RAILS_SERVER_PROCESSES
+          value: "2"
+        - name: RAILS_MAX_THREADS
+          value: "1"
+        - name: PORT
+          value: "2358"
         # Note: JUDGE0_PORT is stored for reference but Judge0 doesn't actually use it
         # Judge0 always runs on port 2358. This env var is used by other services (Colyseus)
         # to know how to connect to Judge0.
