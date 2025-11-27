@@ -749,6 +749,12 @@ app.use(cors({
   allowHeaders: ['Content-Type','Authorization','X-Internal-Secret','X-Bot-Secret','X-Service-Name','Cookie'],
   credentials: true 
 }));
+// Health check endpoint for Kubernetes probes
+router.get('/health', async (ctx) => {
+  ctx.status = 200;
+  ctx.body = { status: 'ok' };
+});
+
 app.use(router.routes());
 app.use(router.allowedMethods());
 
