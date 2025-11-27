@@ -54,27 +54,19 @@ bundle show rails >&2 || echo "Rails not found in bundle" >&2
 # Use full 'server' command instead of 's' shortcut
 echo "Executing: exec bundle exec rails server -b 0.0.0.0 -p 2358" >&2
 
-# Find the actual Rails executable from bundle
-BUNDLED_RAILS=$(bundle exec which rails 2>/dev/null)
-if [ -z "$BUNDLED_RAILS" ] || [ "$BUNDLED_RAILS" = "/usr/local/bin/rails" ]; then
-  # Try to find Rails in the bundle path
-  BUNDLE_PATH=$(bundle show rails 2>/dev/null | head -1)
-  if [ -n "$BUNDLE_PATH" ]; then
-    BUNDLED_RAILS="$BUNDLE_PATH/bin/rails"
-  fi
-fi
+# Try using Puma directly instead of Rails server command
+# This avoids the issue with Rails command parsing
+echo "Attempting to start server with Puma directly..." >&2
 
-echo "Using Rails executable: ${BUNDLED_RAILS:-bundle exec rails}" >&2
-
-# Test if server command exists
-echo "Testing: ${BUNDLED_RAILS:-bundle exec rails} server --help" >&2
-${BUNDLED_RAILS:-bundle exec rails} server --help >&2 | head -3 || echo "Server command test failed" >&2
-
-# Start Rails server using explicit executable or bundle exec
-if [ -n "$BUNDLED_RAILS" ] && [ -f "$BUNDLED_RAILS" ]; then
-  echo "Executing: exec $BUNDLED_RAILS server -b 0.0.0.0 -p 2358" >&2
-  exec "$BUNDLED_RAILS" server -b 0.0.0.0 -p 2358
+# Check if puma is available
+if bundle exec which puma >/dev/null 2>&1; then
+  echo "Using: bundle exec puma -b tcp://0.0.0.0:2358" >&2
+  exec bundle exec puma -b tcp://0.0.0.0:2358
+elif bundle exec which rackup >/dev/null 2>&1; then
+  echo "Using: bundle exec rackup -o 0.0.0.0 -p 2358" >&2
+  exec bundle exec rackup -o 0.0.0.0 -p 2358
 else
-  echo "Executing: exec bundle exec rails server -b 0.0.0.0 -p 2358" >&2
-  exec bundle exec rails server -b 0.0.0.0 -p 2358
+  # Fallback: try rails server with explicit array-style command
+  echo "Fallback: Using bundle exec with explicit rails server command" >&2
+  exec bundle exec sh -c 'rails server -b 0.0.0.0 -p 2358'
 fi
