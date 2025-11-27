@@ -131,6 +131,14 @@ spec:
           limits:
             memory: ${K8S_COLYSEUS_MEMORY_LIMIT}
             cpu: ${K8S_COLYSEUS_CPU_LIMIT}
+        startupProbe:
+          httpGet:
+            path: /health
+            port: websocket
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 24
         livenessProbe:
           httpGet:
             path: /health
@@ -143,7 +151,7 @@ spec:
           httpGet:
             path: /health
             port: websocket
-          initialDelaySeconds: 30
+          initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 5
