@@ -11,9 +11,11 @@ source ./scripts/load-config || {
 rm -f tmp/pids/server.pid
 
 # Rails database setup (safe on repeat)
-bundle exec rails db:create    || true
-bundle exec rails db:migrate   || true
-bundle exec rails db:seed      || true
+# Note: db:create and db:migrate are handled by initContainers
+# db:seed is removed here as it can be slow and should run separately if needed
+# bundle exec rails db:create    || true
+# bundle exec rails db:migrate   || true
+# bundle exec rails db:seed      || true
 
 # Start Judge0 API server on correct port
 # Use exec to replace shell process with Rails server
