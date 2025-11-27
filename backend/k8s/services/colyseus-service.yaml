@@ -10,6 +10,6 @@ spec:
   ports:
   - port: 2567  # Must match COLYSEUS_PORT in app-secrets
     targetPort: 2567
-    nodePort: 2567  # Use same port for NodePort
+    nodePort: 30002  # NodePort must be in range 30000-32767
     protocol: TCP
 
