@@ -2690,3 +2690,4 @@ httpServer.listen(port, '0.0.0.0', async () => {
     console.error('Failed to bootstrap persistent QueueRoom:', bootstrapError);
   }
 });
+// Trigger rebuild
