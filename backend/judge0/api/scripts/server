@@ -50,10 +50,6 @@ echo "Gemfile exists: $([ -f Gemfile ] && echo 'yes' || echo 'no')" >&2
 echo "Checking Rails installation..." >&2
 bundle show rails >&2 || echo "Rails not found in bundle" >&2
 
-# Start Rails server - use exec to replace shell process
-# Use full 'server' command instead of 's' shortcut
-echo "Executing: exec bundle exec rails server -b 0.0.0.0 -p 2358" >&2
-
 # Try using Puma directly instead of Rails server command
 # This avoids the issue with Rails command parsing
 echo "Attempting to start server with Puma directly..." >&2
