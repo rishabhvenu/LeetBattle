@@ -24,8 +24,35 @@ spec:
       - name: wait-for-postgres
         image: postgres:15-alpine
         command: ['sh', '-c', 'until pg_isready -h postgres -p 5432; do echo waiting for postgres; sleep 2; done;']
-      # Note: Migrations removed - custom Judge0 image may not have Rails
-      # If migrations are needed, they should be run manually or the image should be updated
+      - name: run-migrations
+        image: ${JUDGE0_IMAGE}
+        workingDir: /api
+        command: ["/bin/bash", "-c", "cd /api && bundle exec rails db:migrate"]
+        env:
+        - name: RAILS_ENV
+          value: "production"
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: POSTGRES_HOST
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_PASSWORD
+        - name: POSTGRES_DB
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_POSTGRES_DB
       containers:
       - name: judge0-server
         image: ${JUDGE0_IMAGE}
