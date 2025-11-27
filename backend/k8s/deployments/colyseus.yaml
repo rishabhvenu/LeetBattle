@@ -135,10 +135,10 @@ spec:
           httpGet:
             path: /health
             port: websocket
-          initialDelaySeconds: 10
+          initialDelaySeconds: 30
           periodSeconds: 5
           timeoutSeconds: 3
-          failureThreshold: 24
+          failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /health
