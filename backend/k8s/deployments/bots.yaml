@@ -22,7 +22,7 @@ spec:
       - name: ghcr-secret
       containers:
       - name: bots
-        image: ghcr.io/rishabhvenu/codeclashers-bots:${IMAGE_TAG}
+        image: ${BOTS_IMAGE}
         ports:
         - containerPort: 3000
         env:

@@ -22,7 +22,7 @@ spec:
       - name: ghcr-secret
       containers:
       - name: colyseus
-        image: ghcr.io/rishabhvenu/codeclashers-colyseus:${IMAGE_TAG}
+        image: ${COLYSEUS_IMAGE}
         ports:
         - name: websocket
           containerPort: 2567
