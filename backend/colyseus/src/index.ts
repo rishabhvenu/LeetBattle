@@ -2667,8 +2667,9 @@ gameServer.define('match', MatchRoom);
 gameServer.define('private', PrivateRoom)
   .filterBy(['roomCode']);
 
-// Explicitly bind to 0.0.0.0 to ensure IPv4 compatibility for Kubernetes health checks
-gameServer.listen(port, '0.0.0.0').then(async () => {
+// Explicitly bind HTTP server to 0.0.0.0 for IPv4 compatibility with Kubernetes health checks
+// Then start the game server
+httpServer.listen(port, '0.0.0.0', async () => {
   console.log(`Colyseus listening on :${port}`);
   console.log('Integrated matchmaking enabled in QueueRoom');
   if (process.env.COLYSEUS_RESERVATION_SECRET) {
