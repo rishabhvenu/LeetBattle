@@ -1,5 +1,5 @@
 class InfoController < ApplicationController
-  @@license ||= File.read("LICENSE")
+  @@license ||= File.exist?("LICENSE") ? File.read("LICENSE") : "License file not found"
   @@isolate ||= `isolate --version`
 
   def system_info
