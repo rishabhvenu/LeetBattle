@@ -58,6 +58,9 @@ echo "Executing: exec bundle exec rails server -b 0.0.0.0 -p 2358" >&2
 # This avoids the issue with Rails command parsing
 echo "Attempting to start server with Puma directly..." >&2
 
+# Set PORT environment variable for Puma config
+export PORT=2358
+
 # Check if puma is available
 if bundle exec which puma >/dev/null 2>&1; then
   echo "Using: bundle exec puma -b tcp://0.0.0.0:2358" >&2
