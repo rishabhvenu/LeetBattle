@@ -134,18 +134,18 @@ spec:
         livenessProbe:
           tcpSocket:
             port: websocket
-          initialDelaySeconds: 180
-          periodSeconds: 20
-          timeoutSeconds: 10
-          failureThreshold: 6
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: websocket
-          initialDelaySeconds: 120
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 6
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
         lifecycle:
           preStop:
             exec:
