@@ -4,12 +4,11 @@ metadata:
   name: judge0-server
   namespace: codeclashers
 spec:
-  type: ClusterIP  # Use ClusterIP with externalIPs for direct binding
-  externalIPs:
-    - ${ORACLE_VM_IP}  # Will be substituted by kustomize or envsubst
+  type: NodePort  # Use NodePort for external access via public IP
   selector:
     app: judge0-server
   ports:
     - port: 2358  # Must match JUDGE0_PORT in app-secrets
       targetPort: 2358
+      nodePort: 2358  # Use same port for NodePort
 

@@ -4,13 +4,12 @@ metadata:
   name: colyseus
   namespace: codeclashers
 spec:
-  type: ClusterIP  # Use ClusterIP with externalIPs for direct binding
-  externalIPs:
-    - ${ORACLE_VM_IP}  # Will be substituted by kustomize or envsubst
+  type: NodePort  # Use NodePort for external access via public IP
   selector:
     app: colyseus
   ports:
   - port: 2567  # Must match COLYSEUS_PORT in app-secrets
     targetPort: 2567
+    nodePort: 2567  # Use same port for NodePort
     protocol: TCP
 
