@@ -8,8 +8,6 @@ spec:
   selector:
     app: judge0-server
   ports:
-    ports:
     - port: 2358  # Must match JUDGE0_PORT in app-secrets
       targetPort: http
       nodePort: 30001  # NodePort must be in range 30000-32767
-
