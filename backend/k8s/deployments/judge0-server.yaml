@@ -61,6 +61,7 @@ spec:
         ports:
         - name: http
           containerPort: 2358  # Judge0 runs on fixed port 2358 internally
+          hostPort: 2358  # Bind directly to host port for external access
         env:
         - name: RAILS_ENV
           value: "production"

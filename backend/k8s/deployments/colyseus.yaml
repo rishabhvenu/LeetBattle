@@ -26,6 +26,7 @@ spec:
         ports:
         - name: websocket
           containerPort: 2567
+          hostPort: 2567  # Bind directly to host port for external access
         envFrom:
         - configMapRef:
             name: app-config
