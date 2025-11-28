@@ -9,7 +9,7 @@ spec:
     app: colyseus
   ports:
   - port: 2567  # Must match COLYSEUS_PORT in app-secrets
-    targetPort: 2567
+    targetPort: websocket
     nodePort: 30002  # NodePort must be in range 30000-32767
     protocol: TCP
 
