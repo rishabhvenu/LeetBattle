@@ -54,6 +54,7 @@ spec:
         ports:
         - containerPort: 6379
           name: client
+          hostPort: 6379  # Bind directly to host port for external access (Lambda) - only redis-cluster-0 will bind
         - containerPort: 16379
           name: gossip
         env:
