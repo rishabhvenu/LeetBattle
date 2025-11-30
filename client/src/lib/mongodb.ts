@@ -28,19 +28,21 @@ async function connectDB() {
       // Disable additional logging
       autoIndex: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,  // Fail fast if MongoDB unavailable
-      socketTimeoutMS: 10000,  // Reduced from 45000 to fail faster
-      connectTimeoutMS: 5000,  // Connection timeout
+      serverSelectionTimeoutMS: 3000,  // Reduced to 3s - fail fast if MongoDB unavailable
+      socketTimeoutMS: 5000,  // Reduced to 5s - fail faster
+      connectTimeoutMS: 3000,  // Reduced to 3s - connection timeout
+      heartbeatFrequencyMS: 10000,
+      retryWrites: false,  // Disable retries to fail fast
     };
 
-    // Add timeout wrapper to prevent hanging (10 second total timeout)
+    // Add timeout wrapper to prevent hanging (5 second total timeout - more aggressive)
     cached.promise = Promise.race([
       mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
         // Silently connect - no logging
         return mongoose;
       }),
       new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB connection timeout after 10s')), 10000)
+        setTimeout(() => reject(new Error('MongoDB connection timeout after 5s')), 5000)
       ),
     ]).catch((error) => {
       console.error('MongoDB connection error:', error.message);
@@ -67,18 +69,19 @@ export async function getMongoClient(): Promise<MongoClient> {
     const client = new MongoClient(MONGODB_URI, {
       monitorCommands: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,  // Fail fast if MongoDB unavailable
-      socketTimeoutMS: 10000,  // Reduced from 45000 to fail faster
-      connectTimeoutMS: 5000,  // Connection timeout
+      serverSelectionTimeoutMS: 3000,  // Reduced to 3s - fail fast if MongoDB unavailable
+      socketTimeoutMS: 5000,  // Reduced to 5s - fail faster
+      connectTimeoutMS: 3000,  // Reduced to 3s - connection timeout
+      retryWrites: false,  // Disable retries to fail fast
     });
-    // Add timeout wrapper to prevent hanging (10 second total timeout)
+    // Add timeout wrapper to prevent hanging (5 second total timeout - more aggressive)
     clientPromise = Promise.race([
       client.connect(),
       new Promise<never>((_, reject) => 
         setTimeout(() => {
           clientPromise = null; // Reset on timeout so we can retry
-          reject(new Error('MongoDB client connection timeout after 10s'));
-        }, 10000)
+          reject(new Error('MongoDB client connection timeout after 5s'));
+        }, 5000)
       ),
     ]);
   }
