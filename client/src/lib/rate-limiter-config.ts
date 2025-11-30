@@ -7,9 +7,9 @@ export const RATE_LIMITER_CONFIG = {
     blockDuration: 60,
   },
   auth: {
-    points: 5,
+    points: 10, // Increased from 5 to allow for retries and shared IPs
     duration: 60,
-    blockDuration: 300,
+    blockDuration: 120, // Reduced from 300 to 2 minutes
   },
   queue: {
     points: 20,

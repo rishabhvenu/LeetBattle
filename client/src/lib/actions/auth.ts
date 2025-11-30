@@ -23,6 +23,10 @@ export async function registerUser(prevState: { error?: string } | null, formDat
   try {
     await rateLimit(authLimiter, identifier);
   } catch (error: unknown) {
+    // Log rate limit hits for debugging (but don't expose identifier in production)
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('Rate limit hit for registration:', identifier);
+    }
     return { error: (error as Error).message };
   }
 
