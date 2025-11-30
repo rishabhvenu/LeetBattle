@@ -313,7 +313,7 @@
           // Avatar bucket name for internal Lambda operations
           S3_BUCKET_NAME: avatarBucket.bucketName,
           // AWS S3 configuration (IAM role used for credentials in Lambda, no explicit keys needed)
-          AWS_REGION: process.env.AWS_REGION || region,
+          // Note: AWS_REGION is automatically set by Lambda runtime - do not set manually
           // S3_ENDPOINT: Only set for MinIO or S3-compatible services (NOT AWS S3)
           // For AWS S3, leave empty/undefined - SDK automatically determines endpoint from region
           S3_ENDPOINT: process.env.S3_ENDPOINT || undefined,
