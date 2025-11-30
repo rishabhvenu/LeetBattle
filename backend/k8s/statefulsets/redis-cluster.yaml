@@ -5,7 +5,7 @@ metadata:
   namespace: codeclashers
 spec:
   serviceName: redis-cluster-headless
-  replicas: 6
+  replicas: 1  # Start with 1 pod (redis-cluster-0) for external access, scale up after cluster init
   selector:
     matchLabels:
       app: redis-cluster
@@ -54,7 +54,7 @@ spec:
         ports:
         - containerPort: 6379
           name: client
-          # Removed hostPort - use redis-cluster service for external access instead
+          hostPort: 6379  # External access on port 6379 (only redis-cluster-0 will bind successfully)
         - containerPort: 16379
           name: gossip
         env:
