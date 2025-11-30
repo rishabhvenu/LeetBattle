@@ -6,12 +6,13 @@ metadata:
   labels:
     app: mongodb
 spec:
-  type: LoadBalancer  # Expose MongoDB externally for Lambda access
+  type: NodePort  # Expose MongoDB externally for Lambda access (k3s doesn't support LoadBalancer)
   selector:
     app: mongodb
   ports:
   - port: 27017  # Must match MONGODB_PORT in app-secrets
     targetPort: 27017
+    nodePort: 32017  # External port for Lambda access (<VM_IP>:32017)
     protocol: TCP
     name: mongodb
 
