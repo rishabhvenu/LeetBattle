@@ -24,19 +24,26 @@ export function getRedis(): Cluster | Redis {
           redis = new Cluster(clusterNodes, {
             redisOptions: {
               password,
-              lazyConnect: false,
+              lazyConnect: true,  // Don't connect immediately - wait until first command
               maxRetriesPerRequest: 3,
             },
             clusterRetryStrategy: (times: number) => {
               const delay = Math.min(times * 50, 2000);
               return delay;
             },
-            enableOfflineQueue: false,
+            enableOfflineQueue: true,  // Queue commands when cluster is offline
             enableReadyCheck: true,
           });
     } else {
       // Single Redis instance mode (backward compatibility)
-      redis = new Redis({ host, port, password, lazyConnect: false, maxRetriesPerRequest: 3 });
+      redis = new Redis({ 
+        host, 
+        port, 
+        password, 
+        lazyConnect: true,  // Don't connect immediately - wait until first command
+        maxRetriesPerRequest: 3,
+        enableOfflineQueue: true,  // Queue commands when Redis is offline
+      });
     }
     
     // Error handling
