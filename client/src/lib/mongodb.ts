@@ -55,6 +55,15 @@ async function connectDB() {
     cached.conn = await cached.promise;
   } catch (e) {
     cached.promise = null;
+    cached.conn = null; // Clear connection on error
+    // Try to close mongoose connection if it exists
+    try {
+      if (mongoose.connection.readyState !== 0) {
+        await mongoose.connection.close();
+      }
+    } catch (closeError) {
+      // Ignore close errors
+    }
     throw e;
   }
 
