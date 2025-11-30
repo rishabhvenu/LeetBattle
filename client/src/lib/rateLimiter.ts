@@ -25,9 +25,20 @@ export async function getClientIdentifier(): Promise<string> {
     }
     
     // Fallback: try to get session-based identifier (calls Node via session.ts)
-    const session = await getSession();
-    if (session.userId) {
-      return `user:${session.userId}`;
+    // Add timeout wrapper to prevent hanging on MongoDB connection (3 second timeout)
+    try {
+      const session = await Promise.race([
+        getSession(),
+        new Promise<null>((resolve) => 
+          setTimeout(() => resolve(null), 3000)
+        ),
+      ]);
+      if (session && session.userId) {
+        return `user:${session.userId}`;
+      }
+    } catch (error) {
+      // Session lookup failed or timed out - continue to header fallback
+      console.warn('Session lookup failed/timed out in getClientIdentifier:', error);
     }
     
     // Better fallback: use a combination of headers to create a unique identifier
