@@ -6,9 +6,7 @@ metadata:
   labels:
     app: mongodb
 spec:
-  type: ClusterIP  # Use ClusterIP with externalIPs for direct binding
-  externalIPs:
-    - ${ORACLE_VM_IP}  # Will be substituted by kustomize or envsubst
+  type: LoadBalancer  # Expose MongoDB externally for Lambda access
   selector:
     app: mongodb
   ports:
