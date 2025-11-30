@@ -308,7 +308,7 @@
         code: lambda.Code.fromAsset(serverFunctionPath),
         timeout: cdk.Duration.seconds(60),
         memorySize: 2048,
-        reservedConcurrentExecutions: 100, // Limit concurrent executions to prevent overwhelming Redis/MongoDB
+        // Removed reservedConcurrentExecutions - timeout fixes prevent hanging, no need to limit concurrency
         environment: {
           NODE_ENV: 'production',
           // Avatar bucket name for internal Lambda operations
