@@ -1,4 +1,5 @@
 // Colyseus server entry point - main game server
+// Trigger rebuild with updated MONGODB_URI
 import { Server, matchMaker } from 'colyseus';
 import { RedisPresence } from '@colyseus/redis-presence';
 import { RedisDriver } from '@colyseus/redis-driver';
