@@ -326,7 +326,7 @@
           NEXTAUTH_URL: 'https://leetbattle.net',
           // Redis configuration
           REDIS_HOST: process.env.REDIS_HOST || '',
-          REDIS_PORT: process.env.REDIS_PORT || '6379',
+          REDIS_PORT: process.env.REDIS_PORT || '6380', // Default to single Redis instance port
           REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
           // Redis Cluster configuration
           // Default to 'false' - only enable cluster mode if explicitly set
