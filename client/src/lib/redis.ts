@@ -26,6 +26,8 @@ export function getRedis(): Cluster | Redis {
               password,
               lazyConnect: true,  // Don't connect immediately - wait until first command
               maxRetriesPerRequest: 3,
+              connectTimeout: 5000,  // 5 second connection timeout
+              commandTimeout: 5000,  // 5 second command timeout
             },
             clusterRetryStrategy: (times: number) => {
               const delay = Math.min(times * 50, 2000);
@@ -42,6 +44,8 @@ export function getRedis(): Cluster | Redis {
         password, 
         lazyConnect: true,  // Don't connect immediately - wait until first command
         maxRetriesPerRequest: 3,
+        connectTimeout: 5000,  // 5 second connection timeout
+        commandTimeout: 5000,  // 5 second command timeout
         enableOfflineQueue: true,  // Queue commands when Redis is offline
       });
     }

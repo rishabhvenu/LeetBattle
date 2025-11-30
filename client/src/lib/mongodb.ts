@@ -28,8 +28,9 @@ async function connectDB() {
       // Disable additional logging
       autoIndex: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 5000,  // Fail fast if MongoDB unavailable
+      socketTimeoutMS: 10000,  // Reduced from 45000 to fail faster
+      connectTimeoutMS: 5000,  // Connection timeout
     };
 
     cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
@@ -59,8 +60,9 @@ export async function getMongoClient(): Promise<MongoClient> {
     const client = new MongoClient(MONGODB_URI, {
       monitorCommands: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
+      serverSelectionTimeoutMS: 5000,  // Fail fast if MongoDB unavailable
+      socketTimeoutMS: 10000,  // Reduced from 45000 to fail faster
+      connectTimeoutMS: 5000,  // Connection timeout
     });
     clientPromise = client.connect();
   }
