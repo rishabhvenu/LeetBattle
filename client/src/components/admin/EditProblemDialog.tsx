@@ -7,7 +7,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { MonacoEditor } from '@/components/ui/monaco-editor';
 import { Trash2 } from 'lucide-react';
-import type { AdminProblem, SpecialInputConfig } from '@/types/admin';
+import type { AdminProblem } from '@/types/admin';
+import type { SpecialInputConfig } from '@/types/db';
 
 interface EditProblemDialogProps {
   isOpen: boolean;

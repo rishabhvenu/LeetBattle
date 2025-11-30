@@ -3,6 +3,7 @@ import { getMatchData } from '@/lib/actions';
 import { formatSubmission } from './submissionFormatter';
 import type { Problem, OpponentStats, UserStats, FormattedSubmission } from '@/types/match';
 import { Room } from 'colyseus.js';
+import { toast } from 'react-toastify';
 
 interface MatchDataLoaderConfig {
   matchId: string;

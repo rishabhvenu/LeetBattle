@@ -168,3 +168,6 @@ export interface RateLimitPayload {
   action: string;
 }
 
+// Re-export types from match.d.ts
+export type { MatchDetails, PlayerMatchStats, MatchHistoryItem } from './match.d';
+

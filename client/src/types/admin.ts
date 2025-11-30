@@ -21,6 +21,7 @@ export interface ProblemSolutions {
   cpp?: string;
   java?: string;
   js?: string;
+  [key: string]: string | undefined;
 }
 
 export interface ProblemTestCase {

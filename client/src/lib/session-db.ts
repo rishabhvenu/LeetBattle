@@ -89,7 +89,7 @@ export async function getSessionFromDB(sessionId: string): Promise<SessionData> 
         normalizedUserId = session.userId;
       } else if (session.userId && typeof session.userId === 'object') {
         // Check for ObjectId structure
-        const obj = session.userId as Record<string, unknown>;
+        const obj = session.userId as unknown as Record<string, unknown>;
         if ('head' in obj && 'pos' in obj) {
           // It's an ObjectId - convert to string using toString()
           const objId = session.userId as { toString?: () => string };

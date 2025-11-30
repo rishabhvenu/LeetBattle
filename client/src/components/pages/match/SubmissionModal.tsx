@@ -229,8 +229,8 @@ export function SubmissionModal({
                     cursorStyle: "line" as const,
                     cursorWidth: 0,
                     selectOnLineNumbers: false,
-                    selectionHighlight: "off",
-                    occurrencesHighlight: "off",
+                    selectionHighlight: false,
+                    occurrencesHighlight: "off" as const,
                   }}
                 />
               </div>
