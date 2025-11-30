@@ -5,7 +5,7 @@ metadata:
   namespace: codeclashers
 spec:
   serviceName: redis-cluster-headless
-  replicas: 1  # Start with 1 pod (redis-cluster-0) for external access, scale up after cluster init
+  replicas: 6
   selector:
     matchLabels:
       app: redis-cluster
