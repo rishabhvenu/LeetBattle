@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { MongoClient } from 'mongodb';
 
+// Trigger rebuild with updated MONGODB_URI secret
 const MONGODB_URI = process.env.MONGODB_URI;
 
 if (!MONGODB_URI) {
