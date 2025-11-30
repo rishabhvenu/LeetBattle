@@ -69,15 +69,21 @@ export async function rateLimit(
   customPoints?: number
 ): Promise<void> {
   try {
-    await limiter.consume(identifier, customPoints || 1);
+    // Add timeout wrapper to fail fast if Redis is hanging (5 second timeout)
+    await Promise.race([
+      limiter.consume(identifier, customPoints || 1),
+      new Promise<void>((_, reject) => 
+        setTimeout(() => reject(new Error('Rate limit check timeout')), 5000)
+      ),
+    ]);
   } catch (rejRes: unknown) {
-    // Check if this is a Redis connection error (not a rate limit error)
+    // Check if this is a timeout or Redis connection error (not a rate limit error)
     const error = rejRes as Error & { msBeforeNext?: number; remainingPoints?: number };
     
-    // If it's a Redis connection error (no msBeforeNext property), fail open (allow the request)
+    // If it's a timeout or Redis connection error (no msBeforeNext property), fail open (allow the request)
     // This prevents Redis outages from blocking legitimate users
     if (!error.msBeforeNext && !error.remainingPoints) {
-      console.warn('Redis connection error in rate limiter, allowing request:', error.message);
+      console.warn('Redis connection error/timeout in rate limiter, allowing request:', error.message);
       return; // Fail open - allow the request
     }
     
