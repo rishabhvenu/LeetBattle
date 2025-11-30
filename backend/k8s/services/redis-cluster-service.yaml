@@ -4,13 +4,14 @@ metadata:
   name: redis-cluster
   namespace: codeclashers
 spec:
-  type: NodePort  # Use NodePort for external access (Lambda)
+  type: ClusterIP
+  externalIPs:
+    - ${ORACLE_VM_IP}  # External access on VM IP, port 6379
   selector:
     app: redis-cluster
   ports:
   - port: ${REDIS_PORT}
     targetPort: 6379
-    nodePort: 30000  # External port for Lambda access
     protocol: TCP
     name: client
 
