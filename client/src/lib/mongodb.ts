@@ -33,11 +33,18 @@ async function connectDB() {
       connectTimeoutMS: 5000,  // Connection timeout
     };
 
-    cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
-      // Silently connect - no logging
-      return mongoose;
-    }).catch((error) => {
+    // Add timeout wrapper to prevent hanging (10 second total timeout)
+    cached.promise = Promise.race([
+      mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
+        // Silently connect - no logging
+        return mongoose;
+      }),
+      new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error('MongoDB connection timeout after 10s')), 10000)
+      ),
+    ]).catch((error) => {
       console.error('MongoDB connection error:', error.message);
+      cached.promise = null; // Reset on error so we can retry
       throw error;
     });
   }
@@ -64,7 +71,16 @@ export async function getMongoClient(): Promise<MongoClient> {
       socketTimeoutMS: 10000,  // Reduced from 45000 to fail faster
       connectTimeoutMS: 5000,  // Connection timeout
     });
-    clientPromise = client.connect();
+    // Add timeout wrapper to prevent hanging (10 second total timeout)
+    clientPromise = Promise.race([
+      client.connect(),
+      new Promise<never>((_, reject) => 
+        setTimeout(() => {
+          clientPromise = null; // Reset on timeout so we can retry
+          reject(new Error('MongoDB client connection timeout after 10s'));
+        }, 10000)
+      ),
+    ]);
   }
   return clientPromise;
 }
