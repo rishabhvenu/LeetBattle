@@ -55,19 +55,8 @@ export async function registerUser(prevState: { error?: string } | null, formDat
   }
 
   try {
-    // Add timeout wrapper to MongoDB connection (10 second timeout total)
-    await Promise.race([
-      connectDB(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB connection timeout')), 10000)
-      ),
-    ]);
-    const client = await Promise.race([
-      getMongoClient(),
-      new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB client timeout')), 10000)
-      ),
-    ]);
+    await connectDB();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const users = db.collection(USERS_COLLECTION);
@@ -144,19 +133,8 @@ export async function loginUser(prevState: { error?: string } | null, formData: 
   }
 
   try {
-    // Add timeout wrapper to MongoDB connection (10 second timeout total)
-    await Promise.race([
-      connectDB(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB connection timeout')), 10000)
-      ),
-    ]);
-    const client = await Promise.race([
-      getMongoClient(),
-      new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB client timeout')), 10000)
-      ),
-    ]);
+    await connectDB();
+    const client = await getMongoClient();
     
     const db = client.db(DB_NAME);
     const users = db.collection(USERS_COLLECTION);
@@ -240,19 +218,8 @@ export async function changePassword(currentPassword: string, newPassword: strin
   }
 
   try {
-    // Add timeout wrapper to MongoDB connection (10 second timeout total)
-    await Promise.race([
-      connectDB(),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB connection timeout')), 10000)
-      ),
-    ]);
-    const client = await Promise.race([
-      getMongoClient(),
-      new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error('MongoDB client timeout')), 10000)
-      ),
-    ]);
+    await connectDB();
+    const client = await getMongoClient();
     const db = client.db(DB_NAME);
     const users = db.collection(USERS_COLLECTION);
 
