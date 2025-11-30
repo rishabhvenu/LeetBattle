@@ -329,7 +329,9 @@
           REDIS_PORT: process.env.REDIS_PORT || '6379',
           REDIS_PASSWORD: process.env.REDIS_PASSWORD || '',
           // Redis Cluster configuration
-          REDIS_CLUSTER_ENABLED: process.env.REDIS_CLUSTER_ENABLED || 'true',
+          // Default to 'false' - only enable cluster mode if explicitly set
+          // Cluster mode requires proper cluster initialization and node discovery
+          REDIS_CLUSTER_ENABLED: process.env.REDIS_CLUSTER_ENABLED || 'false',
           // Optional: Comma-separated list of cluster nodes (e.g., "node1:6379,node2:6379")
           // If not set, uses REDIS_HOST:REDIS_PORT as entry point
           REDIS_CLUSTER_NODES: process.env.REDIS_CLUSTER_NODES || '',
