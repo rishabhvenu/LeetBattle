@@ -203,6 +203,11 @@ jobs:
           JUDGE0_WORKER_IMAGE: ${{ env.JUDGE0_WORKER_IMAGE }}
           # External IP for services
           ORACLE_VM_IP: ${{ vars.COLYSEUS_HOST_IP }}
+          # Ports from secrets/vars (with defaults)
+          COLYSEUS_PORT: ${{ secrets.COLYSEUS_PORT || vars.COLYSEUS_PORT || '2567' }}
+          JUDGE0_PORT: ${{ secrets.JUDGE0_PORT || vars.JUDGE0_PORT || '2358' }}
+          MONGODB_PORT: ${{ secrets.MONGODB_PORT || vars.MONGODB_PORT || '27017' }}
+          REDIS_PORT: ${{ secrets.REDIS_PORT || vars.REDIS_PORT || '6379' }}
           # Redis password for ConfigMap substitution
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           # Resource configuration (from secrets/vars, with defaults)

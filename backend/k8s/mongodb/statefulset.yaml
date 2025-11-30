@@ -25,9 +25,9 @@ spec:
         - --dbpath
         - /data/db
         ports:
-        - containerPort: 27017
+        - containerPort: ${MONGODB_PORT}
           name: mongodb
-          hostPort: 27017  # Bind directly to host port for external access
+          hostPort: ${MONGODB_PORT}  # Bind directly to host port for external access
         env:
         - name: MONGO_INITDB_ROOT_USERNAME
           valueFrom:
