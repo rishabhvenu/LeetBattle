@@ -80,10 +80,25 @@ export async function getMongoClient(): Promise<MongoClient> {
       new Promise<never>((_, reject) => 
         setTimeout(() => {
           clientPromise = null; // Reset on timeout so we can retry
+          // Try to close the client if connection attempt is hanging
+          try {
+            client.close().catch(() => {}); // Ignore close errors
+          } catch {
+            // Ignore
+          }
           reject(new Error('MongoDB client connection timeout after 5s'));
         }, 5000)
       ),
-    ]);
+    ]).catch((error) => {
+      clientPromise = null; // Reset on any error
+      // Try to close the client
+      try {
+        client.close().catch(() => {}); // Ignore close errors
+      } catch {
+        // Ignore
+      }
+      throw error;
+    });
   }
   return clientPromise;
 }
