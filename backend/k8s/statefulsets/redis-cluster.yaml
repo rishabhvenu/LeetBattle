@@ -54,7 +54,6 @@ spec:
         ports:
         - containerPort: 6379
           name: client
-          hostPort: 6379  # External access on port 6379 (only redis-cluster-0 will bind successfully)
         - containerPort: 16379
           name: gossip
         env:
