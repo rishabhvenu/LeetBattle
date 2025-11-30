@@ -14,13 +14,17 @@ export const generalLimiter = new RateLimiterRedis({
   blockDuration: RATE_LIMITER_CONFIG.general.blockDuration,
 });
 
-// Stricter limiter for authentication endpoints (5 attempts per minute)
+// Stricter limiter for authentication endpoints (10 attempts per minute)
+// Configured to fail open if Redis is unavailable (doesn't block users)
 export const authLimiter = new RateLimiterRedis({
   storeClient: redis,
   keyPrefix: 'rl:auth',
   points: RATE_LIMITER_CONFIG.auth.points,
   duration: RATE_LIMITER_CONFIG.auth.duration,
   blockDuration: RATE_LIMITER_CONFIG.auth.blockDuration,
+  // Fail open: if Redis is unavailable, allow requests instead of blocking
+  execEvenly: false,
+  execEvenlyMinDelayMs: 0,
 });
 
 // Queue operations limiter (20 requests per 10 seconds)
@@ -67,7 +71,18 @@ export async function rateLimit(
   try {
     await limiter.consume(identifier, customPoints || 1);
   } catch (rejRes: unknown) {
-    const msBeforeNext = (rejRes as { msBeforeNext?: number })?.msBeforeNext || 60000;
+    // Check if this is a Redis connection error (not a rate limit error)
+    const error = rejRes as Error & { msBeforeNext?: number; remainingPoints?: number };
+    
+    // If it's a Redis connection error (no msBeforeNext property), fail open (allow the request)
+    // This prevents Redis outages from blocking legitimate users
+    if (!error.msBeforeNext && !error.remainingPoints) {
+      console.warn('Redis connection error in rate limiter, allowing request:', error.message);
+      return; // Fail open - allow the request
+    }
+    
+    // This is a real rate limit error
+    const msBeforeNext = error.msBeforeNext || 60000;
     const retryAfterSeconds = Math.ceil(msBeforeNext / 1000);
     
     throw new Error(
