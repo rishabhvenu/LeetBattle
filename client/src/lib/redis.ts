@@ -9,8 +9,10 @@ export function getRedis(): Cluster | Redis {
     const password = process.env.REDIS_PASSWORD || undefined;
     
     // Check if Redis Cluster mode is enabled
-    const isCluster = process.env.REDIS_CLUSTER_ENABLED === 'true' || 
-                      process.env.REDIS_CLUSTER_NODES !== undefined;
+    // Only enable cluster if explicitly set to 'true' AND cluster nodes are provided
+    const isCluster = process.env.REDIS_CLUSTER_ENABLED === 'true' && 
+                      process.env.REDIS_CLUSTER_NODES !== undefined &&
+                      process.env.REDIS_CLUSTER_NODES.trim() !== '';
     
     if (isCluster) {
       // Redis Cluster mode - use cluster nodes from env or single entry point
