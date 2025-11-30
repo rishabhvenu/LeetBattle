@@ -443,7 +443,7 @@
       const lambdaOrigin = new cloudfrontOrigins.HttpOrigin(functionUrlDomain, {
         protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
         connectionTimeout: cdk.Duration.seconds(10),  // Connection timeout
-        readTimeout: cdk.Duration.seconds(60),  // Match Lambda timeout (60s)
+        readTimeout: cdk.Duration.seconds(60),  // Match Lambda timeout (60s) - CloudFront origin timeout
         customHeaders: {
           // Set x-forwarded-host so Next.js knows the original public domain
           // This helps Next.js generate correct URLs and prevents redirect issues
