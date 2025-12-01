@@ -41,7 +41,13 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
     }
     
     console.log(`[generateBotProfile] Using API base: ${apiBase}`);
-    const response = await fetch(`${apiBase}/admin/bots/generate`, {
+    console.log(`[generateBotProfile] Internal secret present: ${!!internalSecret}`);
+    console.log(`[generateBotProfile] Request body:`, JSON.stringify({ count, gender }));
+    
+    const fetchUrl = `${apiBase}/admin/bots/generate`;
+    console.log(`[generateBotProfile] Fetch URL: ${fetchUrl}`);
+    
+    const response = await fetch(fetchUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -51,9 +57,16 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
       body: JSON.stringify({ count, gender }),
     });
 
+    console.log(`[generateBotProfile] Response status: ${response.status}`);
+    console.log(`[generateBotProfile] Response ok: ${response.ok}`);
+
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Bot generation API error:', response.status, errorText);
+      console.error('[generateBotProfile] Bot generation API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        errorText: errorText.substring(0, 500),
+      });
       try {
         const errorJson = JSON.parse(errorText);
         return { success: false, error: errorJson.error || errorJson.message || 'API request failed' };
@@ -63,6 +76,7 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
     }
 
     const result = await response.json();
+    console.log('[generateBotProfile] Success:', result);
     return result;
   } catch (error: any) {
     console.error('Error generating bot profile:', error);

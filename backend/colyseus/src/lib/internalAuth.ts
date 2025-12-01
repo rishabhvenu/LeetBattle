@@ -28,8 +28,18 @@ export function adminAuthMiddleware() {
       const internalSecret = ctx.get('X-Internal-Secret');
       const expectedInternalSecret = process.env.INTERNAL_SERVICE_SECRET;
       
+      console.log('[adminAuth] checking internal secret', {
+        path: ctx.path,
+        method: ctx.method,
+        hasInternalSecret: !!internalSecret,
+        hasExpectedSecret: !!expectedInternalSecret,
+        secretLength: internalSecret?.length || 0,
+        expectedLength: expectedInternalSecret?.length || 0,
+        secretsMatch: internalSecret === expectedInternalSecret,
+      });
+      
       if (internalSecret && expectedInternalSecret && internalSecret === expectedInternalSecret) {
-        console.log('[adminAuth] internal service authentication', {
+        console.log('[adminAuth] internal service authentication SUCCESS', {
           path: ctx.path,
           method: ctx.method,
           serviceName: ctx.get('X-Service-Name') || 'unknown',
@@ -38,6 +48,15 @@ export function adminAuthMiddleware() {
         ctx.state.adminUser = true; // Treat internal service as admin
         await next();
         return;
+      }
+      
+      if (internalSecret && expectedInternalSecret && internalSecret !== expectedInternalSecret) {
+        console.warn('[adminAuth] internal secret mismatch', {
+          path: ctx.path,
+          method: ctx.method,
+          receivedLength: internalSecret.length,
+          expectedLength: expectedInternalSecret.length,
+        });
       }
       
       // Get session cookie (for browser-based calls)
