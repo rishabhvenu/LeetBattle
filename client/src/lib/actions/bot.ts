@@ -13,7 +13,13 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/generate`, {
+    // Use Colyseus HTTP URL for backend API endpoints
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    
+    const response = await fetch(`${apiBase}/admin/bots/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -23,14 +29,22 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
       body: JSON.stringify({ count, gender }),
     });
 
-    const result = await response.json();
     if (!response.ok) {
-      return { success: false, error: result.error || result.message || 'API request failed' };
+      const errorText = await response.text();
+      console.error('Bot generation API error:', response.status, errorText);
+      try {
+        const errorJson = JSON.parse(errorText);
+        return { success: false, error: errorJson.error || errorJson.message || 'API request failed' };
+      } catch {
+        return { success: false, error: `HTTP ${response.status}: ${errorText.substring(0, 100)}` };
+      }
     }
+
+    const result = await response.json();
     return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error generating bot profile:', error);
-    return { success: false, error: 'Failed to generate bot profile' };
+    return { success: false, error: `Failed to generate bot profile: ${error.message || error}` };
   }
 }
 
@@ -42,7 +56,13 @@ export async function generateBotAvatar(fullName: string, gender: 'male' | 'fema
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/avatar`, {
+    // Use Colyseus HTTP URL for backend API endpoints
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    
+    const response = await fetch(`${apiBase}/admin/bots/avatar`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -52,14 +72,22 @@ export async function generateBotAvatar(fullName: string, gender: 'male' | 'fema
       body: JSON.stringify({ fullName, gender }),
     });
 
-    const result = await response.json();
     if (!response.ok) {
-      return { success: false, error: result.error || result.message || 'API request failed' };
+      const errorText = await response.text();
+      console.error('Bot avatar API error:', response.status, errorText);
+      try {
+        const errorJson = JSON.parse(errorText);
+        return { success: false, error: errorJson.error || errorJson.message || 'API request failed' };
+      } catch {
+        return { success: false, error: `HTTP ${response.status}: ${errorText.substring(0, 100)}` };
+      }
     }
+
+    const result = await response.json();
     return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error generating bot avatar:', error);
-    return { success: false, error: 'Failed to generate bot avatar' };
+    return { success: false, error: `Failed to generate bot avatar: ${error.message || error}` };
   }
 }
 
@@ -164,7 +192,11 @@ export async function deployBots(botIds: string[], deploy: boolean) {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/deploy`, {
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    const response = await fetch(`${apiBase}/admin/bots/deploy`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -193,7 +225,11 @@ export async function updateBot(botId: string, updates: Record<string, unknown>)
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/${botId}`, {
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    const response = await fetch(`${apiBase}/admin/bots/${botId}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
@@ -222,7 +258,11 @@ export async function deleteBot(botId: string) {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/${botId}`, {
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    const response = await fetch(`${apiBase}/admin/bots/${botId}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
@@ -250,7 +290,11 @@ export async function resetBotData(resetType: 'stats' | 'all' = 'stats') {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/reset`, {
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    const response = await fetch(`${apiBase}/admin/bots/reset`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -338,7 +382,11 @@ export async function setRotationConfig(maxDeployed: number) {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/rotation/config`, {
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    const response = await fetch(`${apiBase}/admin/bots/rotation/config`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -367,7 +415,11 @@ export async function getRotationStatus() {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/rotation/status`, {
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    const response = await fetch(`${apiBase}/admin/bots/rotation/status`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -403,7 +455,11 @@ export async function initializeRotationSystem() {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/rotation/init`, {
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+    const response = await fetch(`${apiBase}/admin/bots/rotation/init`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
