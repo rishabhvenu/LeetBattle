@@ -293,11 +293,23 @@ async function ensureIndexes(db: ReturnType<typeof import('mongodb').MongoClient
 
 // Active matches helpers
 export async function getOngoingMatchesCount(): Promise<number> {
-  const redis = getRedis();
-  // Use Redis set of active match IDs; fallback to Mongo if missing
-  const count = await redis.scard(RedisKeys.activeMatchesSet);
-  if (count && count > 0) return count;
+  try {
+    const redis = getRedis();
+    // Use Redis set of active match IDs; fallback to Mongo if missing
+    const count = await Promise.race([
+      redis.scard(RedisKeys.activeMatchesSet),
+      new Promise<number>((_, reject) => 
+        setTimeout(() => reject(new Error('Redis timeout')), 2000)
+      )
+    ]).catch(() => null);
+    
+    if (count !== null && count > 0) return count;
+  } catch (error) {
+    // Redis unavailable - fall through to MongoDB
+    console.warn('Redis unavailable for getOngoingMatchesCount, using MongoDB fallback:', error);
+  }
 
+  // Fallback to MongoDB
   await connectDB();
   const client = await getMongoClient();
   const db = client.db(DB_NAME);
@@ -347,8 +359,19 @@ export async function getActiveMatches() {
     const users = mongoDb.collection('users');
     const problems = mongoDb.collection('problems');
 
-    // Get active match IDs from Redis
-    const activeMatchIds = await redis.smembers(RedisKeys.activeMatchesSet);
+    // Get active match IDs from Redis with timeout
+    let activeMatchIds: string[] = [];
+    try {
+      activeMatchIds = await Promise.race([
+        redis.smembers(RedisKeys.activeMatchesSet),
+        new Promise<string[]>((_, reject) => 
+          setTimeout(() => reject(new Error('Redis timeout')), 2000)
+        )
+      ]).catch(() => []);
+    } catch (error) {
+      console.warn('Redis unavailable for getActiveMatches, returning empty list:', error);
+      return { success: true, matches: [] };
+    }
     
     if (activeMatchIds.length === 0) {
       return { success: true, matches: [] };

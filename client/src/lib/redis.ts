@@ -48,7 +48,7 @@ export function getRedis(): Cluster | Redis {
         maxRetriesPerRequest: 1,  // Reduced retries for faster failure
         connectTimeout: 2000,  // 2 second connection timeout - fail fast
         commandTimeout: 2000,  // 2 second command timeout - fail fast
-        enableOfflineQueue: false,  // Don't queue commands - fail immediately if offline
+        enableOfflineQueue: true,  // Queue commands when Redis is offline - prevents "Stream isn't writeable" errors
         retryStrategy: () => null,  // Don't retry on connection failure
       });
     }
