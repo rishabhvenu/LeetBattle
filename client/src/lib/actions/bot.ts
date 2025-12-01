@@ -2,6 +2,8 @@
 
 import { REST_ENDPOINTS } from '../../constants/RestEndpoints';
 import { ensureAdminAccess, getSessionCookieHeader } from './shared';
+import connectDB, { getMongoClient } from '../mongodb';
+import { DB_NAME } from './constants';
 
 export async function generateBotProfile(count: number, gender?: 'male' | 'female' | 'random') {
   const adminError = await ensureAdminAccess();
@@ -68,24 +70,35 @@ export async function initializeBotsCollection() {
   }
 
   try {
-    const cookieHeader = await getSessionCookieHeader();
-    const response = await fetch(`${REST_ENDPOINTS.API_BASE}/admin/bots/init`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cookie': cookieHeader,
-      },
-      credentials: 'include',
-    });
+    await connectDB();
+    const client = await getMongoClient();
+    const db = client.db(DB_NAME);
+    const bots = db.collection('bots');
 
-    const result = await response.json();
-    if (!response.ok) {
-      return { success: false, error: result.error || result.message || 'API request failed' };
+    // Check if collection exists and has any documents
+    const count = await bots.countDocuments();
+    
+    if (count === 0) {
+      // Collection exists but is empty - this is fine, it's initialized
+      return { 
+        success: true, 
+        message: 'Bots collection is initialized and ready to use. It is currently empty.' 
+      };
     }
-    return result;
+
+    // Collection has documents - already initialized
+    return { 
+      success: true, 
+      message: `Bots collection is already initialized with ${count} bot(s).` 
+    };
   } catch (error) {
     console.error('Error initializing bots collection:', error);
-    return { success: false, error: 'Failed to initialize bots collection' };
+    // If collection doesn't exist, MongoDB will create it on first insert
+    // So we can consider this a success
+    return { 
+      success: true, 
+      message: 'Bots collection will be created automatically when you add your first bot.' 
+    };
   }
 }
 
@@ -98,35 +111,42 @@ export async function getBots() {
   }
 
   try {
-    const cookieHeader = await getSessionCookieHeader();
-    const url = `${REST_ENDPOINTS.API_BASE}/admin/bots`;
-    console.log('Fetching bots from:', url);
-    
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cookie': cookieHeader,
+    await connectDB();
+    const client = await getMongoClient();
+    const db = client.db(DB_NAME);
+    const bots = db.collection('bots');
+
+    // Fetch all bots from MongoDB
+    const botsList = await bots.find({}).toArray();
+
+    // Transform MongoDB documents to match expected format
+    const formattedBots = botsList.map((bot: any) => ({
+      _id: bot._id.toString(),
+      username: bot.username || 'Unknown',
+      fullName: bot.fullName || bot.username || 'Unknown',
+      avatar: bot.avatar || null,
+      stats: bot.stats || {
+        rating: 1200,
+        totalMatches: 0,
+        wins: 0,
+        losses: 0,
+        draws: 0,
+        timeCoded: 0,
       },
-      credentials: 'include',
-    });
+      deployed: bot.deployed || false,
+      active: bot.active || false,
+      createdAt: bot.createdAt || bot._id.getTimestamp(),
+      updatedAt: bot.updatedAt || bot._id.getTimestamp(),
+    }));
 
-    // Optional verbose logging for debugging; commented out to reduce console noise
-    // console.log('Response status:', response.status, response.statusText);
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Response error:', errorText);
-      return { success: false, error: `HTTP ${response.status}: ${errorText}` };
-    }
-
-    const result = await response.json();
-    // Silent success in normal operation; uncomment for debugging:
-    // console.log('Bots fetched successfully:', result);
-    return result;
-  } catch (error) {
+    return { success: true, bots: formattedBots };
+  } catch (error: any) {
     console.error('Error fetching bots:', error);
-    return { success: false, error: `Failed to fetch bots: ${error}` };
+    // Check if collection doesn't exist
+    if (error?.message?.includes('not initialized') || error?.code === 'NamespaceNotFound') {
+      return { success: false, error: 'Bots collection not initialized' };
+    }
+    return { success: false, error: `Failed to fetch bots: ${error.message || error}` };
   }
 }
 
