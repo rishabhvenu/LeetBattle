@@ -140,6 +140,8 @@ export async function getUserStatsCached(userId: string) {
 
   // Cache with TTL (e.g., 5 minutes) - fail silently if Redis unavailable
   try {
+    const redis = getRedis();
+    const key = RedisKeys.userStats(userId);
     await Promise.race([
       redis.set(key, JSON.stringify(stats), 'EX', 300),
       new Promise((_, reject) => 
