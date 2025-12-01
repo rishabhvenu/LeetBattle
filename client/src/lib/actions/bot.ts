@@ -17,12 +17,15 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
     // If HTTPS domain isn't accessible, try HTTP on port 2567
     let apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
     
-    // If using HTTPS domain that might not be accessible, try HTTP fallback
-    if (apiBase.startsWith('https://matchmaker.leetbattle.net')) {
-      // Try HTTP instead since HTTPS might not be configured
-      apiBase = apiBase.replace('https://', 'http://').replace(':443', ':2567');
+    // If using HTTPS matchmaker domain, convert to HTTP on port 2567
+    // since HTTPS/ingress isn't configured for this domain
+    if (apiBase.includes('matchmaker.leetbattle.net')) {
+      // Convert HTTPS to HTTP and ensure port 2567 is specified
+      apiBase = apiBase.replace('https://', 'http://');
+      // Remove any existing port (like :443) and add :2567
+      apiBase = apiBase.replace(/:\d+$/, ''); // Remove trailing port
       if (!apiBase.includes(':')) {
-        apiBase = apiBase.replace('matchmaker.leetbattle.net', 'matchmaker.leetbattle.net:2567');
+        apiBase = `${apiBase}:2567`;
       }
     }
     
