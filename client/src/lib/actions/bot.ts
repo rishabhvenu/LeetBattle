@@ -14,11 +14,23 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
   try {
     const cookieHeader = await getSessionCookieHeader();
     // Use Colyseus HTTP URL for backend API endpoints
-    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    // If HTTPS domain isn't accessible, try HTTP on port 2567
+    let apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    
+    // If using HTTPS domain that might not be accessible, try HTTP fallback
+    if (apiBase.startsWith('https://matchmaker.leetbattle.net')) {
+      // Try HTTP instead since HTTPS might not be configured
+      apiBase = apiBase.replace('https://', 'http://').replace(':443', ':2567');
+      if (!apiBase.includes(':')) {
+        apiBase = apiBase.replace('matchmaker.leetbattle.net', 'matchmaker.leetbattle.net:2567');
+      }
+    }
+    
     if (!apiBase) {
       return { success: false, error: 'Backend API URL not configured' };
     }
     
+    console.log(`[generateBotProfile] Using API base: ${apiBase}`);
     const response = await fetch(`${apiBase}/admin/bots/generate`, {
       method: 'POST',
       headers: {
