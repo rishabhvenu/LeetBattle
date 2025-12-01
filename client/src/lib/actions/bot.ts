@@ -13,6 +13,12 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
 
   try {
     const cookieHeader = await getSessionCookieHeader();
+    console.log(`[generateBotProfile] Cookie header: ${cookieHeader ? 'present' : 'missing'}`);
+    
+    if (!cookieHeader) {
+      return { success: false, error: 'Session cookie not found. Please log in again.' };
+    }
+    
     // Use Colyseus HTTP URL for backend API endpoints
     // If HTTPS domain isn't accessible, try HTTP on port 2567
     let apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
