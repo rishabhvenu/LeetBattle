@@ -70,14 +70,26 @@ export async function saveUserAvatar(fileName: string) {
 
 // Cached user stats in Redis with MongoDB fallback
 export async function getUserStatsCached(userId: string) {
-  const redis = getRedis();
-  const key = RedisKeys.userStats(userId);
-  // Try cache
-  const cached = await redis.get(key);
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch {}
+  // Try Redis cache first, but fail gracefully if Redis is unavailable
+  try {
+    const redis = getRedis();
+    const key = RedisKeys.userStats(userId);
+    // Try cache with timeout
+    const cached = await Promise.race([
+      redis.get(key),
+      new Promise<null>((_, reject) => 
+        setTimeout(() => reject(new Error('Redis timeout')), 3000)
+      )
+    ]).catch(() => null);
+    
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
+  } catch (error) {
+    // Redis unavailable - fall through to MongoDB
+    console.warn('Redis unavailable for getUserStatsCached, using MongoDB fallback:', error);
   }
 
   // Fallback: compute from matches
@@ -126,22 +138,45 @@ export async function getUserStatsCached(userId: string) {
     rating,
   };
 
-  // Cache with TTL (e.g., 5 minutes)
-  await redis.set(key, JSON.stringify(stats), 'EX', 300);
+  // Cache with TTL (e.g., 5 minutes) - fail silently if Redis unavailable
+  try {
+    await Promise.race([
+      redis.set(key, JSON.stringify(stats), 'EX', 300),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Redis timeout')), 2000)
+      )
+    ]).catch(() => {
+      // Redis unavailable - ignore, we already have the stats from MongoDB
+    });
+  } catch (error) {
+    // Redis unavailable - ignore
+  }
   return stats;
 }
 
 // Cached user activity data for the last 7 days
 export async function getUserActivityCached(userId: string) {
-  const redis = getRedis();
-  const key = RedisKeys.userActivity(userId);
-  
-  // Try cache first
-  const cached = await redis.get(key);
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch {}
+  // Try Redis cache first, but fail gracefully if Redis is unavailable
+  try {
+    const redis = getRedis();
+    const key = RedisKeys.userActivity(userId);
+    
+    // Try cache with timeout
+    const cached = await Promise.race([
+      redis.get(key),
+      new Promise<null>((_, reject) => 
+        setTimeout(() => reject(new Error('Redis timeout')), 3000)
+      )
+    ]).catch(() => null);
+    
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch {}
+    }
+  } catch (error) {
+    // Redis unavailable - fall through to MongoDB
+    console.warn('Redis unavailable for getUserActivityCached, using MongoDB fallback:', error);
   }
 
   // Fallback: compute from matches
@@ -190,8 +225,21 @@ export async function getUserActivityCached(userId: string) {
     });
   }
 
-  // Cache with TTL (5 minutes)
-  await redis.set(key, JSON.stringify(activityData), 'EX', 300);
+  // Cache with TTL (5 minutes) - fail silently if Redis unavailable
+  try {
+    const redis = getRedis();
+    const key = RedisKeys.userActivity(userId);
+    await Promise.race([
+      redis.set(key, JSON.stringify(activityData), 'EX', 300),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Redis timeout')), 2000)
+      )
+    ]).catch(() => {
+      // Redis unavailable - ignore, we already have the activity data from MongoDB
+    });
+  } catch (error) {
+    // Redis unavailable - ignore
+  }
   return activityData;
 }
 
