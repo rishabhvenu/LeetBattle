@@ -120,21 +120,26 @@ export async function getBots() {
     const botsList = await bots.find({}).toArray();
 
     // Transform MongoDB documents to match BotDoc format
+    const { ObjectId } = await import('mongodb');
     const formattedBots = botsList.map((bot: any) => ({
       _id: bot._id, // Keep as ObjectId to match BotDoc type
       username: bot.username || 'Unknown',
       fullName: bot.fullName || bot.username || 'Unknown',
       avatar: bot.avatar || '', // BotDoc requires string, not null
-      gender: bot.gender || 'male', // Required field, default to 'male'
+      gender: (bot.gender === 'male' || bot.gender === 'female') ? bot.gender : 'male', // Required field, ensure valid value
       stats: bot.stats || {
         rating: 1200,
         totalMatches: 0,
         wins: 0,
         losses: 0,
         draws: 0,
-        timeCoded: 0,
       },
-      matchIds: bot.matchIds || [], // Required field, default to empty array
+      matchIds: (bot.matchIds || []).map((id: any) => {
+        // Ensure matchIds are ObjectId instances
+        if (id instanceof ObjectId) return id;
+        if (typeof id === 'string') return new ObjectId(id);
+        return new ObjectId(String(id));
+      }),
       deployed: bot.deployed || false,
       createdAt: bot.createdAt || bot._id.getTimestamp(),
       updatedAt: bot.updatedAt || bot._id.getTimestamp(),
