@@ -19,16 +19,34 @@ const ADMIN_EMAIL = 'rishiryan4@gmail.com';
  * Admin authentication middleware
  * Validates user session and checks if user email matches the admin email
  * Only allows access to users with the specified admin email
+ * Also accepts X-Internal-Secret for server-to-server calls
  */
 export function adminAuthMiddleware() {
   return async (ctx: Context, next: Next) => {
     try {
-      // Get session cookie
+      // Check for internal service secret first (for server-to-server calls)
+      const internalSecret = ctx.get('X-Internal-Secret');
+      const expectedInternalSecret = process.env.INTERNAL_SERVICE_SECRET;
+      
+      if (internalSecret && expectedInternalSecret && internalSecret === expectedInternalSecret) {
+        console.log('[adminAuth] internal service authentication', {
+          path: ctx.path,
+          method: ctx.method,
+          serviceName: ctx.get('X-Service-Name') || 'unknown',
+        });
+        ctx.state.internalService = true;
+        ctx.state.adminUser = true; // Treat internal service as admin
+        await next();
+        return;
+      }
+      
+      // Get session cookie (for browser-based calls)
       const sessionCookie = ctx.cookies.get('codeclashers.sid');
       console.log('[adminAuth] incoming request', {
         path: ctx.path,
         method: ctx.method,
         hasSessionCookie: Boolean(sessionCookie),
+        hasInternalSecret: Boolean(internalSecret),
       });
       
       if (!sessionCookie) {

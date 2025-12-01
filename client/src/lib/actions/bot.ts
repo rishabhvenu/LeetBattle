@@ -12,11 +12,12 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
   }
 
   try {
-    const cookieHeader = await getSessionCookieHeader();
-    console.log(`[generateBotProfile] Cookie header: ${cookieHeader ? 'present' : 'missing'}`);
-    
-    if (!cookieHeader) {
-      return { success: false, error: 'Session cookie not found. Please log in again.' };
+    // Use INTERNAL_SERVICE_SECRET for server-to-server authentication
+    // Cookies don't work reliably from Lambda to Colyseus backend
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+    if (!internalSecret) {
+      console.error('[generateBotProfile] INTERNAL_SERVICE_SECRET not configured');
+      return { success: false, error: 'Internal service secret not configured' };
     }
     
     // Use Colyseus HTTP URL for backend API endpoints
@@ -44,9 +45,9 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Cookie': cookieHeader,
+        'X-Internal-Secret': internalSecret,
+        'X-Service-Name': 'nextjs-actions',
       },
-      credentials: 'include',
       body: JSON.stringify({ count, gender }),
     });
 
