@@ -119,12 +119,13 @@ export async function getBots() {
     // Fetch all bots from MongoDB
     const botsList = await bots.find({}).toArray();
 
-    // Transform MongoDB documents to match expected format
+    // Transform MongoDB documents to match BotDoc format
     const formattedBots = botsList.map((bot: any) => ({
-      _id: bot._id.toString(),
+      _id: bot._id, // Keep as ObjectId to match BotDoc type
       username: bot.username || 'Unknown',
       fullName: bot.fullName || bot.username || 'Unknown',
-      avatar: bot.avatar || null,
+      avatar: bot.avatar || '', // BotDoc requires string, not null
+      gender: bot.gender || 'male', // Required field, default to 'male'
       stats: bot.stats || {
         rating: 1200,
         totalMatches: 0,
@@ -133,8 +134,8 @@ export async function getBots() {
         draws: 0,
         timeCoded: 0,
       },
+      matchIds: bot.matchIds || [], // Required field, default to empty array
       deployed: bot.deployed || false,
-      active: bot.active || false,
       createdAt: bot.createdAt || bot._id.getTimestamp(),
       updatedAt: bot.updatedAt || bot._id.getTimestamp(),
     }));
