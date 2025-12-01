@@ -296,12 +296,25 @@ export async function getOngoingMatchesCount(): Promise<number> {
   try {
     const redis = getRedis();
     // Use Redis set of active match IDs; fallback to Mongo if missing
-    const count = await Promise.race([
-      redis.scard(RedisKeys.activeMatchesSet),
-      new Promise<number>((_, reject) => 
-        setTimeout(() => reject(new Error('Redis timeout')), 2000)
-      )
-    ]).catch(() => null);
+    let count: number | null = null;
+    try {
+      count = await Promise.race([
+        redis.scard(RedisKeys.activeMatchesSet),
+        new Promise<number>((_, reject) => 
+          setTimeout(() => reject(new Error('Redis timeout')), 2000)
+        )
+      ]).catch(() => null);
+    } catch (error: any) {
+      // Catch "Connection is closed", "Stream isn't writeable", etc.
+      if (error?.message?.includes('Connection is closed') || 
+          error?.message?.includes('Stream isn\'t writeable') ||
+          error?.message?.includes('ETIMEDOUT')) {
+        console.warn('Redis connection error in getOngoingMatchesCount:', error.message);
+        count = null;
+      } else {
+        throw error; // Re-throw unexpected errors
+      }
+    }
     
     if (count !== null && count > 0) return count;
   } catch (error) {

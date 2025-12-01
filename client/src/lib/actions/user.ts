@@ -74,13 +74,26 @@ export async function getUserStatsCached(userId: string) {
   try {
     const redis = getRedis();
     const key = RedisKeys.userStats(userId);
-    // Try cache with timeout
-    const cached = await Promise.race([
-      redis.get(key),
-      new Promise<null>((_, reject) => 
-        setTimeout(() => reject(new Error('Redis timeout')), 3000)
-      )
-    ]).catch(() => null);
+    // Try cache with timeout - catch all Redis errors including "Connection is closed"
+    let cached: string | null = null;
+    try {
+      cached = await Promise.race([
+        redis.get(key),
+        new Promise<null>((_, reject) => 
+          setTimeout(() => reject(new Error('Redis timeout')), 2000)
+        )
+      ]).catch(() => null);
+    } catch (error: any) {
+      // Catch "Connection is closed", "Stream isn't writeable", etc.
+      if (error?.message?.includes('Connection is closed') || 
+          error?.message?.includes('Stream isn\'t writeable') ||
+          error?.message?.includes('ETIMEDOUT')) {
+        console.warn('Redis connection error in getUserStatsCached:', error.message);
+        cached = null;
+      } else {
+        throw error; // Re-throw unexpected errors
+      }
+    }
     
     if (cached) {
       try {
@@ -163,13 +176,26 @@ export async function getUserActivityCached(userId: string) {
     const redis = getRedis();
     const key = RedisKeys.userActivity(userId);
     
-    // Try cache with timeout
-    const cached = await Promise.race([
-      redis.get(key),
-      new Promise<null>((_, reject) => 
-        setTimeout(() => reject(new Error('Redis timeout')), 3000)
-      )
-    ]).catch(() => null);
+    // Try cache with timeout - catch all Redis errors including "Connection is closed"
+    let cached: string | null = null;
+    try {
+      cached = await Promise.race([
+        redis.get(key),
+        new Promise<null>((_, reject) => 
+          setTimeout(() => reject(new Error('Redis timeout')), 2000)
+        )
+      ]).catch(() => null);
+    } catch (error: any) {
+      // Catch "Connection is closed", "Stream isn't writeable", etc.
+      if (error?.message?.includes('Connection is closed') || 
+          error?.message?.includes('Stream isn\'t writeable') ||
+          error?.message?.includes('ETIMEDOUT')) {
+        console.warn('Redis connection error in getUserActivityCached:', error.message);
+        cached = null;
+      } else {
+        throw error; // Re-throw unexpected errors
+      }
+    }
     
     if (cached) {
       try {
