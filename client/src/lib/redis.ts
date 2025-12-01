@@ -45,10 +45,11 @@ export function getRedis(): Cluster | Redis {
         port, 
         password, 
         lazyConnect: true,  // Don't connect immediately - wait until first command
-        maxRetriesPerRequest: 3,
-        connectTimeout: 5000,  // 5 second connection timeout
-        commandTimeout: 5000,  // 5 second command timeout
-        enableOfflineQueue: true,  // Queue commands when Redis is offline
+        maxRetriesPerRequest: 1,  // Reduced retries for faster failure
+        connectTimeout: 2000,  // 2 second connection timeout - fail fast
+        commandTimeout: 2000,  // 2 second command timeout - fail fast
+        enableOfflineQueue: false,  // Don't queue commands - fail immediately if offline
+        retryStrategy: () => null,  // Don't retry on connection failure
       });
     }
     
