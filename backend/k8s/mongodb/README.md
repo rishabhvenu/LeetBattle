@@ -174,10 +174,48 @@ kubectl logs -f job/mongodb-replica-set-init -n codeclashers
 
 **Best Practice**: Always maintain an odd number of replicas (3, 5, 7) for proper quorum.
 
+### Data Persistence
+
+**IMPORTANT**: MongoDB data is stored in PersistentVolumeClaims (PVCs) created by the StatefulSet. These PVCs use the `local-path` storage class, which stores data on the host filesystem at `/var/lib/rancher/k3s/storage/`.
+
+**Critical Requirements**:
+1. **Persistent Storage**: Ensure `/var/lib/rancher/k3s/storage/` is on a persistent filesystem (NOT tmpfs/ephemeral)
+2. **PVC Retention**: PVCs are automatically retained when StatefulSet is deleted (by design)
+3. **Backup**: Always backup MongoDB data before major operations or VM restarts
+
+**Verifying Storage Persistence**:
+```bash
+# Check if storage location is persistent (should NOT be tmpfs)
+mount | grep k3s-storage
+
+# Check PVC status
+kubectl get pvc -n codeclashers | grep mongodb
+
+# Verify data exists
+kubectl exec mongodb-0 -n codeclashers -- ls -la /data/db/
+```
+
+**If Data is Lost After Restart**:
+1. Check if `/var/lib/rancher/k3s/storage/` is on ephemeral storage
+2. Verify PVCs still exist: `kubectl get pvc -n codeclashers`
+3. Check if k3s was reset/reinstalled (this wipes local-path volumes)
+4. Consider using external storage (NFS, cloud block storage) for production
+
+See `docs/debugging-guide.md` section "MongoDB Data Persistence Issues" for detailed troubleshooting.
+
 ### Backup
 Each pod has a persistent volume. Use MongoDB's native backup tools:
 ```bash
 kubectl exec mongodb-0 -n codeclashers -- mongodump --out /data/backup
+```
+
+**Regular Backup Schedule**:
+```bash
+# Create daily backup
+kubectl exec mongodb-0 -n codeclashers -- mongodump --out /data/backup/$(date +%Y%m%d)
+
+# Copy backup to external location (recommended)
+kubectl cp codeclashers/mongodb-0:/data/backup ./mongodb-backup
 ```
 
 ### Updates

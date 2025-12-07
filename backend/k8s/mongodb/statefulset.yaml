@@ -77,6 +77,10 @@ spec:
     spec:
       accessModes: [ "ReadWriteOnce" ]
       storageClassName: local-path
+      # Note: PVCs created by StatefulSets are automatically retained
+      # even when the StatefulSet is deleted. However, ensure local-path
+      # storage is on a persistent filesystem (not tmpfs/ephemeral).
+      # See docs/debugging-guide.md for troubleshooting data loss issues.
       resources:
         requests:
           storage: 8Gi
