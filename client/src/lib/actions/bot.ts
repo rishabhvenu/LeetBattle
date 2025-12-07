@@ -183,10 +183,10 @@ export async function getBots() {
     // Fetch all bots from MongoDB
     const botsList = await bots.find({}).toArray();
 
-    // Transform MongoDB documents to match BotDoc format
-    const { ObjectId } = await import('mongodb');
+    // Transform MongoDB documents to plain objects for Client Components
+    // Convert ObjectId and Date instances to serializable values
     const formattedBots = botsList.map((bot: any) => ({
-      _id: bot._id, // Keep as ObjectId to match BotDoc type
+      _id: bot._id.toString(), // Convert ObjectId to string for serialization
       username: bot.username || 'Unknown',
       fullName: bot.fullName || bot.username || 'Unknown',
       avatar: bot.avatar || '', // BotDoc requires string, not null
@@ -199,14 +199,13 @@ export async function getBots() {
         draws: 0,
       },
       matchIds: (bot.matchIds || []).map((id: any) => {
-        // Ensure matchIds are ObjectId instances
-        if (id instanceof ObjectId) return id;
-        if (typeof id === 'string') return new ObjectId(id);
-        return new ObjectId(String(id));
+        // Convert all matchIds to strings for serialization
+        if (id && typeof id.toString === 'function') return id.toString();
+        return String(id);
       }),
       deployed: bot.deployed || false,
-      createdAt: bot.createdAt || bot._id.getTimestamp(),
-      updatedAt: bot.updatedAt || bot._id.getTimestamp(),
+      createdAt: bot.createdAt ? new Date(bot.createdAt).toISOString() : (bot._id ? bot._id.getTimestamp().toISOString() : new Date().toISOString()),
+      updatedAt: bot.updatedAt ? new Date(bot.updatedAt).toISOString() : (bot._id ? bot._id.getTimestamp().toISOString() : new Date().toISOString()),
     }));
 
     return { success: true, bots: formattedBots };

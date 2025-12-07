@@ -247,7 +247,7 @@ export default function BotManagement() {
   const isBotDeployed = (botId: string) => {
     const rotationDeployed = rotationStatus.deployedBots?.includes(botId) || false;
     const rotationActive = rotationStatus.activeBots?.includes(botId) || false;
-    const bot = bots.find((b) => b._id.toString() === botId);
+    const bot = bots.find((b) => String(b._id) === botId);
     if (bot) {
       return !!bot.deployed || rotationDeployed || rotationActive;
     }
@@ -332,7 +332,7 @@ export default function BotManagement() {
   };
 
   const handleToggleDeploy = async (bot: BotDoc) => {
-    await handleDeployBots([bot._id.toString()], !bot.deployed);
+    await handleDeployBots([String(bot._id)], !bot.deployed);
   };
 
   const handleEditBot = (bot: BotDoc) => {
@@ -349,7 +349,7 @@ export default function BotManagement() {
     if (!editingBot) return;
     
     try {
-      const result = await updateBot(editingBot._id.toString(), {
+      const result = await updateBot(String(editingBot._id), {
         fullName: editForm.fullName,
         username: editForm.username,
         'stats.rating': editForm.rating
@@ -372,7 +372,7 @@ export default function BotManagement() {
     if (!confirm(`Are you sure you want to delete ${bot.fullName}?`)) return;
     
     try {
-      const result = await deleteBot(bot._id.toString());
+      const result = await deleteBot(String(bot._id));
       
       if (result.success) {
         toast.success('Bot deleted successfully!');
@@ -591,7 +591,7 @@ export default function BotManagement() {
               <h4 className="font-medium text-black">Next in Rotation</h4>
               <div className="space-y-2 max-h-32 overflow-y-auto">
                 {rotationStatus.rotationQueue.slice(0, 5).map((botId, index) => {
-                  const bot = bots.find(b => b._id.toString() === botId);
+                  const bot = bots.find(b => String(b._id) === botId);
                   return (
                     <div key={botId} className="flex items-center gap-2 p-2 bg-blue-50 rounded text-sm">
                       <span className="text-black/60">#{index + 1}</span>
@@ -690,8 +690,8 @@ export default function BotManagement() {
         </Dialog>
 
         <Button
-          onClick={() => handleDeployBots(bots.filter(b => !isBotDeployed(b._id.toString())).map(b => b._id.toString()), true)}
-          disabled={isDeploying || bots.filter(b => !isBotDeployed(b._id.toString())).length === 0}
+          onClick={() => handleDeployBots(bots.filter(b => !isBotDeployed(String(b._id))).map(b => String(b._id)), true)}
+          disabled={isDeploying || bots.filter(b => !isBotDeployed(String(b._id))).length === 0}
           className="text-white"
           style={{ backgroundColor: '#2599D4' }}
         >
@@ -700,8 +700,8 @@ export default function BotManagement() {
         </Button>
 
         <Button
-          onClick={() => handleDeployBots(bots.filter(b => isBotDeployed(b._id.toString())).map(b => b._id.toString()), false)}
-          disabled={isDeploying || bots.filter(b => isBotDeployed(b._id.toString())).length === 0}
+          onClick={() => handleDeployBots(bots.filter(b => isBotDeployed(String(b._id))).map(b => String(b._id)), false)}
+          disabled={isDeploying || bots.filter(b => isBotDeployed(String(b._id))).length === 0}
           variant="outline"
           className="border-blue-200 text-black hover:bg-blue-50"
         >
@@ -757,7 +757,7 @@ export default function BotManagement() {
           ) : (
             <div className="space-y-4">
               {bots.map((bot) => (
-                <div key={bot._id.toString()} className="flex items-center justify-between p-4 border border-blue-200 rounded-lg bg-blue-50">
+                <div key={String(bot._id)} className="flex items-center justify-between p-4 border border-blue-200 rounded-lg bg-blue-50">
                   <div className="flex items-center gap-4">
                     <Avatar className="w-12 h-12">
                       <AvatarImage
@@ -771,11 +771,11 @@ export default function BotManagement() {
                     <div>
                       <div className="flex items-center gap-2">
                         <h3 className="text-black font-medium">{bot.fullName}</h3>
-                        <Badge variant={isBotDeployed(bot._id.toString()) ? "default" : "secondary"}>
-                          {isBotDeployed(bot._id.toString()) ? "Deployed" : "Stopped"}
+                        <Badge variant={isBotDeployed(String(bot._id)) ? "default" : "secondary"}>
+                          {isBotDeployed(String(bot._id)) ? "Deployed" : "Stopped"}
                         </Badge>
                         {(() => {
-                          const status = getBotStatus(bot._id.toString());
+                          const status = getBotStatus(String(bot._id));
                           if (status === 'In Match') {
                             return (
                               <Badge variant="outline" className="text-xs bg-yellow-100 text-yellow-700 border-yellow-300">
@@ -791,9 +791,9 @@ export default function BotManagement() {
                           }
                           return null;
                         })()}
-                        {!isBotDeployed(bot._id.toString()) && rotationStatus.rotationQueue.includes(bot._id.toString()) && (
+                        {!isBotDeployed(String(bot._id)) && rotationStatus.rotationQueue.includes(String(bot._id)) && (
                           <Badge variant="outline" className="text-xs bg-blue-100 text-blue-700">
-                            Queue #{rotationStatus.rotationQueue.indexOf(bot._id.toString()) + 1}
+                            Queue #{rotationStatus.rotationQueue.indexOf(String(bot._id)) + 1}
                           </Badge>
                         )}
                         <Badge variant="outline" className="text-xs">
@@ -810,7 +810,7 @@ export default function BotManagement() {
                   </div>
                   <div className="flex items-center gap-2">
             <Switch
-                      checked={isBotDeployed(bot._id.toString())}
+                      checked={isBotDeployed(String(bot._id))}
                       onCheckedChange={() => handleToggleDeploy(bot)}
                       disabled={isDeploying}
                     />
