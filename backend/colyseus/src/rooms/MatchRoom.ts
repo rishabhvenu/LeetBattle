@@ -1477,20 +1477,20 @@ export class MatchRoom extends Room {
           
           if (isBot) {
             // Update bot's matchIds
+            // $addToSet will create the array if it doesn't exist
             await bots.updateOne(
               { _id: playerObjectId },
               {
-                $setOnInsert: { matchIds: [] },
                 $addToSet: { matchIds: matchObjectId }
               }
             );
             console.log(`Added match ${this.matchId} to bot ${playerIdString} matchIds`);
           } else {
             // Update user's matchIds
+            // $addToSet will create the array if it doesn't exist
             await users.updateOne(
               { _id: playerObjectId },
               {
-                $setOnInsert: { matchIds: [] },
                 $addToSet: { matchIds: matchObjectId }
               }
             );
