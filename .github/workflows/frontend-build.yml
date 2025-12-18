@@ -12,6 +12,10 @@ on:
 # Allow concurrent builds (no concurrency needed for build-only)
 # Build artifacts are versioned by commit SHA
 
+permissions:
+  contents: read
+  actions: write  # Required to delete artifacts
+
 jobs:
   build:
     runs-on: ubuntu-latest
