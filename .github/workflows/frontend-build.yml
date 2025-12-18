@@ -56,10 +56,11 @@ jobs:
 
       - name: Cleanup old artifacts (keep only latest)
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.keep_old_artifacts != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "🧹 Cleaning up old artifacts to prevent storage quota issues..."
           
-          # GITHUB_TOKEN is automatically available in GitHub Actions, gh CLI uses it automatically
           # Get all artifacts matching our pattern
           ARTIFACTS_JSON=$(gh api repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[] | select(.name | startswith("open-next-artifacts-"))')
           
