@@ -54,13 +54,47 @@ jobs:
           echo "✅ OpenNext build output verified at client/.open-next"
           ls -la client/.open-next/ | head -20
 
+      - name: Cleanup old artifacts (keep only latest)
+        if: github.event_name != 'workflow_dispatch' || github.event.inputs.keep_old_artifacts != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "🧹 Cleaning up old artifacts to prevent storage quota issues..."
+          
+          # Get all artifacts matching our pattern
+          ARTIFACTS_JSON=$(gh api repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[] | select(.name | startswith("open-next-artifacts-"))')
+          
+          if [ -z "$ARTIFACTS_JSON" ] || [ "$ARTIFACTS_JSON" = "null" ]; then
+            echo "✅ No old artifacts found"
+            exit 0
+          fi
+          
+          # Count artifacts
+          COUNT=$(echo "$ARTIFACTS_JSON" | jq -s 'length')
+          echo "📊 Found $COUNT old artifact(s) to delete"
+          
+          # Delete all old artifacts
+          DELETED=0
+          FAILED=0
+          echo "$ARTIFACTS_JSON" | jq -r '.id' | while IFS= read -r artifact_id; do
+            if [ -n "$artifact_id" ]; then
+              if gh api repos/${{ github.repository }}/actions/artifacts/${artifact_id} -X DELETE 2>/dev/null; then
+                echo "  ✅ Deleted artifact ${artifact_id}"
+              else
+                echo "  ⚠️  Failed to delete artifact ${artifact_id} (may already be deleted)"
+              fi
+            fi
+          done
+          
+          echo "✅ Cleanup complete!"
+
       - name: Upload OpenNext build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: open-next-artifacts-${{ github.sha }}
           path: client/.open-next
           include-hidden-files: true
-          retention-days: 7
+          retention-days: 1
           if-no-files-found: error
           
       - name: Upload summary
