@@ -1,16 +1,157 @@
 # Debugging Guide for CodeClashers Production
 
-## SSH Access to Oracle Cloud VM
+## Prerequisites and Access Methods
 
-### Prerequisites
-- SSH key file: `~/.ssh/oci.pem`
-- VM IP: `40.233.103.179`
-- User: `ubuntu`
+### Credentials and Connection Information
 
-### SSH Command
+**Oracle Cloud Credentials:**
+- All Oracle Cloud Infrastructure (OCI) details are stored in `credentials/oracle_info`
+- This file contains:
+  - Region: Canada Southeast (Toronto)
+  - User OCID
+  - Compartment OCID
+  - Instance IP address
+  - Username for SSH access
+
+**SSH Key:**
+- SSH private key: `~/.ssh/oci.pem` (Oracle Cloud Infrastructure key)
+- This key is used for SSH access to the production VM
+- **Note:** The `credentials/` folder is gitignored and will never be committed to the repository
+
+### SSH Access to Oracle Cloud VM
+
+**Prerequisites:**
+- SSH key file: `~/.ssh/oci.pem` (must have correct permissions: `chmod 600 ~/.ssh/oci.pem`)
+- VM IP: See `credentials/oracle_info` (currently `40.233.103.179`)
+- User: `ubuntu` (or see `credentials/oracle_info`)
+
+**SSH Command:**
 ```bash
 ssh -i ~/.ssh/oci.pem ubuntu@40.233.103.179
 ```
+
+**Setting correct permissions (if needed):**
+```bash
+chmod 600 ~/.ssh/oci.pem
+```
+
+### AWS CLI Access
+
+**Prerequisites:**
+- AWS CLI installed (`brew install awscli` on macOS, or `pip install awscli`)
+- AWS credentials configured (via `aws configure` or environment variables)
+- AWS credentials can be retrieved from Kubernetes secrets on the VM
+
+**Getting AWS Credentials from Kubernetes:**
+```bash
+# SSH into the VM first
+ssh -i ~/.ssh/oci.pem ubuntu@40.233.103.179
+
+# Export AWS credentials from Kubernetes secrets
+export AWS_ACCESS_KEY_ID=$(sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+export AWS_DEFAULT_REGION=us-east-1
+
+# Verify AWS CLI access
+aws sts get-caller-identity
+```
+
+**Common AWS CLI Commands for Debugging:**
+
+```bash
+# View Lambda logs
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/<LAMBDA_NAME> \
+  --start-time $(date -u -d '10 minutes ago' +%s)000 \
+  --query 'events[*].message' \
+  --output text
+
+# Check Lambda function configuration
+aws lambda get-function-configuration \
+  --function-name <LAMBDA_NAME> \
+  --query 'Environment.Variables' \
+  --output json
+
+# List CloudFront distributions
+aws cloudfront list-distributions \
+  --query 'DistributionList.Items[*].[Id,DomainName,Status]' \
+  --output table
+
+# Check S3 bucket contents
+aws s3 ls s3://<BUCKET_NAME>/
+
+# View CloudWatch metrics
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/Lambda \
+  --metric-name Errors \
+  --dimensions Name=FunctionName,Value=<LAMBDA_NAME> \
+  --start-time $(date -u -d '1 hour ago' +%s) \
+  --end-time $(date -u +%s) \
+  --period 300 \
+  --statistics Sum
+```
+
+### CI/CD Pipeline Overview
+
+**All deployments are automated via GitHub Actions workflows:**
+
+1. **Backend Deployment** (`.github/workflows/deploy-backend.yml`)
+   - **Trigger:** Push to `main` branch with changes in `backend/**`
+   - **Manual trigger:** Available via `workflow_dispatch` with options to build specific services
+   - **Process:**
+     - Detects changed files (Colyseus, Bots, Judge0 API, Judge0 Worker)
+     - Builds Docker images and pushes to GitHub Container Registry (GHCR)
+     - Deploys to Kubernetes on Oracle Cloud VM (runs on self-hosted runner)
+     - Uses `k3s kubectl` to apply Kubernetes manifests
+   - **Services deployed:** Colyseus, Bots, Judge0 API, Judge0 Worker, MongoDB, Redis, PostgreSQL
+
+2. **Frontend Build** (`.github/workflows/frontend-build.yml`)
+   - **Trigger:** Push to `main` branch with changes in `client/**`
+   - **Manual trigger:** Available via `workflow_dispatch`
+   - **Process:**
+     - Builds Next.js application with OpenNext
+     - Uploads build artifacts to GitHub Actions artifacts
+     - Artifacts are versioned by commit SHA
+
+3. **Frontend Deploy** (`.github/workflows/frontend-deploy.yml`)
+   - **Trigger:** Automatically after successful frontend build, or manual dispatch
+   - **Process:**
+     - Downloads OpenNext build artifacts from build workflow
+     - Deploys to AWS using CDK (CloudFront + Lambda)
+     - Uses OIDC authentication for AWS (no long-lived credentials)
+     - Configures CloudFront distribution, Lambda functions, S3 buckets
+
+4. **Secrets Sync** (`.github/workflows/sync-secrets.yml`)
+   - Manages Kubernetes secrets synchronization
+   - Ensures secrets match GitHub Secrets
+
+**Monitoring CI/CD:**
+```bash
+# View recent workflow runs
+gh run list --limit 10
+
+# Watch a specific workflow run
+gh run watch <RUN_ID>
+
+# View workflow logs
+gh run view <RUN_ID> --log
+
+# List workflows
+gh workflow list
+
+# Trigger a workflow manually
+gh workflow run deploy-backend.yml
+```
+
+**Key CI/CD Features:**
+- ✅ Automatic deployments on push to `main`
+- ✅ Manual workflow dispatch available for all workflows
+- ✅ Build caching for faster Docker builds
+- ✅ Conditional builds (only builds changed services)
+- ✅ OIDC authentication for AWS (secure, no credentials stored)
+- ✅ Self-hosted runner on Oracle Cloud VM for backend deployments
+- ✅ Artifact management for frontend builds
+- ✅ Concurrency control (prevents multiple deployments running simultaneously)
 
 ## Architecture Overview
 
@@ -25,16 +166,23 @@ ssh -i ~/.ssh/oci.pem ubuntu@40.233.103.179
 - **CloudFront**: CDN serving static assets
 - **S3**: Static asset storage
 
-### Key Environment Variables
+   ### Key Environment Variables
 - `INTERNAL_SERVICE_SECRET`: Used for server-to-server authentication between Lambda and Colyseus
 - `REDIS_PORT`: `6380` (DO NOT CHANGE - defined in GitHub Secrets)
 - `REDIS_HOST`: Redis service hostname/IP
 
 ## Common Debugging Scenarios
 
-### 1. Bot Generation Issues
+### 1. Bot Generation and Rotation Status Issues
 
-#### Problem: "Failed to generate bot profile" toast
+#### Problem: "Failed to generate bot profile" toast or "Failed to fetch rotation status: Failed to get rotation status"
+
+**Common Causes:**
+- Network connectivity issues from Lambda to Colyseus backend
+- API base URL (`NEXT_PUBLIC_COLYSEUS_HTTP_URL`) not configured or incorrect
+- CORS issues preventing fetch requests
+- Session cookie not being passed correctly from Lambda
+- Fetch timeout or connection refused errors
 
 #### Debugging Steps:
 
@@ -63,6 +211,18 @@ curl -v http://matchmaker.leetbattle.net:2567/admin/bots/generate \
 ```
 
 **Step 4: Check Lambda logs for frontend errors**
+
+**Option A: Using AWS CLI from local machine (requires AWS credentials configured)**
+```bash
+# Ensure AWS CLI is configured (or export credentials)
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/<LAMBDA_NAME> \
+  --start-time $(date -u -d '5 minutes ago' +%s)000 \
+  --query 'events[*].message' \
+  --output text | grep -E 'generateBotProfile|getRotationStatus|API base|Making request|Fetch error|Network error|NOT SET'
+```
+
+**Option B: Using AWS CLI from Oracle Cloud VM (credentials from Kubernetes secrets)**
 ```bash
 ssh -i ~/.ssh/oci.pem ubuntu@40.233.103.179
 export AWS_ACCESS_KEY_ID=$(sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
@@ -73,8 +233,32 @@ aws logs filter-log-events \
   --log-group-name /aws/lambda/$LAMBDA_NAME \
   --start-time $(date -u -d '5 minutes ago' +%s)000 \
   --query 'events[*].message' \
-  --output text | grep -E 'generateBotProfile|API base|Internal secret|Response|ERROR|error'
+  --output text | grep -E 'generateBotProfile|getRotationStatus|API base|Making request|Fetch error|Network error|NOT SET'
 ```
+
+**Step 4b: Check for specific fetch errors in Lambda logs**
+Look for these log patterns:
+- `[generateBotProfile] Making request` - Shows the URL being called and cookie status
+- `[getRotationStatus] Making request` - Shows the URL being called and cookie status
+- `[generateBotProfile] Fetch error` - Shows detailed error information
+- `[getRotationStatus] Fetch error` - Shows detailed error information
+- `API base URL not configured` - Indicates `NEXT_PUBLIC_COLYSEUS_HTTP_URL` is missing
+- `Network error` - Indicates connectivity issues
+
+**Step 4c: Verify API base URL is set in Lambda**
+```bash
+# Check Lambda environment variables (replace LAMBDA_NAME with actual name)
+aws lambda get-function-configuration \
+  --function-name $LAMBDA_NAME \
+  --query 'Environment.Variables.NEXT_PUBLIC_COLYSEUS_HTTP_URL' \
+  --output text
+```
+
+**Step 4d: Test connectivity from Lambda to Colyseus**
+The Lambda should be able to reach `http://matchmaker.leetbattle.net:2567` or your configured API URL. Check:
+- Network connectivity (VPC configuration if Lambda is in VPC)
+- Security group rules allowing outbound connections
+- DNS resolution for the API hostname
 
 **Step 5: Verify INTERNAL_SERVICE_SECRET is set in Colyseus pod**
 ```bash
@@ -100,9 +284,41 @@ sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.INTE
    - Run: `curl -X POST http://matchmaker.leetbattle.net:2567/admin/bots/init -H "X-Internal-Secret: $INTERNAL_SECRET"`
    - Or use the admin UI "Initialize Collection" button
 
-3. **Wrong API endpoint**
-   - Frontend should use `NEXT_PUBLIC_COLYSEUS_HTTP_URL` (falls back to `http://matchmaker.leetbattle.net:2567`)
-   - Check Lambda environment variables
+3. **Wrong API endpoint or fetch failures**
+   - Frontend should use `NEXT_PUBLIC_COLYSEUS_HTTP_URL` (must include port: `http://matchmaker.leetbattle.net:2567`)
+   - **Common issue**: URL missing port `:2567` or using HTTPS when server only supports HTTP
+   - Check Lambda environment variables: `aws lambda get-function-configuration --function-name <LAMBDA_NAME> --query 'Environment.Variables.NEXT_PUBLIC_COLYSEUS_HTTP_URL'`
+   - **Quick fix**: Update Lambda env var directly:
+     ```bash
+     aws lambda update-function-configuration \
+       --function-name FrontendStack-NextJsLambda7B47D540-duvgyXgxXsxP \
+       --environment "Variables={NEXT_PUBLIC_COLYSEUS_HTTP_URL=http://matchmaker.leetbattle.net:2567,...}"
+     ```
+   - **Permanent fix**: Update GitHub repository variable `NEXT_PUBLIC_COLYSEUS_HTTP_URL` to `http://matchmaker.leetbattle.net:2567` and redeploy
+   - Verify the URL is accessible from Lambda (network connectivity, DNS resolution)
+   - Check Lambda logs for `[generateBotProfile] Making request` or `[getRotationStatus] Making request` to see the actual URL being called
+   - Look for `Fetch error` logs which will show network errors, timeouts, or connection refused errors
+   - **Error pattern**: `Connect Timeout Error (attempted address: matchmaker.leetbattle.net:80)` indicates missing port (defaults to port 80)
+
+4. **Network/Fetch errors**
+   - **Connection timeout on port 80**: URL missing port `:2567` - update `NEXT_PUBLIC_COLYSEUS_HTTP_URL` to include port
+   - **HTTPS/SSL errors**: Server only supports HTTP - use `http://` not `https://` in URL
+   - **Connection refused**: Colyseus backend is not accessible from Lambda (check network/VPC configuration)
+   - **Timeout**: Backend is taking too long to respond (check Colyseus pod health and logs)
+   - **DNS resolution failure**: API hostname cannot be resolved (check DNS configuration)
+   - **CORS errors**: Check Colyseus CORS configuration allows requests from Lambda origin
+   
+   **Example fix for "Failed to fetch rotation status" or "Failed to generate bot":**
+   ```bash
+   # Verify current value (should be http://matchmaker.leetbattle.net:2567)
+   aws lambda get-function-configuration \
+     --function-name FrontendStack-NextJsLambda7B47D540-duvgyXgxXsxP \
+     --query 'Environment.Variables.NEXT_PUBLIC_COLYSEUS_HTTP_URL' \
+     --output text
+   
+   # If wrong, update it (replace ... with all other env vars)
+   # Better: Update GitHub variable NEXT_PUBLIC_COLYSEUS_HTTP_URL and redeploy
+   ```
 
 ### 2. Redis Connection Issues
 
@@ -277,11 +493,15 @@ sudo k3s kubectl exec -n codeclashers $MONGODB_POD -- mongosh --quiet --eval "db
 #### Debugging Steps:
 
 **Step 1: Check Lambda logs for the error**
+
+**Using AWS CLI (from local machine or VM):**
 ```bash
-ssh -i ~/.ssh/oci.pem ubuntu@40.233.103.179
-export AWS_ACCESS_KEY_ID=$(sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
-export AWS_SECRET_ACCESS_KEY=$(sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
-export AWS_DEFAULT_REGION=us-east-1
+# If running from local machine, ensure AWS credentials are configured
+# If running from VM, export credentials from Kubernetes secrets first:
+# export AWS_ACCESS_KEY_ID=$(sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+# export AWS_SECRET_ACCESS_KEY=$(sudo k3s kubectl get secret app-secrets -n codeclashers -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+# export AWS_DEFAULT_REGION=us-east-1
+
 LAMBDA_NAME='FrontendStack-NextJsLambda7B47D540-duvgyXgxXsxP'
 aws logs filter-log-events \
   --log-group-name /aws/lambda/$LAMBDA_NAME \
@@ -301,6 +521,17 @@ sudo k3s kubectl get pods -n codeclashers -l app=mongodb
 ```
 
 ### 4. Deployment Issues
+
+#### CI/CD Pipeline Overview
+
+**All deployments are fully automated via GitHub Actions:**
+
+- **Backend:** Auto-deploys on push to `main` (backend changes)
+- **Frontend Build:** Auto-builds on push to `main` (client changes)
+- **Frontend Deploy:** Auto-deploys after successful build
+- **Secrets Sync:** Manages Kubernetes secrets from GitHub Secrets
+
+See the [Prerequisites and Access Methods](#prerequisites-and-access-methods) section above for full CI/CD details.
 
 #### Checking Deployment Status
 
@@ -323,6 +554,18 @@ gh run watch <RUN_ID> --exit-status
 cd /Users/ase/Documents/CodeClashers
 gh run list --workflow=frontend-deploy.yml --limit 5
 gh run watch <RUN_ID> --exit-status
+```
+
+**Manual Deployment Trigger:**
+```bash
+# Trigger backend deployment manually
+gh workflow run deploy-backend.yml
+
+# Trigger frontend build manually
+gh workflow run frontend-build.yml
+
+# Trigger frontend deploy manually (requires artifact name)
+gh workflow run frontend-deploy.yml -f artifact_name=open-next-artifacts-<SHA>
 ```
 
 #### Restarting Services
@@ -398,8 +641,11 @@ sudo k3s kubectl delete pod $OLD_POD -n codeclashers
 ## Quick Reference Commands
 
 ```bash
-# SSH into VM
+# SSH into VM (IP from credentials/oracle_info)
 ssh -i ~/.ssh/oci.pem ubuntu@40.233.103.179
+
+# View Oracle Cloud credentials
+cat credentials/oracle_info
 
 # Get Colyseus pod name
 COLYSEUS_POD=$(sudo k3s kubectl get pods -n codeclashers -l app=colyseus -o jsonpath='{.items[0].metadata.name}')

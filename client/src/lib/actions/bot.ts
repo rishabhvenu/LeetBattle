@@ -12,75 +12,72 @@ export async function generateBotProfile(count: number, gender?: 'male' | 'femal
   }
 
   try {
-    // Use INTERNAL_SERVICE_SECRET for server-to-server authentication
-    // Cookies don't work reliably from Lambda to Colyseus backend
-    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
-    if (!internalSecret) {
-      console.error('[generateBotProfile] INTERNAL_SERVICE_SECRET not configured');
-      return { success: false, error: 'Internal service secret not configured' };
-    }
-    
+    const cookieHeader = await getSessionCookieHeader();
     // Use Colyseus HTTP URL for backend API endpoints
-    // If HTTPS domain isn't accessible, try HTTP on port 2567
-    let apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
-    
-    // If using HTTPS matchmaker domain, convert to HTTP on port 2567
-    // since HTTPS/ingress isn't configured for this domain
-    if (apiBase.includes('matchmaker.leetbattle.net')) {
-      // Convert HTTPS to HTTP and ensure port 2567 is specified
-      apiBase = apiBase.replace('https://', 'http://');
-      // Remove any existing port (like :443) and add :2567
-      apiBase = apiBase.replace(/:\d+$/, ''); // Remove trailing port
-      if (!apiBase.includes(':')) {
-        apiBase = `${apiBase}:2567`;
-      }
-    }
-    
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
     if (!apiBase) {
+      console.error('[generateBotProfile] API base URL not configured', {
+        NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL,
+        REST_ENDPOINTS_API_BASE: REST_ENDPOINTS.API_BASE,
+      });
       return { success: false, error: 'Backend API URL not configured' };
     }
     
-    console.log(`[generateBotProfile] Using API base: ${apiBase}`);
-    console.log(`[generateBotProfile] Internal secret present: ${!!internalSecret}`);
-    console.log(`[generateBotProfile] Request body:`, JSON.stringify({ count, gender }));
+    const url = `${apiBase}/admin/bots/generate`;
+    console.log('[generateBotProfile] Making request', {
+      url,
+      count,
+      gender,
+      hasCookie: !!cookieHeader,
+      cookieLength: cookieHeader?.length || 0,
+    });
     
-    const fetchUrl = `${apiBase}/admin/bots/generate`;
-    console.log(`[generateBotProfile] Fetch URL: ${fetchUrl}`);
-    
-    const response = await fetch(fetchUrl, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Internal-Secret': internalSecret,
-        'X-Service-Name': 'nextjs-actions',
+        'Cookie': cookieHeader,
       },
+      credentials: 'include',
       body: JSON.stringify({ count, gender }),
     });
-
-    console.log(`[generateBotProfile] Response status: ${response.status}`);
-    console.log(`[generateBotProfile] Response ok: ${response.ok}`);
 
     if (!response.ok) {
       const errorText = await response.text();
       console.error('[generateBotProfile] Bot generation API error:', {
         status: response.status,
         statusText: response.statusText,
+        url,
         errorText: errorText.substring(0, 500),
       });
       try {
         const errorJson = JSON.parse(errorText);
-        return { success: false, error: errorJson.error || errorJson.message || 'API request failed' };
+        return { success: false, error: errorJson.error || errorJson.message || `HTTP ${response.status}: ${response.statusText}` };
       } catch {
         return { success: false, error: `HTTP ${response.status}: ${errorText.substring(0, 100)}` };
       }
     }
 
     const result = await response.json();
-    console.log('[generateBotProfile] Success:', result);
     return result;
   } catch (error: any) {
-    console.error('Error generating bot profile:', error);
-    return { success: false, error: `Failed to generate bot profile: ${error.message || error}` };
+    console.error('[generateBotProfile] Fetch error:', {
+      message: error?.message,
+      name: error?.name,
+      cause: error?.cause,
+      stack: error?.stack?.substring(0, 500),
+      apiBase: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || 'NOT SET',
+    });
+    
+    // Provide more specific error messages
+    if (error?.message?.includes('fetch')) {
+      return { success: false, error: `Network error: Failed to connect to backend. Check API URL configuration.` };
+    }
+    if (error?.name === 'TypeError' && error?.message?.includes('fetch')) {
+      return { success: false, error: `Network error: Unable to reach backend server.` };
+    }
+    
+    return { success: false, error: `Failed to generate bot profile: ${error?.message || 'Unknown error'}` };
   }
 }
 
@@ -452,9 +449,21 @@ export async function getRotationStatus() {
     const cookieHeader = await getSessionCookieHeader();
     const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
     if (!apiBase) {
+      console.error('[getRotationStatus] API base URL not configured', {
+        NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL,
+        REST_ENDPOINTS_API_BASE: REST_ENDPOINTS.API_BASE,
+      });
       return { success: false, error: 'Backend API URL not configured' };
     }
-    const response = await fetch(`${apiBase}/admin/bots/rotation/status`, {
+
+    const url = `${apiBase}/admin/bots/rotation/status`;
+    console.log('[getRotationStatus] Making request', {
+      url,
+      hasCookie: !!cookieHeader,
+      cookieLength: cookieHeader?.length || 0,
+    });
+
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -463,22 +472,46 @@ export async function getRotationStatus() {
       credentials: 'include',
     });
 
-    const result = await response.json();
-    
     if (!response.ok) {
+      const errorText = await response.text();
+      let errorJson;
+      try {
+        errorJson = JSON.parse(errorText);
+      } catch {
+        errorJson = { error: errorText };
+      }
+      
       console.error('[getRotationStatus] API error response', {
         status: response.status,
         statusText: response.statusText,
-        error: result.error,
-        message: result.message,
+        url,
+        error: errorJson.error,
+        message: errorJson.message,
+        errorText: errorText.substring(0, 500),
       });
-      return { success: false, error: result.error || result.message || 'API request failed' };
+      return { success: false, error: errorJson.error || errorJson.message || `HTTP ${response.status}: ${response.statusText}` };
+    }
+
+    const result = await response.json();
+    return result;
+  } catch (error: any) {
+    console.error('[getRotationStatus] Fetch error:', {
+      message: error?.message,
+      name: error?.name,
+      cause: error?.cause,
+      stack: error?.stack?.substring(0, 500),
+      apiBase: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || 'NOT SET',
+    });
+    
+    // Provide more specific error messages
+    if (error?.message?.includes('fetch')) {
+      return { success: false, error: `Network error: Failed to connect to backend. Check API URL configuration.` };
+    }
+    if (error?.name === 'TypeError' && error?.message?.includes('fetch')) {
+      return { success: false, error: `Network error: Unable to reach backend server.` };
     }
     
-    return result;
-  } catch (error) {
-    console.error('Error getting rotation status:', error);
-    return { success: false, error: 'Failed to get rotation status' };
+    return { success: false, error: `Failed to get rotation status: ${error?.message || 'Unknown error'}` };
   }
 }
 
