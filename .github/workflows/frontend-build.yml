@@ -61,6 +61,9 @@ jobs:
         run: |
           echo "🧹 Cleaning up old artifacts to prevent storage quota issues..."
           
+          # Authenticate gh CLI (GITHUB_TOKEN is automatically available in GitHub Actions)
+          echo "$GITHUB_TOKEN" | gh auth login --with-token
+          
           # Get all artifacts matching our pattern
           ARTIFACTS_JSON=$(gh api repos/${{ github.repository }}/actions/artifacts --jq '.artifacts[] | select(.name | startswith("open-next-artifacts-"))')
           
@@ -74,8 +77,6 @@ jobs:
           echo "📊 Found $COUNT old artifact(s) to delete"
           
           # Delete all old artifacts
-          DELETED=0
-          FAILED=0
           echo "$ARTIFACTS_JSON" | jq -r '.id' | while IFS= read -r artifact_id; do
             if [ -n "$artifact_id" ]; then
               if gh api repos/${{ github.repository }}/actions/artifacts/${artifact_id} -X DELETE 2>/dev/null; then
