@@ -60,6 +60,7 @@ jobs:
 
       - name: Cleanup old artifacts (keep only latest)
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.keep_old_artifacts != 'true'
+        continue-on-error: true  # Don't fail build if cleanup fails (quota recalculation takes 6-12h)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -89,6 +90,7 @@ jobs:
           done
           
           echo "✅ Cleanup complete!"
+          echo "ℹ️  Note: GitHub may take 6-12 hours to recalculate storage quota after deletion"
 
       - name: Upload OpenNext build artifacts
         uses: actions/upload-artifact@v4
