@@ -676,5 +676,118 @@ sudo k3s kubectl get secrets -n codeclashers
 sudo k3s kubectl describe deployment colyseus -n codeclashers
 ```
 
+## MongoDB Data Persistence Issues
+
+### Problem: Users have to recreate accounts after waiting
+
+**Symptoms:**
+- User accounts disappear after some time
+- Users report having to recreate accounts
+- Data appears to be lost
+
+**Common Causes:**
+1. **StatefulSet deleted and recreated** - New StatefulSet doesn't reuse old PVCs
+2. **PVCs deleted** - Persistent volumes were accidentally deleted
+3. **Ephemeral storage** - Data stored on tmpfs/ephemeral filesystem
+4. **MongoDB pod restarted with empty volume** - Volume mount issue
+
+### Debugging Steps
+
+**Step 1: Check if PVCs exist and are bound**
+```bash
+ssh -i ~/.ssh/oci.pem ubuntu@40.233.103.179
+sudo k3s kubectl get pvc -n codeclashers | grep mongodb
+```
+
+Expected output should show PVCs in `Bound` status:
+```
+NAME              STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGE CLASS   AGE
+data-mongodb-0    Bound    pvc-xxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx    8Gi        RWO            local-path      XXd
+```
+
+**Step 2: Verify StatefulSet PVC retention policy**
+```bash
+sudo k3s kubectl get statefulset mongodb -n codeclashers -o jsonpath='{.spec.persistentVolumeClaimRetentionPolicy}'
+```
+
+Should show:
+```json
+{"whenDeleted":"Retain","whenScaled":"Retain"}
+```
+
+**Step 3: Check storage filesystem type**
+```bash
+df -T /var/lib/rancher/k3s/storage/
+```
+
+Should show `ext4` or another persistent filesystem (NOT `tmpfs`).
+
+**Step 4: Verify MongoDB data exists**
+```bash
+MONGODB_POD=$(sudo k3s kubectl get pods -n codeclashers -l app=mongodb -o jsonpath='{.items[0].metadata.name}')
+sudo k3s kubectl exec -n codeclashers $MONGODB_POD -- ls -la /data/db/ | head -20
+```
+
+Should show MongoDB data files (WiredTiger files, etc.).
+
+**Step 5: Check user count in database**
+```bash
+MONGODB_POD=$(sudo k3s kubectl get pods -n codeclashers -l app=mongodb -o jsonpath='{.items[0].metadata.name}')
+sudo k3s kubectl exec -n codeclashers $MONGODB_POD -- mongosh mongodb://localhost:27017/codeclashers --quiet --eval 'db.users.countDocuments({})'
+```
+
+**Step 6: Check MongoDB pod restart history**
+```bash
+sudo k3s kubectl get pod mongodb-0 -n codeclashers -o jsonpath='{.status.containerStatuses[0].restartCount}'
+sudo k3s kubectl get pod mongodb-0 -n codeclashers -o jsonpath='{.status.startTime}'
+```
+
+### Solutions
+
+**Solution 1: Ensure PVC retention policy is set**
+The StatefulSet should have `persistentVolumeClaimRetentionPolicy` set to `Retain`:
+```yaml
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+```
+
+**Solution 2: Create TTL index for sessions (automatic cleanup)**
+```bash
+MONGODB_POD=$(sudo k3s kubectl get pods -n codeclashers -l app=mongodb -o jsonpath='{.items[0].metadata.name}')
+sudo k3s kubectl exec -n codeclashers $MONGODB_POD -- mongosh mongodb://localhost:27017/codeclashers --quiet --eval 'db.sessions.createIndex({expires: 1}, {expireAfterSeconds: 0})'
+```
+
+**Solution 3: Verify StatefulSet is not being deleted during deployments**
+Check deployment scripts/workflows to ensure StatefulSet is not deleted:
+```bash
+# Check StatefulSet creation time
+sudo k3s kubectl get statefulset mongodb -n codeclashers -o jsonpath='{.metadata.creationTimestamp}'
+
+# Check if StatefulSet was recently recreated
+sudo k3s kubectl get events -n codeclashers --sort-by='.lastTimestamp' | grep mongodb | tail -20
+```
+
+**Solution 4: Backup MongoDB data**
+Always backup before major operations:
+```bash
+MONGODB_POD=$(sudo k3s kubectl get pods -n codeclashers -l app=mongodb -o jsonpath='{.items[0].metadata.name}')
+sudo k3s kubectl exec -n codeclashers $MONGODB_POD -- mongodump --out /data/backup/$(date +%Y%m%d)
+```
+
+### Prevention
+
+1. **Never delete StatefulSet** - Use `kubectl scale` or `kubectl apply` instead
+2. **Always verify PVC retention** - Ensure `persistentVolumeClaimRetentionPolicy` is set
+3. **Use persistent storage** - Ensure `local-path` storage is on persistent filesystem
+4. **Regular backups** - Set up automated MongoDB backups
+5. **Monitor PVC status** - Alert if PVCs become unbound or deleted
+
+### Related Files
+- `backend/k8s/mongodb/statefulset.yaml` - StatefulSet configuration
+- `backend/k8s/mongodb/README.md` - MongoDB deployment documentation
+- `backend/k8s/mongodb/init-indexes.js` - Index initialization script
+
 
 

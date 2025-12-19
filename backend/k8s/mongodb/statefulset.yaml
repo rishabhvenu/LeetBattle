@@ -8,6 +8,11 @@ metadata:
 spec:
   serviceName: mongodb-headless
   replicas: ${K8S_MONGODB_REPLICAS}  # Set via K8S_MONGODB_REPLICAS env var (defaults to 1 in workflow)
+  # CRITICAL: Retain PVCs when StatefulSet is deleted or scaled down
+  # This ensures user data persists even if StatefulSet is recreated
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
   selector:
     matchLabels:
       app: mongodb
