@@ -131,34 +131,62 @@ export async function initializeBotsCollection() {
   }
 
   try {
-    await connectDB();
-    const client = await getMongoClient();
-    const db = client.db(DB_NAME);
-    const bots = db.collection('bots');
-
-    // Check if collection exists and has any documents
-    const count = await bots.countDocuments();
+    const cookieHeader = await getSessionCookieHeader();
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || REST_ENDPOINTS.API_BASE || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
     
-    if (count === 0) {
-      // Collection exists but is empty - this is fine, it's initialized
-      return { 
-        success: true, 
-        message: 'Bots collection is initialized and ready to use. It is currently empty.' 
-      };
+    const url = `${apiBase}/admin/bots/init`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': cookieHeader,
+      },
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('[initializeBotsCollection] API error:', {
+        status: response.status,
+        statusText: response.statusText,
+        errorText: errorText.substring(0, 500),
+      });
+      try {
+        const errorJson = JSON.parse(errorText);
+        return { success: false, error: errorJson.error || errorJson.message || 'API request failed' };
+      } catch {
+        return { success: false, error: `HTTP ${response.status}: ${errorText.substring(0, 100)}` };
+      }
     }
 
-    // Collection has documents - already initialized
-    return { 
-      success: true, 
-      message: `Bots collection is already initialized with ${count} bot(s).` 
-    };
-  } catch (error) {
+    const result = await response.json();
+    
+    // Check if collection already exists - this is fine, it's initialized
+    if (result.message && result.message.includes('already exists')) {
+      // Get bot count to provide better message
+      await connectDB();
+      const client = await getMongoClient();
+      const db = client.db(DB_NAME);
+      const bots = db.collection('bots');
+      const count = await bots.countDocuments();
+      
+      return {
+        success: true,
+        message: count > 0 
+          ? `Bots collection is already initialized with ${count} bot(s).`
+          : 'Bots collection is initialized and ready to use. It is currently empty.'
+      };
+    }
+    
+    return result;
+  } catch (error: any) {
     console.error('Error initializing bots collection:', error);
-    // If collection doesn't exist, MongoDB will create it on first insert
-    // So we can consider this a success
     return { 
-      success: true, 
-      message: 'Bots collection will be created automatically when you add your first bot.' 
+      success: false, 
+      error: `Failed to initialize bots collection: ${error.message || error}` 
     };
   }
 }
@@ -175,6 +203,14 @@ export async function getBots() {
     await connectDB();
     const client = await getMongoClient();
     const db = client.db(DB_NAME);
+    
+    // Check if bots collection exists first
+    const collections = await db.listCollections({ name: 'bots' }).toArray();
+    if (collections.length === 0) {
+      // Collection doesn't exist - needs initialization
+      return { success: false, error: 'Bots collection not initialized' };
+    }
+    
     const bots = db.collection('bots');
 
     // Fetch all bots from MongoDB
@@ -208,8 +244,8 @@ export async function getBots() {
     return { success: true, bots: formattedBots };
   } catch (error: any) {
     console.error('Error fetching bots:', error);
-    // Check if collection doesn't exist
-    if (error?.message?.includes('not initialized') || error?.code === 'NamespaceNotFound') {
+    // Check if collection doesn't exist (MongoDB error codes)
+    if (error?.code === 'NamespaceNotFound' || error?.message?.includes('not initialized') || error?.message?.includes('does not exist')) {
       return { success: false, error: 'Bots collection not initialized' };
     }
     return { success: false, error: `Failed to fetch bots: ${error.message || error}` };
