@@ -59,7 +59,7 @@ export function getRedis(): RedisClient {
           const delay = Math.min(times * 50, 2000);
           return delay;
         },
-        enableOfflineQueue: false,
+        enableOfflineQueue: true, // Allow commands to queue while cluster reconnects
         enableReadyCheck: true,
       });
     } else {
