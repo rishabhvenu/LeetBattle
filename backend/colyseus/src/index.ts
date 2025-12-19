@@ -2613,11 +2613,11 @@ Use soft ambient lighting, a square 1:1 frame, no text, no watermarks, and no di
 `;
 
         const imageResponse = await openai.images.generate({
-          model: "gpt-image-1",
+          model: "dall-e-3",
           prompt: prompt,
           size: "1024x1024",
-          quality: "standard",
-          n: 1,
+          // Note: quality parameter removed - 'standard' is deprecated
+          // Valid values for newer API: 'low', 'medium', 'high', 'auto'
         });
         
         const imageUrl = imageResponse.data?.[0]?.url;
