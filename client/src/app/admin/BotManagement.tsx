@@ -376,8 +376,8 @@ export default function BotManagement() {
       
       if (result.success) {
         toast.success('Bot deleted successfully!');
-        fetchBots();
-    } else {
+        await fetchBots();
+      } else {
         toast.error(result.error || 'Failed to delete bot');
       }
     } catch (error) {
