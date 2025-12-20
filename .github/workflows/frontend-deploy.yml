@@ -363,6 +363,7 @@ jobs:
           NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
           NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
           INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # NEXTJS_STATIC_BUCKET_NAME: Optional - only set if you want to reuse an existing bucket
           # If not set, CDK will create a new bucket with auto-generated name
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}

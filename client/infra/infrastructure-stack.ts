@@ -341,6 +341,8 @@
           NEXT_PUBLIC_COLYSEUS_WS_URL: process.env.NEXT_PUBLIC_COLYSEUS_WS_URL || '',
           // Internal service authentication (REQUIRED for protected endpoints)
           INTERNAL_SERVICE_SECRET: process.env.INTERNAL_SERVICE_SECRET || '',
+          // OpenAI API key for LeetCode problem generation
+          OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
           // OpenNext cache configuration
           CACHE_BUCKET_NAME: cacheBucket.bucketName,
           CACHE_BUCKET_REGION: region,
