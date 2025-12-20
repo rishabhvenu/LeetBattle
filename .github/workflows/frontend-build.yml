@@ -47,6 +47,7 @@ jobs:
           NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
           NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
           NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
+          NEXT_PUBLIC_PFP_BUCKET_URL: ${{ vars.NEXT_PUBLIC_PFP_BUCKET_URL }}
         run: npm run build:opennext
 
       - name: Verify OpenNext build output
