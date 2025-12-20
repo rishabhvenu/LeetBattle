@@ -7,8 +7,8 @@ metadata:
     app: mongodb
 spec:
   type: ClusterIP
-  externalIPs:
-    - ${ORACLE_VM_IP} # External access on VM IP, port 27017
+  # SECURITY: Do NOT expose MongoDB externally - removed externalIPs
+  # MongoDB should only be accessible within the cluster
   selector:
     app: mongodb
   ports:
