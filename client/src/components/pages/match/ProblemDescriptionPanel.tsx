@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, ListChecks } from "lucide-react";
+import { FileText, ListChecks, ChevronDown, ChevronUp } from "lucide-react";
 import { difficultyConfig } from '@/lib/utils/match/constants';
 import type { Problem, FormattedSubmission } from '@/types/match';
 
@@ -22,6 +22,7 @@ export function ProblemDescriptionPanel({
   onSubmissionClick,
 }: ProblemDescriptionPanelProps) {
   const diffStyle = difficultyConfig[problem.difficulty?.toLowerCase() || 'medium'];
+  const [isDescriptionCollapsed, setIsDescriptionCollapsed] = useState(true);
 
   return (
     <div className="relative w-full h-full bg-blue-50 z-10">
@@ -46,57 +47,65 @@ export function ProblemDescriptionPanel({
 
           <TabsContent value="description" className="flex-1 overflow-hidden m-0 min-h-0">
             <ScrollArea className="h-full w-full">
-              <div className="p-6 space-y-8 bg-white/95 rounded-lg shadow-lg border border-gray-100">
+              <div className="p-4 space-y-6 bg-white/95 rounded-lg shadow-lg border border-gray-100">
                 {/* Problem Header */}
-                <div className="space-y-4">
-                  <h1 className="text-3xl font-bold text-gray-900 leading-tight">{problem.title}</h1>
-                  <div className="flex gap-2 items-center flex-wrap">
-                    <Badge className={`${diffStyle.bg} ${diffStyle.text} text-xs font-medium px-3 py-1 rounded-full border shadow-sm hover:shadow-md transition-all duration-200 hover:opacity-90`}>
-                      {problem.difficulty}
-                    </Badge>
-                    {problem.topics?.map((topic: string, index: number) => (
-                      <Badge key={index} className="bg-gray-600 text-white text-xs font-medium px-3 py-1 rounded-full border border-gray-700 shadow-sm hover:shadow-md hover:bg-gray-700 transition-all duration-200">
-                        {topic}
+                <div className="space-y-3">
+                  <div className="flex justify-between items-start gap-4">
+                    <h1 className="text-xl font-bold text-gray-900 leading-tight">{problem.title}</h1>
+                    <div className="flex gap-2 items-center flex-shrink-0">
+                      <Badge className={`${diffStyle.bg} ${diffStyle.text} text-xs font-medium px-2 py-0.5 rounded-full border shadow-sm`}>
+                        {problem.difficulty}
                       </Badge>
-                    ))}
+                      {problem.topics?.map((topic: string, index: number) => (
+                        <Badge key={index} className="bg-gray-100 text-gray-600 text-[10px] font-medium px-2 py-0.5 rounded-full border border-gray-200">
+                          {topic}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                {/* Problem Description */}
-                <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-md">
-                  <div className="w-full">
-                    <p className="text-gray-700 leading-relaxed whitespace-pre-line text-base text-left">
-                      {problem.description}
-                    </p>
+                {/* Problem Description with Collapse */}
+                <div className="relative">
+                  <div className={`text-gray-700 leading-relaxed whitespace-pre-line text-sm text-left ${isDescriptionCollapsed ? 'line-clamp-4' : ''}`}>
+                    {problem.description}
                   </div>
+                  <button 
+                    onClick={() => setIsDescriptionCollapsed(!isDescriptionCollapsed)}
+                    className="flex items-center gap-1 text-[10px] uppercase font-bold text-blue-600 hover:text-blue-800 mt-1 focus:outline-none"
+                  >
+                    {isDescriptionCollapsed ? (
+                      <>Read More <ChevronDown className="h-3 w-3" /></>
+                    ) : (
+                      <>Show Less <ChevronUp className="h-3 w-3" /></>
+                    )}
+                  </button>
                 </div>
 
                 {/* Examples Section */}
                 {problem.examples && problem.examples.length > 0 && (
-                  <div className="space-y-6">
-                    <div className="border-t border-gray-300 pt-6">
-                      <h2 className="text-2xl font-bold text-gray-900 mb-6">Examples</h2>
+                  <div className="space-y-4">
+                    <div className="border-t border-gray-200 pt-4">
+                      <h2 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Examples</h2>
                     </div>
                     {problem.examples.map((example, index) => (
-                      <div key={index} className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-                        <h3 className="text-xl font-semibold text-gray-900 mb-4">Example {index + 1}</h3>
-                        <div className="space-y-4">
-                          <div>
-                            <span className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2 block">Input</span>
-                            <code className="text-sm bg-gray-50 px-4 py-3 rounded-lg font-mono text-gray-800 border block">
+                      <div key={index} className="bg-gray-50 rounded-lg p-3 border border-gray-200 shadow-sm">
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            <span className="text-xs font-bold text-gray-500 uppercase w-12 flex-shrink-0 pt-1">Input:</span>
+                            <code className="text-xs flex-1 font-mono text-gray-800 break-all">
                               {typeof example.input === 'object' ? JSON.stringify(example.input, null, 2) : example.input}
                             </code>
                           </div>
-                          <div>
-                            <span className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2 block">Output</span>
-                            <code className="text-sm bg-gray-50 px-4 py-3 rounded-lg font-mono text-gray-800 border block">
+                          <div className="flex gap-2">
+                            <span className="text-xs font-bold text-gray-500 uppercase w-12 flex-shrink-0 pt-1">Output:</span>
+                            <code className="text-xs flex-1 font-mono text-gray-800 break-all">
                               {typeof example.output === 'object' ? JSON.stringify(example.output, null, 2) : example.output}
                             </code>
                           </div>
                           {example.explanation && (
-                            <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                              <span className="text-sm font-semibold text-blue-800 mb-2 block">Explanation</span>
-                              <p className="text-sm text-blue-700 leading-relaxed">{example.explanation}</p>
+                            <div className="mt-2 pt-2 border-t border-gray-200/50">
+                              <p className="text-xs text-gray-600 leading-relaxed"><span className="font-semibold">Explanation:</span> {example.explanation}</p>
                             </div>
                           )}
                         </div>
@@ -107,12 +116,12 @@ export function ProblemDescriptionPanel({
 
                 {/* Constraints Section */}
                 {problem.constraints && problem.constraints.length > 0 && (
-                  <div className="bg-white rounded-xl p-6 border border-gray-200 shadow-sm">
-                    <h2 className="text-2xl font-bold text-gray-900 mb-4">Constraints</h2>
-                    <ul className="space-y-3">
+                  <div className="pt-2">
+                    <h2 className="text-xs font-bold text-gray-900 uppercase tracking-wide mb-2">Constraints</h2>
+                    <ul className="space-y-1">
                       {problem.constraints.map((constraint, index) => (
-                        <li key={index} className="flex items-start gap-3 text-base text-gray-700 leading-relaxed">
-                          <div className="w-2 h-2 bg-blue-500 rounded-full mt-2 flex-shrink-0"></div>
+                        <li key={index} className="flex items-start gap-2 text-xs text-gray-600 font-mono">
+                          <div className="w-1 h-1 bg-gray-400 rounded-full mt-1.5 flex-shrink-0"></div>
                           <span>{constraint}</span>
                         </li>
                       ))}

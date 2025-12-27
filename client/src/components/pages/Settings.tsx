@@ -196,7 +196,7 @@ export default function SettingsPage({ session, restHandler }) {
           animate="visible"
         >
           <motion.h1
-            className="text-4xl font-bold mb-8 text-white"
+            className="text-4xl font-bold mb-8 text-black"
             variants={itemVariants}
           >
             Settings

@@ -1,45 +1,80 @@
 # Bot Service Lifecycle & Runbook
 
 Use this guide when diagnosing bot availability, queue saturation, or Redis
-state drift. It summarizes the Node.js bot service located at
-`backend/bots/index.js`.
+state drift. The bot service is now modularized across multiple files in
+`backend/bots/`.
+
+## Architecture
+
+The bot service is now split into focused modules:
+
+- **`index.js`** - Main entry point, orchestrates modules (~200 lines)
+- **`lib/config.js`** - Configuration and environment validation
+- **`lib/leaderElection.js`** - Leadership election with proper error handling
+- **`lib/matchmaking.js`** - Bot deployment, queue management, and rotation
+- **`lib/apiClient.js`** - HTTP client for Colyseus API interactions
+- **`lib/queueCleanup.js`** - Queue state cleanup utilities (existing)
 
 ## High-Level Flow
 
 1. **Startup**
-   - Connects to Redis (`REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`)
+   - Validates environment variables via `config.validateEnv()`
+   - Creates Redis client (cluster or single instance)
+   - Loads Lua scripts including atomic `matchBot` script
    - Connects to MongoDB (`MONGODB_URI`) to load bot metadata
-   - Acquires leader lock (`bots:leader`) using Lua `extendLeader`
-   - Rebuilds rotation queue and honours existing deployments
-2. **Leadership**
+   - Sets up pub/sub listener on `bots:commands`
+   - Starts leadership election loop
+2. **Leadership Election**
+   - Uses atomic `SET NX` for leader acquisition
    - Only the leader instance deploys/recalls bots
-   - Leadership renewed via `extendLeader` every
-     `BOT_LEADER_TTL_MS / 2` (default 7.5s)
-3. **Deployment Loop**
+   - Leadership renewed via custom `extendLeader` Lua script
+   - Renewal every `BOT_LEADER_TTL_MS / 2` (default 7.5s)
+   - **NEW**: Proper error handling with exponential backoff on failures
+3. **Deployment Loop** (Leader only)
    - Reads config from `bots:rotation:config`
+   - **NEW**: Uses atomic Redis operations to prevent race conditions
    - Deploys bots up to configured `maxDeployed`
    - Each deployment spawns a Colyseus client, authenticates with
      `BOT_SERVICE_SECRET`, and joins the queue after
      `BOT_INITIAL_JOIN_DELAY_MS`
-4. **Queue Pruning**
+   - **NEW**: Cycle guards prevent duplicate bot deployments across instances
+4. **Queue Pruning** (Leader only)
    - Every `BOT_QUEUE_PRUNE_INTERVAL_MS` (default 30s)
    - Removes stale entries from bot tracking sets
+   - Recycles orphaned bots back to rotation queue
 5. **Command Handling**
-   - Subscribes to `bots:commands`
-   - Handles `playerQueued`, `boostQueue`, and manual `deploy`/`recall`
-     commands
+   - Subscribes to `bots:commands` channel
+   - Processes: `deploy`, `stop`, `botMatchComplete`, `rotateConfig`, `checkDeployment`
+   - Only leader processes commands (others ignore)
+6. **Auto-Deployment of New Bots**
+   - When new bots are created via `/admin/bots/generate`, they are automatically added to `bots:rotation:queue`
+   - A `checkDeployment` command is published to trigger immediate evaluation
+   - If deployed bot count is below minimum, new bots are automatically deployed
 
 ## Redis Keys
 
+**Note**: Deployment state is tracked **only** in Redis, not in MongoDB. The `bots:deployed` set is the single source of truth for which bots are currently deployed.
+
 | Key | Purpose | Notes |
 |-----|---------|-------|
-| `bots:leader` | Leadership lease | Value = instance ID; TTL ~15s |
-| `bots:deployed` | Bots currently deployed | Updated on deploy/recall |
-| `bots:active` | Bots currently in match | Synced with Colyseus callbacks |
-| `bots:rotation:queue` | Round-robin queue of bot IDs | Rebuilt on startup |
-| `bots:rotation:config` | Hash with `maxDeployed`, `totalBots` | Adjust to tune pressure |
-| `bots:nudges` | Pub/sub for emergency nudges | Published by Colyseus when humans wait |
-| `queue:reservation:${botId}` | Active match binding | Checked to avoid duplicate deployments |
+| `bots:leader` | Leadership lease | Value = instance ID; TTL ~15s; atomic SET NX |
+| `bots:deployed` | Bots currently deployed | Set; **single source of truth** for deployment |
+| `bots:active` | Bots currently in match | Set; synced with match room lifecycle |
+| `bots:cycling` | Bots with active deployment cycle | Set; prevents duplicate deployments |
+| `bots:rotation:queue` | Round-robin queue of bot IDs | List; rebuilt on startup, new bots auto-added on creation |
+| `bots:rotation:config` | Hash with `maxDeployed`, `totalBots`, `deployDelayMs` | Adjust to tune bot pressure |
+| `bots:state:${botId}` | Bot lifecycle state | String: 'queued', 'matched', 'playing' |
+| `bots:commands` | Pub/sub for bot commands | Channel for `deploy`, `stop`, `rotateConfig`, etc. |
+| `queue:reservation:${botId}` | Active match reservation | JSON; checked atomically to avoid race conditions |
+| `queue:elo` | Sorted set of users by ELO | Score = ELO rating; used for matchmaking |
+
+## Atomic Operations
+
+**NEW**: Critical operations now use Lua scripts for atomicity:
+
+- **`matchBot.lua`**: Atomically dequeues a user from `queue:elo` and matches with a bot
+- **`extendLeader`**: Atomically extends leadership TTL only if still leader
+- **`$inc` for ELO updates**: MongoDB ratings now use `$inc` instead of read-modify-write
 
 ## Deployment Checklist
 

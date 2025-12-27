@@ -44,6 +44,7 @@ export default async function PlayPage() {
     problemsSolved: 0,
     globalRank: stats?.globalRank ?? 1,
     currentStreak: 0,
+    totalMatches: stats?.totalMatches ?? 0,
   };
 
   return (

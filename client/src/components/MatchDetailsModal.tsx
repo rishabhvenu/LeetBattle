@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -15,6 +15,8 @@ import {
   Target,
   CheckCircle,
   Loader2,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import { MatchDetails, PlayerMatchStats } from "@/types/match";
 import { getAvatarUrl } from '@/lib/utils';
@@ -33,6 +35,8 @@ export default function MatchDetailsModal({
   onClose,
   loading,
 }: MatchDetailsModalProps) {
+  const [isProblemExpanded, setIsProblemExpanded] = useState(false);
+
   if (!isOpen) return null;
 
   const formatDuration = (duration: number) => {
@@ -87,12 +91,40 @@ export default function MatchDetailsModal({
     }
   };
 
-  const PlayerCard = ({ player, isCurrentUser }: { player: PlayerMatchStats; isCurrentUser: boolean }) => (
-    <div className={`p-6 rounded-lg border-2 ${
-      isCurrentUser 
-        ? 'border-blue-200 bg-blue-50/50' 
-        : 'border-gray-200 bg-gray-50/50'
+  const getMatchSummary = () => {
+    const { currentUser, opponent } = matchDetails.players;
+    const durationStr = formatDuration(matchDetails.duration);
+
+    if (matchDetails.result === 'win') {
+      const opponentAction = opponent?.submissionsCount === 0 
+        ? "did not submit" 
+        : `passed ${opponent?.testsPassed || 0}/${opponent?.totalTests || 0} tests`;
+      return `You solved the problem in ${durationStr}. Your opponent ${opponentAction}.`;
+    }
+    
+    if (matchDetails.result === 'loss') {
+      const userAction = currentUser.testsPassed === currentUser.totalTests
+        ? "but were slower"
+        : `passed ${currentUser.testsPassed}/${currentUser.totalTests} tests`;
+      return `Your opponent solved the problem in ${durationStr}. You ${userAction}.`;
+    }
+
+    return `Time ran out. You passed ${currentUser.testsPassed}/${currentUser.totalTests} tests.`;
+  };
+
+  const PlayerCard = ({ player, isCurrentUser, isWinner }: { player: PlayerMatchStats; isCurrentUser: boolean; isWinner?: boolean }) => (
+    <div className={`p-6 rounded-xl border-2 transition-all duration-300 ${
+      isWinner
+        ? 'border-yellow-400 bg-yellow-50/80 shadow-lg scale-[1.02] relative overflow-hidden'
+        : isCurrentUser 
+          ? 'border-blue-200 bg-blue-50/50' 
+          : 'border-gray-200 bg-gray-50/30 opacity-90'
     }`}>
+      {isWinner && (
+        <div className="absolute top-0 right-0 p-2">
+          <Crown className="w-6 h-6 text-yellow-500 fill-yellow-500" />
+        </div>
+      )}
       <div className="flex items-center gap-4 mb-4">
         <Avatar className="w-16 h-16 border-4 border-white shadow-lg">
           <AvatarImage
@@ -116,7 +148,7 @@ export default function MatchDetailsModal({
             <span className="text-sm text-black/70">
               {player.ratingBefore} → {player.ratingAfter}
               {player.ratingChange !== 0 && (
-                <span className={`ml-2 ${player.ratingChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                <span className={`ml-1 font-semibold ${player.ratingChange > 0 ? 'text-green-600' : 'text-red-600'}`}>
                   ({player.ratingChange > 0 ? '+' : ''}{player.ratingChange})
                 </span>
               )}
@@ -160,97 +192,117 @@ export default function MatchDetailsModal({
         ) : (
           <>
             {/* Modal Header */}
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-              <div className="flex items-center gap-4">
-                <div className={`p-3 rounded-full ${getResultColor(matchDetails.result)} bg-opacity-20`}>
+            <div className="p-6 border-b border-gray-100 flex items-center justify-between flex-shrink-0 bg-white">
+              <div className="flex items-center gap-5">
+                <div className={`p-4 rounded-2xl ${
+                  matchDetails.result === 'win' ? 'bg-green-100' :
+                  matchDetails.result === 'loss' ? 'bg-red-100' : 'bg-blue-100'
+                }`}>
                   {getResultIcon(matchDetails.result)}
                 </div>
                 <div>
-                  <h1 className="text-2xl font-bold text-black">
+                  <h1 className="text-3xl font-bold text-black mb-1">
                     {getResultText(matchDetails.result)}
                   </h1>
-                  <p className="text-gray-600">
-                    {matchDetails.problem.title}
-                  </p>
                 </div>
               </div>
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon"
                 onClick={onClose}
-                className="text-gray-500 hover:text-gray-700"
+                className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full h-12 w-12"
               >
-                <X className="h-5 w-5" />
+                <X className="h-8 w-8" />
               </Button>
             </div>
 
             {/* Modal Content */}
-            <ScrollArea className="flex-1 overflow-y-auto">
-              <div className="p-6 space-y-6">
-                {/* Problem Info */}
-                <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
-                  <h2 className="text-lg font-semibold text-black mb-3">Problem Details</h2>
-                  <div className="flex items-center gap-4 mb-3">
-                    <Badge className={`${getDifficultyColor(matchDetails.problem.difficulty)}`}>
-                      {matchDetails.problem.difficulty}
-                    </Badge>
-                    <div className="flex gap-2">
-                      {matchDetails.problem.topics.map((topic, index) => (
-                        <Badge key={index} variant="outline" className="text-gray-600">
-                          {topic}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  <p className="text-gray-700 text-sm leading-relaxed">
-                    {matchDetails.problem.description}
-                  </p>
-                </div>
-
-                {/* Match Info */}
-                <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  <h2 className="text-lg font-semibold text-black mb-3">Match Information</h2>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-blue-600" />
-                      <span className="text-sm text-black/70">Duration: {formatDuration(matchDetails.duration)}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Target className="w-4 h-4 text-green-600" />
-                      <span className="text-sm text-black/70">Started: {formatDateTime(matchDetails.startedAt)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Player Comparison */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <div>
-                    <h2 className="text-lg font-semibold text-black mb-4 flex items-center gap-2">
-                      <span className="w-3 h-3 bg-blue-600 rounded-full"></span>
+            <ScrollArea className="flex-1 overflow-y-auto bg-gray-50/30">
+              <div className="p-8 space-y-8">
+                
+                {/* Player Comparison - Promoted to top */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  <div className="flex flex-col h-full">
+                    <h2 className="text-sm font-bold text-black/40 uppercase tracking-wider mb-4 flex items-center gap-2 px-1">
                       You
                     </h2>
-                    <PlayerCard player={matchDetails.players.currentUser} isCurrentUser={true} />
+                    <PlayerCard 
+                      player={matchDetails.players.currentUser} 
+                      isCurrentUser={true}
+                      isWinner={matchDetails.result === 'win'} 
+                    />
                   </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-black mb-4 flex items-center gap-2">
-                      <span className="w-3 h-3 bg-gray-600 rounded-full"></span>
-                      {matchDetails.players.opponent?.username || 'Unknown Player'}
+                  <div className="flex flex-col h-full">
+                    <h2 className="text-sm font-bold text-black/40 uppercase tracking-wider mb-4 flex items-center gap-2 px-1">
+                      Opponent
                     </h2>
                     {matchDetails.players.opponent ? (
-                      <PlayerCard player={matchDetails.players.opponent} isCurrentUser={false} />
+                      <PlayerCard 
+                        player={matchDetails.players.opponent} 
+                        isCurrentUser={false}
+                        isWinner={matchDetails.result === 'loss'}
+                      />
                     ) : (
-                      <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
-                        <p className="text-gray-500 text-center">Opponent data not available</p>
+                      <div className="p-8 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50/50 flex items-center justify-center h-full">
+                        <p className="text-gray-400 font-medium">Opponent data not available</p>
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* Match ID */}
-                <div className="text-center pt-4 border-t border-gray-200">
-                  <p className="text-xs text-gray-500">
-                    Match ID: {matchDetails.matchId}
-                  </p>
+                {/* Problem Info - Collapsible */}
+                <div className="bg-white rounded-xl p-1 border border-gray-200 shadow-sm overflow-hidden">
+                  <button 
+                    onClick={() => setIsProblemExpanded(!isProblemExpanded)}
+                    className="w-full flex items-center justify-between p-5 hover:bg-gray-50 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600 font-bold">
+                        <CheckCircle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h2 className="text-lg font-bold text-black">{matchDetails.problem.title}</h2>
+                        <div className="flex gap-2 mt-1">
+                          <Badge variant="secondary" className={`${getDifficultyColor(matchDetails.problem.difficulty)} bg-opacity-10 border-0`}>
+                            {matchDetails.problem.difficulty}
+                          </Badge>
+                          <span className="text-sm text-gray-400 flex items-center">
+                            {matchDetails.problem.topics.slice(0, 3).join(', ')}
+                            {matchDetails.problem.topics.length > 3 && ` +${matchDetails.problem.topics.length - 3}`}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm font-medium text-blue-600">
+                      {isProblemExpanded ? 'Hide Details' : 'View Problem Details'}
+                      {isProblemExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </div>
+                  </button>
+                  
+                  {isProblemExpanded && (
+                    <div className="px-6 pb-6 pt-2 border-t border-gray-100">
+                      <div className="prose prose-sm max-w-none text-gray-600">
+                        <p className="whitespace-pre-wrap font-sans text-base leading-relaxed">
+                          {matchDetails.problem.description}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Match Metadata */}
+                <div className="flex items-center justify-center gap-8 py-4 text-sm text-gray-400 border-t border-gray-100">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    <span>Duration: {formatDuration(matchDetails.duration)}</span>
+                  </div>
+                  <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                  <div className="flex items-center gap-2">
+                    <Target className="w-4 h-4" />
+                    <span>{formatDateTime(matchDetails.startedAt)}</span>
+                  </div>
+                  <div className="w-1 h-1 bg-gray-300 rounded-full"></div>
+                  <span>ID: {matchDetails.matchId.slice(0, 8)}...</span>
                 </div>
               </div>
             </ScrollArea>

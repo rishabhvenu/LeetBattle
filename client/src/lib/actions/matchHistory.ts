@@ -440,19 +440,20 @@ export async function getMatchDetails(matchId: string, userId: string) {
       }
     }
 
-    // Try to get rating changes from Redis match data
-    let ratingChanges: Record<string, { oldRating: number; newRating: number; change: number }> = {};
-    try {
-      const redis = getRedis();
-      const matchKey = RedisKeys.matchKey(matchId);
-      const redisMatchData = await redis.get(matchKey);
-      if (redisMatchData) {
-        const parsed = JSON.parse(redisMatchData);
-        ratingChanges = parsed.ratingChanges || {};
-      }
-    } catch (error) {
-      console.warn('Could not fetch rating changes from Redis for match:', matchId);
-    }
+    // Get ratingChanges from match document (stored when match ended)
+    // Format: { userId: { change: number, old: number, new: number } }
+    const matchRatingChanges = matchData.ratingChanges || {};
+    const userIdStr = userId;
+    const opponentIdStr = matchData.opponent?._id.toString();
+    
+    // Get ratings from match document ratingChanges (these are the actual match ratings)
+    const currentUserRatingBefore = matchRatingChanges[userIdStr]?.old || matchData.currentUser.stats?.rating || 1200;
+    const currentUserRatingAfter = matchRatingChanges[userIdStr]?.new || matchData.currentUser.stats?.rating || 1200;
+    const currentUserRatingChange = matchRatingChanges[userIdStr]?.change || 0;
+    
+    const opponentRatingBefore = opponentIdStr ? (matchRatingChanges[opponentIdStr]?.old || matchData.opponent?.stats?.rating || 1200) : 1200;
+    const opponentRatingAfter = opponentIdStr ? (matchRatingChanges[opponentIdStr]?.new || matchData.opponent?.stats?.rating || 1200) : 1200;
+    const opponentRatingChange = opponentIdStr ? (matchRatingChanges[opponentIdStr]?.change || 0) : 0;
 
     const result = {
       success: true,
@@ -473,18 +474,18 @@ export async function getMatchDetails(matchId: string, userId: string) {
           userId: matchData.currentUser._id.toString(),
           username: matchData.currentUser.username,
           avatar: currentUserAvatar,
-          ratingBefore: (ratingChanges[userId]?.oldRating || matchData.currentUser.stats?.rating || 1200),
-          ratingAfter: (ratingChanges[userId]?.newRating || matchData.currentUser.stats?.rating || 1200),
-          ratingChange: ratingChanges[userId]?.change || 0,
+          ratingBefore: currentUserRatingBefore,
+          ratingAfter: currentUserRatingAfter,
+          ratingChange: currentUserRatingChange,
           ...userStats
         },
         opponent: matchData.opponent ? {
           userId: matchData.opponent._id.toString(),
           username: matchData.opponent.username,
           avatar: opponentAvatar,
-          ratingBefore: (ratingChanges[matchData.opponent._id.toString()]?.oldRating || matchData.opponent.stats?.rating || 1200),
-          ratingAfter: (ratingChanges[matchData.opponent._id.toString()]?.newRating || matchData.opponent.stats?.rating || 1200),
-          ratingChange: ratingChanges[matchData.opponent._id.toString()]?.change || 0,
+          ratingBefore: opponentRatingBefore,
+          ratingAfter: opponentRatingAfter,
+          ratingChange: opponentRatingChange,
           ...opponentStats,
           botStats: opponentBotStats
         } : null

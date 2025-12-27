@@ -126,7 +126,7 @@ const Landing: React.FC = () => {
                     </>
                   )}
                 </div>
-                <div className="text-black/70 font-light">Challenges Completed</div>
+                <div className="text-black/70 font-light">Battles Played</div>
               </div>
             </motion.div>
           </div>

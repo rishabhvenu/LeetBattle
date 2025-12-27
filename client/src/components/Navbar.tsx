@@ -52,7 +52,7 @@ export default function Navbar({ session, logoutAction }: NavbarProps) {
     >
       <div className="p-6 flex items-center justify-center border-b border-blue-200 relative bg-white/50">
         <AnimatePresence>
-          {isExpanded ? (
+          {isExpanded && (
             <motion.div
               className="flex items-center gap-2 justify-center w-full"
               initial={{ opacity: 0, scale: 0.8 }}
@@ -63,28 +63,13 @@ export default function Navbar({ session, logoutAction }: NavbarProps) {
               <img
                 src="/logo.png"
                 alt="LeetBattle Logo"
-                width={32}
-                height={32}
-                className="h-8 w-8"
+                width={48}
+                height={48}
+                className="h-12 w-12"
               />
               <span className="text-xl font-semibold font-mono" style={{ color: '#2599D4' }}>
                 LeetBattle
               </span>
-            </motion.div>
-          ) : (
-            <motion.div
-              className="w-full h-full flex items-center justify-center"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <img
-                src="/logo.png"
-                alt="LeetBattle Logo"
-                width={32}
-                height={32}
-                className="h-8 w-8"
-              />
             </motion.div>
           )}
         </AnimatePresence>

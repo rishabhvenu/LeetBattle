@@ -2,80 +2,75 @@
 import { load as loadHtml, CheerioAPI } from 'cheerio';
 import type { SpecialInputConfig } from '@/types/db';
 
-export const PROBLEM_REWRITE_PROMPT = `You rewrite coding interview problems while preserving their exact algorithmic meaning.
+export const PROBLEM_REWRITE_PROMPT = `You are a technical writer specializing in algorithm problems. Your task is to rewrite coding interview problems so they read naturally while preserving the exact algorithmic challenge.
 
-Input JSON includes: { title, description, examples, constraints }.
+**Input:** JSON with { title, description, examples, constraints }
 
-Return ONLY a JSON object with keys:
-- title
-- topics (optional string[])
-- description
-- examples: array of { input, output, explanation | null }
-- constraints
-- signature: { functionName, parameters[{name,type}], returnType }
-- specialInputs (optional)
+**Output:** JSON object with these keys:
+- title: A fresh, engaging title (not a direct copy)
+- topics: string[] of relevant CS topics (e.g., ["arrays", "hash-table", "two-pointers"])
+- description: Clear problem statement in your own words
+- examples: Array of { input, output, explanation | null }
+- constraints: Array of constraint strings
+- signature: { functionName, parameters: [{name, type}], returnType }
+- specialInputs: (optional) Only include if runtime setup is needed (e.g., linked-list cycles)
 
-Strict rules:
-1. Preserve the original algorithm and requirements exactly (do not change difficulty, input/output behavior, or what is being asked).
-2. Paraphrase ALL natural-language text (title, description, example explanations, and constraints). Do NOT copy any phrase longer than 5 consecutive words from the input. Use different wording and sentence structures while keeping semantics identical.
-3. All examples MUST be correct, internally consistent, and match the signature types using JSON-like literals only.
-4. Only allowed data structures: primitives, primitive arrays, ListNode, TreeNode, ListNode[], TreeNode[]. Assume these helpers already exist.
-5. Emit specialInputs ONLY when the runner requires setup (e.g., linked-list cycle).
-6. The returned JSON must be valid and contain no comments or extra text.
+**Writing guidelines:**
+1. Make the description sound like it was written by a human, not scraped from LeetCode. Vary sentence structure. Use active voice.
+2. Rephrase everything — do NOT copy more than 3 consecutive words from the original.
+3. Keep the algorithmic requirements IDENTICAL. Same inputs, same outputs, same edge cases.
+4. Function names should be descriptive camelCase (e.g., findTargetSum, detectCycle, mergeIntervals).
+5. Parameter names should be meaningful (nums, target, head, root — not arr1, x, param1).
 
-Deterministic output rule (MANDATORY):
-For any problem where multiple outputs are logically valid (e.g., Two Sum), you MUST choose the canonical deterministic answer using this rule:
-- Among all valid solutions, select the one whose output array is lexicographically smallest.
-- For 2-Sum specifically: choose the valid pair with the smallest first index; if there is a tie, choose the one with the smallest second index.
+**Supported types:** primitives (int, string, boolean), arrays of primitives, ListNode, TreeNode, ListNode[], TreeNode[]. These helpers exist — don't define them.
 
-HARD ENFORCEMENT:
-The deterministic canonical answer rule is a HARD VALIDATION REQUIREMENT.
-Any output that does NOT follow this canonical rule is INVALID and MUST NOT be produced.
-You are NOT ALLOWED to return any other valid output, even if technically correct.`;
+**Deterministic output requirement:**
+When multiple valid outputs exist (e.g., Two Sum can return [0,1] or [1,0]), always choose the lexicographically smallest. For index pairs, prefer smallest first index, then smallest second index.
 
-export const PROBLEM_ARTIFACT_PROMPT = `You generate reference solutions and deterministic test cases for coding interview problems.
+Return ONLY valid JSON. No markdown, no comments, no extra text.`;
 
-Input JSON: {
-  problem,
-  languages[],
-  numTestCases,
-  maxInputSizeHint,
-  targetTimeComplexity
-}
+export const PROBLEM_ARTIFACT_PROMPT = `You are a senior software engineer creating reference solutions and comprehensive test suites for coding interview problems.
 
-Return ONLY a JSON object with:
-- solutions: map from language -> complete Solution class
-- testCases: array of { input, output, optional specialInputData }
-- specialInputs (optional)
+**Input:** JSON with { problem, languages[], numTestCases, maxInputSizeHint, targetTimeComplexity }
 
-Strict rules:
-1. All solutions must strictly follow the intended algorithmic logic of the problem and must pass every generated test case.
-2. The problem's constraints are HARD REQUIREMENTS. Every solution MUST respect all constraints (input sizes, value ranges, structure rules, and complexity limits).
-3. Test cases must be VALID, SMALL, and cover all required edge cases:
-   - minimum-size inputs allowed by constraints
-   - maximum-size inputs allowed by constraints (within maxInputSizeHint)
-   - boundary values from constraints
-   - duplicates, negatives, empty structures when allowed
-   - cases requiring uniquely deterministic output (e.g., 2-Sum)
-4. Every test case MUST have a single correct expected output. If multiple outputs are logically valid, choose ONE deterministically.
-5. All inputs and outputs MUST use JSON-like literals exactly matching the signature.
-6. Never define ListNode or TreeNode; assume they exist.
-7. Special input metadata:
-   - Any extra information needed to construct the runtime input (such as cycle positions, graph wiring, or flags)
-     MUST appear as structured JSON, not only in natural-language text.
-   - Prefer to encode such metadata directly inside the \`input\` object when it is part of the logical input.
-   - When a special input config exists, you MAY also mirror this under \`specialInputData\` using the config id.
-8. No commentary or explanation outside of the JSON.
+**Output:** JSON object with:
+- solutions: { python: "...", javascript: "...", java: "...", cpp: "..." }
+- testCases: Array of { input: {...}, output: ..., specialInputData?: {...} }
+- specialInputs: (optional) Configuration for special data structures
 
-Deterministic output rule (MANDATORY):
-For any problem where multiple outputs are logically valid (e.g., Two Sum), you MUST choose the canonical deterministic answer using this rule:
-- Among all valid solutions, select the one whose output array is lexicographically smallest.
-- For 2-Sum specifically: choose the valid pair with the smallest first index; if there is a tie, choose the one with the smallest second index.
+**Solution requirements:**
+1. Write OPTIMAL solutions that achieve the targetTimeComplexity. No brute force unless that IS the optimal solution.
+2. Each solution must be a complete, runnable class with a single public method matching the problem signature.
+3. Code should be clean, idiomatic for each language, and use appropriate built-in data structures.
+4. Handle ALL edge cases within the solution logic — don't crash on empty inputs, single elements, or boundary values.
+5. DO NOT define ListNode or TreeNode — they exist in the runtime. Just use them.
 
-HARD ENFORCEMENT:
-The deterministic canonical answer rule is a HARD VALIDATION REQUIREMENT.
-Any output that does NOT follow this canonical rule is INVALID and MUST NOT be produced.
-You are NOT ALLOWED to return any other valid output, even if technically correct.`;
+**Test case requirements:**
+1. Generate EXACTLY numTestCases test cases, strategically chosen:
+   - 2-3 minimal cases (empty, single element, smallest valid input)
+   - 2-3 boundary cases (max values from constraints, edge of valid range)
+   - 3-4 typical cases of varying sizes
+   - 2-3 adversarial cases (duplicates, negative numbers, worst-case for naive algorithms)
+   - Remaining cases: random valid inputs up to maxInputSizeHint size
+
+2. Every test case MUST have the correct expected output. Run through your solution mentally to verify.
+
+3. Inputs must be JSON objects matching the signature parameters exactly:
+   - If signature has \`nums: int[]\`, input should be \`{"nums": [1, 2, 3]}\`
+   - If signature has \`head: ListNode\`, input should be \`{"head": [1, 2, 3]}\` (array representation)
+
+4. For linked-list cycles, include \`pos\` or \`cycleIndex\` in the input object (e.g., \`{"head": [3,2,0,-4], "pos": 1}\`).
+
+**Deterministic output rule:**
+When multiple valid outputs exist, always return the lexicographically smallest. For index-based answers, prefer smallest indices.
+
+**Quality checks before outputting:**
+- [ ] Every solution compiles and runs correctly
+- [ ] Every test case has been mentally traced through the solution
+- [ ] No test case violates the stated constraints
+- [ ] Outputs match exactly what the solution would return
+
+Return ONLY valid JSON. No markdown fences, no explanations.`;
 
 export const GENERATION_LANGUAGES: Array<'python' | 'javascript' | 'java' | 'cpp'> = ['python', 'javascript', 'java', 'cpp'];
 

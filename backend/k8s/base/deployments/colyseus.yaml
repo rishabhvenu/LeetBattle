@@ -1,0 +1,167 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: colyseus
+  namespace: codeclashers
+spec:
+  replicas: ${K8S_COLYSEUS_REPLICAS}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: colyseus
+  template:
+    metadata:
+      labels:
+        app: colyseus
+    spec:
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: colyseus
+        image: ${COLYSEUS_IMAGE}
+        ports:
+        - name: websocket
+          containerPort: 2567
+          hostPort: 2567  # Bind directly to host port for external access
+        envFrom:
+        - configMapRef:
+            name: app-config
+        env:
+        - name: PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: COLYSEUS_PORT
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PORT
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+        - name: REDIS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_USERNAME
+              optional: true
+        - name: MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: MONGODB_URI_INTERNAL
+        - name: JUDGE0_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: JUDGE0_PORT
+        - name: JUDGE0_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: JUDGE0_HOST
+        - name: JUDGE0_URL
+          value: "http://$(JUDGE0_HOST):$(JUDGE0_PORT)"
+        - name: COLYSEUS_PORT
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: COLYSEUS_PORT
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: OPENAI_API_KEY
+        - name: INTERNAL_SERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: INTERNAL_SERVICE_SECRET
+        - name: BOT_SERVICE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: BOT_SERVICE_SECRET
+        - name: COLYSEUS_RESERVATION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: COLYSEUS_RESERVATION_SECRET
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: AWS_SECRET_ACCESS_KEY
+        - name: S3_BUCKET_NAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: S3_BUCKET_NAME
+        - name: AWS_REGION
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: AWS_REGION
+        - name: CORS_ORIGIN
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: CORS_ORIGIN
+              optional: true
+        resources:
+          requests:
+            memory: ${K8S_COLYSEUS_MEMORY_REQUEST}
+            cpu: ${K8S_COLYSEUS_CPU_REQUEST}
+          limits:
+            memory: ${K8S_COLYSEUS_MEMORY_LIMIT}
+            cpu: ${K8S_COLYSEUS_CPU_LIMIT}
+        startupProbe:
+          httpGet:
+            path: /health
+            port: websocket
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: websocket
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: websocket
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 5
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - sh
+              - -c
+              - "sleep 30"
+      terminationGracePeriodSeconds: 60
+

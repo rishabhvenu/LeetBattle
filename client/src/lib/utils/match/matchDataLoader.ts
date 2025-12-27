@@ -128,6 +128,7 @@ export async function loadMatchData(config: MatchDataLoaderConfig): Promise<void
     if (matchDataResult.opponent) {
       onOpponentStatsLoaded({
         name: matchDataResult.opponent.name,
+        username: matchDataResult.opponent.username,
         avatar: matchDataResult.opponent.avatar,
         globalRank: matchDataResult.opponent.globalRank,
         gamesWon: matchDataResult.opponent.gamesWon,

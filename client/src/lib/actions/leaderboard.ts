@@ -23,10 +23,12 @@ export async function getLeaderboardData(page: number = 1, limit: number = 10) {
     const usersCollection = db.collection('users');
     const botsCollection = db.collection('bots');
 
-    const filter = { 'stats.totalMatches': { $gt: 0 } };
+    // Users need at least one match to appear on leaderboard
+    const userFilter = { 'stats.totalMatches': { $gt: 0 } };
+    // Bots always appear on leaderboard (even with 0 matches)
     const [userCount, botCount] = await Promise.all([
-      usersCollection.countDocuments(filter),
-      botsCollection.countDocuments(filter),
+      usersCollection.countDocuments(userFilter),
+      botsCollection.countDocuments({}),
     ]);
 
     const totalEntries = userCount + botCount;
@@ -35,7 +37,7 @@ export async function getLeaderboardData(page: number = 1, limit: number = 10) {
 
     const leaderboardEntries = await usersCollection
       .aggregate([
-        { $match: filter },
+        { $match: userFilter },
         {
           $project: {
             username: 1,
@@ -57,7 +59,7 @@ export async function getLeaderboardData(page: number = 1, limit: number = 10) {
           $unionWith: {
             coll: 'bots',
             pipeline: [
-              { $match: filter },
+              // No filter for bots - include all bots
               {
                 $project: {
                   username: 1,

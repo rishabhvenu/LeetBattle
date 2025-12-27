@@ -32,6 +32,8 @@ import { MatchStatsHeader } from './MatchStatsHeader';
 import { ProblemDescriptionPanel } from './ProblemDescriptionPanel';
 import { CodeEditorPanel } from './CodeEditorPanel';
 import { SubmissionModal } from './SubmissionModal';
+import { SubmissionProgressModal } from './SubmissionProgressModal';
+import type { SubmissionStepType } from '@/types/match';
 
 // Removed global singletons - now using React refs to prevent leaks
 
@@ -100,6 +102,7 @@ export default function MatchClient({
   const loadedMatchIdRef = useRef<string | null>(null); // Track which matchId we've successfully loaded
   const retryCountRef = useRef<number>(0); // Track retry count in ref to avoid state updates triggering re-renders
   const [submissionResult, setSubmissionResult] = useState<FormattedSubmission | null>(null);
+  const [submissionStep, setSubmissionStep] = useState<SubmissionStepType | null>(null);
   // roomRef defined at top of component (line 64)
   const matchupAnimationShownRef = useRef(false);
   const joinFailedRef = useRef<boolean>(false); // Track if join has failed to prevent infinite retries
@@ -289,6 +292,7 @@ export default function MatchClient({
         setMatchStartTime,
         setShowMatchupAnimation,
         matchupAnimationShownRef,
+        setSubmissionStep,
       });
     };
 
@@ -457,6 +461,8 @@ export default function MatchClient({
   };
 
   const handleSubmitClick = () => {
+    console.log('[MatchClient] handleSubmitClick called');
+    
     if (!roomRef.current) {
       toast.error('Not connected to match room');
       return;
@@ -479,12 +485,15 @@ export default function MatchClient({
       return;
     }
     
+    console.log('[MatchClient] Setting isSubmitting to true');
     setIsSubmitting(true);
+    setSubmissionStep(null); // Reset step
     
     // Set a timeout to prevent infinite hanging
     const timeoutId = setTimeout(() => {
       console.error('Submission timeout - no response after 90 seconds');
       setIsSubmitting(false);
+      setSubmissionStep(null);
       toast.error('Submission timed out. Please try again.');
     }, 90000); // 90 second timeout
     
@@ -494,6 +503,7 @@ export default function MatchClient({
 
     const clearSubmissionTimeout = () => {
       clearTimeout(timeoutId);
+      setSubmissionStep(null); // Reset step on completion
       removeSubmissionListener?.();
       removeComplexityListener?.();
       removeSubmissionListener = undefined;
@@ -530,7 +540,7 @@ export default function MatchClient({
   };
 
 
-  if (loading || !matchStartTime || !problem || !opponentStats.name) {
+  if (loading || !matchStartTime || !problem || !opponentStats.username) {
     return (
       <div className="w-screen h-screen flex items-center justify-center bg-blue-50 relative overflow-hidden">
         {/* Background decorative elements */}
@@ -601,17 +611,13 @@ export default function MatchClient({
             isSubmitting={isSubmitting}
             testSummary={testSummary}
             onViewDetailsClick={() => setRunPage(true)}
+            matchStartTime={matchStartTime}
+            matchId={matchId}
+            problem={problem}
           />
         </ResizablePanel>
         </ResizablePanelGroup>
         </div>
-
-      {/* Game Info Footer */}
-      <MatchFooter
-        matchStartTime={matchStartTime}
-        matchId={matchId}
-        problem={problem}
-      />
 
       </div>
       {/* End of main content wrapper */}
@@ -641,8 +647,8 @@ export default function MatchClient({
             avatar: userAvatar || null,
           }}
           player2={{
-            name: opponentStats.name,
-            username: opponentStats.name,
+            name: opponentStats.username,
+            username: opponentStats.username,
             avatar: opponentStats.avatar || null,
           }}
           onAnimationComplete={() => setShowMatchupAnimation(false)}
@@ -660,8 +666,8 @@ export default function MatchClient({
             ratingChange: ratingChanges?.[userId],
           }}
           player2={{
-            name: opponentStats.name,
-            username: opponentStats.name,
+            name: opponentStats.username,
+            username: opponentStats.username,
             avatar: opponentStats.avatar || null,
             isWinner: !matchResult.winner && !matchResult.draw,
             ratingChange: ratingChanges ? ratingChanges[Object.keys(ratingChanges).find(id => id !== userId) || ''] : undefined,
@@ -677,7 +683,7 @@ export default function MatchClient({
           matchResult={matchResult}
           testsPassed={userTestsPassed}
           totalTests={totalTests}
-          opponentName={opponentStats.name}
+          opponentName={opponentStats.username}
           opponentAvatar={opponentStats.avatar}
           username={username}
           userAvatar={userAvatar ?? null}
@@ -691,6 +697,12 @@ export default function MatchClient({
         isOpen={showSubmissionResultPopup && !!latestSubmissionResult}
         onClose={() => setShowSubmissionResultPopup(false)}
         fallbackLanguage={language}
+      />
+
+      {/* Submission Progress Modal */}
+      <SubmissionProgressModal
+        isOpen={isSubmitting}
+        currentStep={submissionStep}
       />
     </div>
   );

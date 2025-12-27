@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Users, X, Zap, Clock } from "lucide-react";
+import { Loader2, Users, X, Zap, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQueueWebSocket } from '@/lib/hooks/useQueueWebSocket';
 
@@ -202,39 +202,6 @@ const GuestQueue: React.FC<GuestQueueProps> = ({ isAlreadyPlayed }) => {
         animate="visible"
       >
         <div className="w-full space-y-8">
-          <motion.div variants={itemVariants}>
-            <Card className="bg-white/90 border-blue-200 shadow-xl">
-              <CardHeader>
-                <CardTitle className="text-2xl font-bold text-center text-black">
-                  Queue Statistics
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid grid-cols-3 gap-4">
-                <div className="text-center">
-                  <Users className="h-8 w-8 mx-auto mb-2" style={{ color: '#2599D4' }} />
-                  <p className="text-2xl font-bold text-black">
-                    {queueStats.playersInQueue}
-                  </p>
-                  <p className="text-sm text-black/70">Players in Queue</p>
-                </div>
-                <div className="text-center">
-                  <Zap className="h-8 w-8 mx-auto mb-2 text-yellow-600" />
-                  <p className="text-2xl font-bold text-black">
-                    {queueStats.ongoingMatches}
-                  </p>
-                  <p className="text-sm text-black/70">Ongoing Matches</p>
-                </div>
-                <div className="text-center">
-                  <Clock className="h-8 w-8 mx-auto mb-2 text-green-600" />
-                  <p className="text-2xl font-bold text-black">
-                    {queueStats.averageWaitTime}s
-                  </p>
-                  <p className="text-sm text-black/70">Avg. Wait Time</p>
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-
           <AnimatePresence mode="wait">
             <motion.div
               key={queueStatus}
@@ -244,60 +211,81 @@ const GuestQueue: React.FC<GuestQueueProps> = ({ isAlreadyPlayed }) => {
               exit="hidden"
             >
               <Card className="bg-white/90 border-blue-200 shadow-xl overflow-hidden">
-                <CardHeader className="bg-white/50">
-                  <CardTitle className="text-2xl font-bold text-center text-black">
-                    Finding Match
-                    {queueStatus === "matched" && " - Match Found!"}
-                    {queueStatus === "error" && " - Error"}
-                    {queueStatus === "cancelled" && " - Cancelled"}
-                  </CardTitle>
+                <CardHeader className={`${queueStatus !== "waiting" ? 'bg-white/50' : 'hidden'}`}>
+                  {queueStatus !== "waiting" && (
+                    <CardTitle className="text-2xl font-bold text-center text-black">
+                      {queueStatus === "matched" && "Match Found!"}
+                      {queueStatus === "error" && "Error"}
+                      {queueStatus === "cancelled" && "Cancelled"}
+                    </CardTitle>
+                  )}
                 </CardHeader>
                 <CardContent className="p-8">
                   <motion.div variants={itemVariants}>
                     {queueStatus === "waiting" && (
-                      <>
-                        <div className="flex justify-center mb-6">
-                          <div className="relative">
-                            <Loader2 className="h-20 w-20 animate-spin text-blue-500" />
-                            <Users className="h-10 w-10 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-slate-200" />
+                      <div className="flex flex-col items-center justify-center py-4">
+                        {/* Spinner with pulsing effect */}
+                        <div className="relative mb-8 mt-2">
+                          <div className="absolute inset-0 bg-blue-500/20 rounded-full blur-xl animate-pulse"></div>
+                          <Loader2 className="h-20 w-20 animate-spin text-blue-500 relative z-10" />
+                        </div>
+
+                        {/* Status Text */}
+                        <h3 className="text-xl font-medium text-black mb-2 animate-pulse">
+                          Searching for an opponent...
+                        </h3>
+                        <p className="text-black/50 text-sm mb-8 font-medium">
+                          Usually starts in under 1 minute
+                        </p>
+
+                        {/* Inline Stats */}
+                        <div className="flex flex-wrap justify-center items-center gap-4 sm:gap-6 text-sm text-black/60 bg-blue-50/80 px-6 py-3 rounded-full border border-blue-100 mb-8 backdrop-blur-sm">
+                          <div className="flex items-center gap-2" title="Players currently queuing">
+                            <Users className="h-4 w-4 text-blue-500" />
+                            <span className="font-medium">
+                              {queueStats.playersInQueue > 0 
+                                ? `${queueStats.playersInQueue} in queue` 
+                                : "Queue is active"}
+                            </span>
+                          </div>
+                          <div className="hidden sm:block w-px h-4 bg-blue-200"></div>
+                          <div className="flex items-center gap-2" title="Matches currently being played">
+                            <Zap className="h-4 w-4 text-yellow-500" />
+                            <span className="font-medium">{queueStats.ongoingMatches} active matches</span>
                           </div>
                         </div>
-                        <p className="text-center mb-6 text-xl text-black/70">
-                          Searching for an opponent...
-                        </p>
-                        <div className="flex justify-center">
-                          <Button
-                            className="px-6 py-3 text-white font-semibold rounded-full transition-colors duration-300 flex items-center text-lg"
-                            onClick={handleCancelQueue}
-                            style={{ backgroundColor: '#dc2626' }}
-                          >
-                            <X className="mr-2 h-5 w-5" />
-                            Cancel
-                          </Button>
+
+                        {/* Cancel Button */}
+                        <Button
+                          className="px-8 py-2 text-white font-medium rounded-full transition-all duration-300 flex items-center shadow-none hover:shadow-sm hover:bg-red-600 active:scale-95"
+                          onClick={handleCancelQueue}
+                          style={{ backgroundColor: '#dc2626' }}
+                        >
+                          <X className="mr-2 h-4 w-4" />
+                          Cancel Search
+                        </Button>
+                      </div>
+                    )}
+                    {queueStatus === "matched" && (
+                      <div className="flex flex-col items-center justify-center py-8">
+                        <div className="relative mb-6">
+                          <div className="absolute inset-0 bg-green-500/20 rounded-full blur-xl animate-pulse"></div>
+                          <Check className="h-20 w-20 text-green-500 relative z-10" />
                         </div>
-                      </>
+                        <h3 className="text-2xl font-bold text-black mb-2 animate-bounce">
+                          Opponent Found!
+                        </h3>
+                        <p className="text-black/60 text-lg">
+                          Starting match...
+                        </p>
+                      </div>
                     )}
                     {queueStatus === "error" && (
                       <>
-                        <div className="text-center mb-6">
-                          <p className="text-xl text-red-600 mb-2">
-                            {errorMessage || 'An error occurred'}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            The backend server might not be running. Please try again or contact support.
-                          </p>
-                        </div>
-                        <div className="flex justify-center gap-4">
-                          <Button
-                            className="px-6 py-3 text-white font-semibold rounded-full transition-colors duration-300 text-lg"
-                            onClick={() => {
-                              setQueueStatus("waiting");
-                              setErrorMessage(null);
-                            }}
-                            style={{ backgroundColor: '#10b981' }}
-                          >
-                            Try Again
-                          </Button>
+                        <p className="text-center mb-6 text-xl text-red-600">
+                          {errorMessage || 'An error occurred'}
+                        </p>
+                        <div className="flex justify-center">
                           <Button
                             className="px-6 py-3 text-white font-semibold rounded-full transition-colors duration-300 text-lg"
                             onClick={() => router.push("/landing")}

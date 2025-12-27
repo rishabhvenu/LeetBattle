@@ -86,9 +86,8 @@ const renderProfilePicture = (avatar: string | null, size: string = "w-24 h-24")
         <div className="flex flex-col items-center">
           {renderProfilePicture(player1.avatar)}
           <span className="mt-2 text-slate-200 font-bold text-lg">
-            {player1.name}
+            {player1.username}
           </span>
-          <span className="text-slate-400 text-sm">@{player1.username}</span>
         </div>
 
         {/* Swords in the middle */}
@@ -123,9 +122,8 @@ const renderProfilePicture = (avatar: string | null, size: string = "w-24 h-24")
         <div className="flex flex-col items-center">
           {renderProfilePicture(player2.avatar)}
           <span className="mt-2 text-slate-200 font-bold text-lg">
-            {player2.name}
+            {player2.username}
           </span>
-          <span className="text-slate-400 text-sm">@{player2.username}</span>
         </div>
       </div>
     </div>

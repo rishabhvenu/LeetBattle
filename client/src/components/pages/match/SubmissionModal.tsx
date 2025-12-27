@@ -2,6 +2,7 @@ import React from 'react';
 import Editor from "@monaco-editor/react";
 import { Button } from "@/components/ui/button";
 import { X } from "lucide-react";
+import { motion } from "framer-motion";
 import type { FormattedSubmission } from '@/types/match';
 
 interface SubmissionModalProps {
@@ -26,8 +27,18 @@ export function SubmissionModal({
     if (submission.errorType === 'runtime') return 'text-purple-600';
     if (submission.errorType === 'timeout') return 'text-yellow-600';
     if (submission.errorType === 'memory') return 'text-indigo-600';
+    if (submission.errorType === 'complexity') return 'text-amber-600';
     if (submission.errorType === 'system') return 'text-gray-600';
     return 'text-black';
+  };
+
+  const hasNestedLoops = (code: string) => {
+    // Simple heuristic: check for nested indentation of loops
+    // or just multiple loop keywords.
+    // For now, let's just use a simple regex for visual indication purposes
+    const loopPattern = /(for|while|do)\s*\(/g;
+    const matches = code.match(loopPattern);
+    return matches && matches.length > 1;
   };
 
   return (
@@ -160,26 +171,54 @@ export function SubmissionModal({
 
           {/* Time Complexity Failed Section */}
           {submission.errorType === 'complexity' && submission.complexityError && (
-            <div className="p-6 bg-rose-50 border-b border-rose-200">
-              <h3 className="text-lg font-semibold text-rose-700 mb-4">Time Complexity Failed</h3>
-              <div className="bg-rose-100 rounded-lg p-4 border border-rose-300">
-                <p className="text-sm text-rose-800 mb-3">{submission.complexityError}</p>
-                <div className="grid grid-cols-2 gap-4 mt-3">
-                  <div>
-                    <h4 className="text-xs font-semibold text-rose-700 mb-1">Expected Complexity:</h4>
-                    <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
-                      {submission.expectedComplexity || 'N/A'}
-                    </code>
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-semibold text-rose-700 mb-1">Your Complexity:</h4>
-                    <code className="text-sm text-rose-900 font-mono bg-white px-2 py-1 rounded">
-                      {submission.timeComplexity}
-                    </code>
-                  </div>
-                </div>
+            <motion.div 
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-8 bg-amber-50/50 flex flex-col items-center justify-center text-center space-y-8 min-h-[400px]"
+            >
+              <div className="space-y-2">
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ delay: 0.2 }}
+                  className="w-20 h-20 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"
+                >
+                  <span className="text-4xl">⚠️</span>
+                </motion.div>
+                <h3 className="text-3xl font-bold text-amber-900">
+                  Time Complexity Failed
+                </h3>
+                <p className="text-lg text-amber-800/80 max-w-md mx-auto">
+                  {submission.complexityError}
+                </p>
               </div>
-            </div>
+
+              <div className="grid grid-cols-2 gap-8 w-full max-w-lg">
+                 <motion.div 
+                    initial={{ x: -20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.4 }}
+                    className="bg-white p-6 rounded-2xl border-2 border-amber-100 shadow-sm flex flex-col items-center"
+                 >
+                    <span className="text-sm font-bold text-amber-500 uppercase tracking-wider mb-2">Target</span>
+                    <span className="text-3xl font-mono font-bold text-gray-800">
+                      {submission.expectedComplexity || 'O(N)'}
+                    </span>
+                 </motion.div>
+
+                 <motion.div 
+                    initial={{ x: 20, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                    transition={{ delay: 0.4 }}
+                    className="bg-amber-100 p-6 rounded-2xl border-2 border-amber-200 shadow-sm flex flex-col items-center"
+                 >
+                    <span className="text-sm font-bold text-amber-600 uppercase tracking-wider mb-2">Your Solution</span>
+                    <span className="text-3xl font-mono font-bold text-amber-900">
+                      {submission.timeComplexity || 'O(N²)'}
+                    </span>
+                 </motion.div>
+              </div>
+            </motion.div>
           )}
 
           {/* Failed Test Case Section (Wrong Answer) */}
@@ -209,33 +248,38 @@ export function SubmissionModal({
           )}
 
           {/* Code Section */}
-          <div className="p-6">
-            <h3 className="text-lg font-semibold text-black mb-4">
-              Code | {submission.language || fallbackLanguage}
-            </h3>
-            <div className="bg-white rounded-lg overflow-hidden border border-gray-200">
-              <div style={{ position: 'relative', pointerEvents: 'none' }}>
-                <Editor
-                  height="300px"
-                  language={(submission.language?.toLowerCase() || fallbackLanguage)}
-                  value={submission.code}
-                  theme="vs"
-                  options={{
-                    readOnly: true,
-                    minimap: { enabled: false },
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true,
-                    cursorBlinking: "solid" as const,
-                    cursorStyle: "line" as const,
-                    cursorWidth: 0,
-                    selectOnLineNumbers: false,
-                    selectionHighlight: false,
-                    occurrencesHighlight: "off" as const,
-                  }}
-                />
+          {submission.errorType !== 'complexity' && (
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-black">
+                  Code | {submission.language || fallbackLanguage}
+                </h3>
+              </div>
+              
+              <div className="bg-white rounded-lg overflow-hidden border border-gray-200">
+                <div style={{ position: 'relative', pointerEvents: 'none' }}>
+                  <Editor
+                    height="300px"
+                    language={(submission.language?.toLowerCase() || fallbackLanguage)}
+                    value={submission.code}
+                    theme="vs"
+                    options={{
+                      readOnly: true,
+                      minimap: { enabled: false },
+                      scrollBeyondLastLine: false,
+                      automaticLayout: true,
+                      cursorBlinking: "solid" as const,
+                      cursorStyle: "line" as const,
+                      cursorWidth: 0,
+                      selectOnLineNumbers: false,
+                      selectionHighlight: false,
+                      occurrencesHighlight: "off" as const,
+                    }}
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

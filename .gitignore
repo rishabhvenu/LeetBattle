@@ -1,77 +1,22 @@
-# Root .gitignore for LeetBattle monorepo
-
-# Environment variables with secrets
+# Development environment files - DO NOT COMMIT
+.env.dev
+.secrets.dev
+.env.act
 .env
-.env.local
-.env*.local
-**/.env
-**/.env.local
+*.env
+!*.env.template
+!*.env.example
+
+# Sensitive credentials
+credentials/
+
+# Build artifacts
+.next/
+dist/
+*.tsbuildinfo
+
+# IDE files
+.cursor/
 
 # Dependencies
 node_modules/
-*/node_modules/
-**/node_modules/
-
-# Build outputs
-dist/
-build/
-.next/
-out/
-.open-next/
-*.tsbuildinfo
-
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-*.sublime-project
-*.sublime-workspace
-
-# Test coverage
-coverage/
-.nyc_output/
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Docker volumes data (if using local bind mounts)
-data/
-volumes/
-
-# AWS CDK
-client/infra/cdk.out/
-client/infra/.cdk/
-client/infra/*.js
-client/infra/*.js.map
-!client/infra/jest.config.js
-
-# SST (if used)
-client/.sst/
-
-# AWS credentials (never commit these!)
-.aws/
-*.pem
-*.key
-credentials
-credentials.json

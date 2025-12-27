@@ -35,6 +35,7 @@ export interface Problem {
 
 export interface OpponentStats {
   name: string;
+  username: string;
   avatar: string | null;
   globalRank: number;
   gamesWon: number;
@@ -166,6 +167,14 @@ export interface MatchDrawPayload {
 
 export interface RateLimitPayload {
   action: string;
+}
+
+export type SubmissionStepType = 'compiling' | 'running_tests' | 'analyzing_complexity';
+
+export interface SubmissionStepPayload {
+  userId: string;
+  step: SubmissionStepType;
+  message: string;
 }
 
 // Re-export types from match.d.ts

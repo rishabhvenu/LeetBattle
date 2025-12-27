@@ -3,7 +3,7 @@ import { Room } from 'colyseus.js';
 import { toast } from 'react-toastify';
 import { formatSubmission } from './submissionFormatter';
 import type { TestCaseResult } from '@/components/Running';
-import type { FormattedSubmission, MatchResult, RatingChanges } from '@/types/match';
+import type { FormattedSubmission, MatchResult, RatingChanges, SubmissionStepType } from '@/types/match';
 
 interface RoomHandlersConfig {
   userId: string;
@@ -44,6 +44,7 @@ interface RoomHandlersConfig {
   setMatchStartTime: (time: number | null) => void;
   setShowMatchupAnimation: (show: boolean) => void;
   matchupAnimationShownRef: React.MutableRefObject<boolean>;
+  setSubmissionStep: (step: SubmissionStepType | null) => void;
 }
 
 export function setupRoomMessageHandlers(room: Room, config: RoomHandlersConfig) {
@@ -83,6 +84,7 @@ export function setupRoomMessageHandlers(room: Room, config: RoomHandlersConfig)
     setMatchStartTime,
     setShowMatchupAnimation,
     matchupAnimationShownRef,
+    setSubmissionStep,
   } = config;
 
   room.onMessage('code_update', (payload) => {
@@ -225,6 +227,16 @@ export function setupRoomMessageHandlers(room: Room, config: RoomHandlersConfig)
     if (payload?.userId && payload.userId !== userId) {
       setOpponentTestsPassed(payload.testsPassed || 0);
       onTestProgressUpdate(payload.testsPassed || 0);
+    }
+  });
+
+  room.onMessage('submission_step', (payload) => {
+    console.log('[roomHandlers] submission_step received:', payload);
+    if (payload?.userId === userId) {
+      console.log('[roomHandlers] Setting step to:', payload.step);
+      setSubmissionStep(payload.step);
+    } else {
+      console.log('[roomHandlers] Ignoring submission_step for different user:', payload?.userId, 'my userId:', userId);
     }
   });
 }

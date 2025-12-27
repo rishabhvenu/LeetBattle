@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: codeclashers
+spec:
+  clusterIP: None
+  selector:
+    app: redis
+  ports:
+    - port: ${REDIS_PORT}
+      targetPort: ${REDIS_PORT}
+

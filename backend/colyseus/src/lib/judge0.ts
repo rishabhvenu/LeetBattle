@@ -1,10 +1,17 @@
+import { getSubmissionQueue } from './submissionQueue';
+
 if (!process.env.JUDGE0_URL) {
   throw new Error('JUDGE0_URL environment variable is required');
 }
 const JUDGE0_URL = process.env.JUDGE0_URL;
 
+// Get singleton submission queue with circuit breaker
+const submissionQueue = getSubmissionQueue();
+
 export async function submitToJudge0(language_id: number, source_code: string, stdin?: string) {
-  try {
+  // Wrap submission in queue with circuit breaker protection
+  return submissionQueue.submit(async () => {
+    try {
     // Encode source code and stdin to base64 to handle special characters
     const encodedSourceCode = Buffer.from(source_code, 'utf8').toString('base64');
     
@@ -60,9 +67,12 @@ export async function submitToJudge0(language_id: number, source_code: string, s
     console.error('Language ID:', language_id);
     throw error;
   }
+  }); // End of submissionQueue.submitWithBackpressure
 }
 
 export async function pollJudge0(token: string) {
+  // Wrap polling in queue with circuit breaker protection
+  return submissionQueue.submit(async () => {
   // Request all fields including stdout, stderr, compile_output, message, etc.
   const res = await fetch(`${JUDGE0_URL}/submissions/${token}?base64_encoded=true&fields=*`);
   if (!res.ok) {
@@ -109,6 +119,7 @@ export async function pollJudge0(token: string) {
   }
   
   return result;
+  }); // End of submissionQueue.submitWithBackpressure
 }
 
 

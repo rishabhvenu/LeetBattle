@@ -14,7 +14,10 @@ export interface BotDoc {
     totalMatches: number;
   };
   matchIds: ObjectId[]; // Array of match IDs this bot has participated in
-  deployed: boolean; // whether bot is actively queueing
+  // NOTE: deployed status is computed from Redis (bots:deployed set) at runtime,
+  // not stored in MongoDB. The API overlays this field when returning bot data.
+  deployed: boolean; // whether bot is actively queueing (from Redis)
+  active?: boolean; // whether bot is in an active match (from Redis)
   createdAt: Date;
   updatedAt: Date;
 }

@@ -152,7 +152,7 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
   const getCardBackgroundColor = (result: string) => {
     switch (result) {
       case 'win': return 'bg-gradient-to-r from-green-50 to-white';
-      case 'loss': return 'bg-gradient-to-r from-red-50 to-white';
+      case 'loss': return 'bg-gradient-to-r from-red-50/40 to-white';
       case 'draw': return 'bg-gradient-to-r from-blue-50 to-white';
       default: return 'bg-white/90';
     }
@@ -217,7 +217,7 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                         whileTap={{ scale: 0.98 }}
                       >
                         <Card
-                          className={`${getCardBackgroundColor(match.result)} border-2 ${getCardBorderColor(match.result)} shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer`}
+                          className={`${getCardBackgroundColor(match.result)} border-2 ${getCardBorderColor(match.result)} shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer group`}
                           onClick={() => handleMatchClick(match.matchId)}
                         >
                           <CardContent className="p-6 relative">
@@ -254,8 +254,8 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                               </div>
 
                               {/* VS Display */}
-                              <div className="text-center">
-                                <div className="text-3xl font-bold text-black/60">VS</div>
+                              <div className="text-center px-4">
+                                <div className="text-2xl font-bold text-black/20">VS</div>
                               </div>
 
                               {/* Opponent */}
@@ -286,17 +286,17 @@ export default function MatchHistory({ initialData, userId }: MatchHistoryProps)
                                     />
                                   </AvatarFallback>
                                 </Avatar>
+                                <ChevronRight className="w-5 h-5 text-black/20 group-hover:text-black/40 transition-colors" />
                               </div>
                             </div>
 
                             {/* Bottom Info */}
-                            <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                              <div className="flex items-center gap-1 text-sm text-black/70">
-                                <Clock className="w-4 h-4" />
-                                {formatDuration(match.duration)}
-                              </div>
-                              <div className="text-sm text-black/50">
-                                {formatDate(match.endedAt)}
+                            <div className="flex items-center justify-end mt-4 pt-4 border-t border-gray-100">
+                              <div className="flex items-center gap-2 text-xs text-black/40 font-medium">
+                                <Clock className="w-3 h-3" />
+                                <span>{formatDuration(match.duration)}</span>
+                                <span>•</span>
+                                <span>{formatDate(match.endedAt)}</span>
                               </div>
                             </div>
                           </CardContent>

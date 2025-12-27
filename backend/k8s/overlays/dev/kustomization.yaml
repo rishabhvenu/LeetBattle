@@ -1,0 +1,80 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: codeclashers
+
+# Base resources
+resources:
+  - ../../base
+  
+  # Dev-specific resources
+  - mongodb-dev.yaml
+  - redis-dev.yaml
+  - minio-dev.yaml
+
+# Patches for development environment
+patches:
+  # Reduce replicas to 1 for dev
+  - target:
+      kind: Deployment
+      name: colyseus
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  
+  - target:
+      kind: Deployment
+      name: bots
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  
+  - target:
+      kind: Deployment
+      name: judge0-server
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  
+  - target:
+      kind: Deployment
+      name: judge0-worker
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+  
+  # Override app-config ConfigMap for dev
+  - target:
+      kind: ConfigMap
+      name: app-config
+    patch: |-
+      - op: replace
+        path: /data/NODE_ENV
+        value: development
+      - op: replace
+        path: /data/REDIS_HOST
+        value: redis
+      - op: replace
+        path: /data/MONGODB_HOST
+        value: mongodb
+      - op: replace
+        path: /data/CORS_ORIGIN
+        value: http://localhost:3000
+
+# Image overrides for dev (local builds)
+images:
+  - name: ghcr.io/rishabhvenu/codeclashers-colyseus
+    newName: local/codeclashers-colyseus
+    newTag: dev
+  - name: ghcr.io/rishabhvenu/codeclashers-bots
+    newName: local/codeclashers-bots
+    newTag: dev
+
+labels:
+  - pairs:
+      environment: development
+

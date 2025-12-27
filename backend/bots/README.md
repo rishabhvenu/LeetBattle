@@ -38,6 +38,7 @@ The Bot Service is a standalone Node.js application that:
 - Each bot has unique ID, name, avatar, gender, and statistics
 - Bot statistics include rating, wins, losses, draws, total matches
 - Bots can be deployed/undeployed dynamically
+- **NEW**: When created via `/admin/bots/generate`, bots are automatically added to the rotation queue and deployed if below minimum threshold
 
 ### 2. Deployment System
 - Admin panel sends deployment commands via Redis pub/sub
@@ -119,6 +120,7 @@ BOT_TIME_PARAMS_HARD={"shapeK":3.0,"scaleMinutes":13}
   - `{"type":"deploy"}` - Deploy all available bots
   - `{"type":"stop","botIds":["bot:001","bot:002"]}` - Stop specific bots
   - `{"type":"stop"}` - Stop all bots
+  - `{"type":"checkDeployment","reason":"new_bots_created"}` - Trigger deployment check (auto-sent when bots are created)
 
 ### Keys
 - `queue:reservation:{botId}` - Bot match reservations
@@ -169,26 +171,59 @@ BOT_TIME_PARAMS_HARD={"shapeK":3.0,"scaleMinutes":13}
 
 ## Development
 
-### Running Locally
+### Running Locally (Kubernetes/k3s)
+
+The bot service runs in a Kubernetes cluster using k3s. 
+
+**View bot service pods:**
+```bash
+kubectl get pods -n codeclashers-dev | grep bots
+```
+
+**View bot service logs:**
+```bash
+kubectl logs -n codeclashers-dev -l app=bots -f
+```
+
+**Restart bot service:**
+```bash
+kubectl rollout restart deployment -n codeclashers-dev bots
+```
+
+**Wipe Redis and restart:**
+```bash
+cd backend/k8s/dev
+./wipe-redis.sh -y
+kubectl rollout restart deployment -n codeclashers-dev bots colyseus
+```
+
+**Access health endpoint:**
+```bash
+# Port forward first
+kubectl port-forward -n codeclashers-dev svc/bots-service 3000:3000
+
+# Then check health
+curl http://localhost:3000/health
+curl http://localhost:3000/metrics
+```
+
+### Running Tests
+```bash
+cd backend/bots
+npm test
+```
+
+### Local Development (Standalone)
+For local development without Kubernetes:
 ```bash
 cd backend/bots
 npm install
 npm start
 ```
 
-### Running Tests
-```bash
-npm test
-```
-
-### Docker
-```bash
-cd backend
-docker-compose up bots
-```
-
 ### Debugging
-- Bot service logs all major lifecycle events
+- Bot service logs all major lifecycle events (view with `kubectl logs`)
+- Health endpoint provides deployment stats and circuit breaker status
 - Redis pub/sub commands are logged for debugging
 - Bot match participation is tracked in Colyseus logs
 - MongoDB bot statistics can be queried directly
@@ -209,10 +244,21 @@ docker-compose up bots
 - Bot queue integration minimizes unnecessary API calls
 
 ### Monitoring
-- Bot deployment status available via Redis sets
+- Bot deployment status available via `/health` HTTP endpoint (port 3000)
+- Prometheus metrics available at `/metrics` endpoint
+- Circuit breaker status included in health checks
 - Bot match participation tracked in MongoDB
-- Bot service health can be monitored via logs
 - Admin panel provides real-time bot management
+
+**Health Endpoint Response:**
+```json
+{
+  "status": "healthy",
+  "leadership": { "isLeader": true, "instanceId": "..." },
+  "deployment": { "currentDeployed": 5, "currentActive": 2 },
+  "circuitBreakers": { "queueStats": { "state": "CLOSED" } }
+}
+```
 
 ## Troubleshooting
 
@@ -234,6 +280,27 @@ docker-compose up bots
 - Review match completion event handling
 
 ### Debug Commands
+
+**Kubernetes (k3s):**
+```bash
+# Check deployed bots in Redis
+kubectl exec -n codeclashers-dev svc/redis-dev -- redis-cli -a $REDIS_PASSWORD SMEMBERS bots:deployed
+
+# Check active bots
+kubectl exec -n codeclashers-dev svc/redis-dev -- redis-cli -a $REDIS_PASSWORD SMEMBERS bots:active
+
+# Monitor bot commands
+kubectl exec -n codeclashers-dev svc/redis-dev -- redis-cli -a $REDIS_PASSWORD MONITOR | grep bots:commands
+
+# Check bot service health
+kubectl port-forward -n codeclashers-dev svc/bots-service 3000:3000 &
+curl http://localhost:3000/health
+
+# Check bot statistics in MongoDB
+kubectl exec -n codeclashers-dev svc/mongodb-dev -- mongosh codeclashers --eval "db.bots.find().pretty()"
+```
+
+**Direct Access (if port-forwarded):**
 ```bash
 # Check deployed bots
 redis-cli SMEMBERS bots:deployed

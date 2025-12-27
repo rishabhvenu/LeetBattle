@@ -28,6 +28,7 @@ import {
   adminLimiter 
 } from './lib/rateLimiter';
 import { internalAuthMiddleware, botAuthMiddleware, combinedAuthMiddleware, adminAuthMiddleware } from './lib/internalAuth';
+import { startCleanupWorker } from './workers/redisCleanup';
 
 const DB_NAME = getDbName();
 const isProduction = process.env.NODE_ENV === 'production';
@@ -284,6 +285,22 @@ async function fetchParticipantIdentity(userId: string, db: Db): Promise<{ usern
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+/**
+ * Helper function to scan Redis for keys matching a pattern
+ */
+async function scanRedisKeys(redis: ReturnType<typeof getRedis>, pattern: string): Promise<string[]> {
+  const keys: string[] = [];
+  let cursor = '0';
+  
+  do {
+    const result = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+    cursor = result[0];
+    keys.push(...result[1]);
+  } while (cursor !== '0');
+  
+  return keys;
+}
 
 function createS3Client() {
   const config: AWS.S3.ClientConfiguration = {
@@ -717,8 +734,10 @@ router.post('/admin/bots/rotation/init', adminAuthMiddleware(), async (ctx) => {
     // Clear and rebuild rotation queue
     await redis.del(RedisKeys.botsRotationQueue);
     
-    // Add undeployed bots to rotation queue
-    const undeployedBots = allBots.filter(bot => !bot.deployed);
+    // Add bots that are NOT currently deployed (per Redis) to rotation queue
+    const deployedBotIds = await redis.smembers(RedisKeys.botsDeployedSet);
+    const deployedSet = new Set(deployedBotIds);
+    const undeployedBots = allBots.filter(bot => !deployedSet.has(bot._id.toString()));
     for (const bot of undeployedBots) {
       await redis.rpush(RedisKeys.botsRotationQueue, bot._id.toString());
     }
@@ -833,8 +852,39 @@ router.get('/global/general-stats', rateLimitMiddleware(queueLimiter), async (ct
     const botsActiveCount = Number(botsActiveCountRaw || 0);
     const botRotationQueueLength = Number(botRotationQueueLengthRaw || 0);
 
+    // Calculate longest wait time for any human player in queue
+    let longestHumanWaitMs = 0;
+    if (queuedHumansCount > 0) {
+      const humanPlayerIds = await redis.smembers(RedisKeys.humanPlayersSet);
+      const now = Date.now();
+      for (const playerId of humanPlayerIds) {
+        // Check if player is actually in the queue
+        const inQueue = await redis.zscore(RedisKeys.eloQueue, playerId);
+        if (inQueue !== null) {
+          const joinedAtRaw = await redis.get(RedisKeys.queueJoinedAtKey(playerId));
+          if (joinedAtRaw) {
+            const waitMs = now - parseInt(joinedAtRaw, 10);
+            if (waitMs > longestHumanWaitMs) {
+              longestHumanWaitMs = waitMs;
+            }
+          }
+        }
+      }
+    }
+
+    // Query MongoDB for total completed matches count
+    let matchesCompleted = 0;
+    try {
+      const mongoClient = await getMongoClient();
+      const db = mongoClient.db(DB_NAME);
+      matchesCompleted = await db.collection('matches').countDocuments({ status: 'finished' });
+    } catch (mongoErr) {
+      console.error('Error fetching matches count from MongoDB:', mongoErr);
+    }
+
     ctx.body = {
       activePlayers: queueSize + (activeMatches * 2),
+      matchesCompleted,
       inProgressMatches: activeMatches,
       inQueue: queueSize,
       queuedPlayersCount,
@@ -842,6 +892,7 @@ router.get('/global/general-stats', rateLimitMiddleware(queueLimiter), async (ct
       botsDeployedCount,
       botsActiveCount,
       botRotationQueueLength,
+      longestHumanWaitMs,
     };
   } catch (error: any) {
     console.error('Error fetching general stats:', error);
@@ -855,7 +906,8 @@ router.get('/queue/reservation', rateLimitMiddleware(queueLimiter), async (ctx) 
   if (!userId) { ctx.status = 400; ctx.body = { error: 'userId required' }; return; }
   const redis = getRedis();
   const reservationRaw = await redis.get(`queue:reservation:${userId}`);
-  if (!reservationRaw) { ctx.status = 404; ctx.body = { error: 'not_found' }; return; }
+  // Return 200 with found: false instead of 404 to avoid browser console spam during polling
+  if (!reservationRaw) { ctx.body = { found: false }; return; }
   const reservation = JSON.parse(reservationRaw);
   let secret: string;
   try {
@@ -880,7 +932,7 @@ router.get('/queue/reservation', rateLimitMiddleware(queueLimiter), async (ctx) 
     secret,
     { algorithm: 'HS256' }
   );
-  ctx.body = { token };
+  ctx.body = { found: true, token, matchId: reservation.matchId };
 });
 
 router.post('/reserve/consume', rateLimitMiddleware(queueLimiter), async (ctx) => {
@@ -1522,23 +1574,24 @@ router.post('/admin/bots/init', adminAuthMiddleware(), async (ctx) => {
     }
     
     // Create the collection with validation
+    // NOTE: deployed status is tracked in Redis (bots:deployed set), not MongoDB
     await db.createCollection('bots', {
       validator: {
         $jsonSchema: {
           bsonType: 'object',
-          required: ['fullName', 'username', 'avatar', 'gender', 'stats', 'matchIds', 'deployed', 'createdAt', 'updatedAt'],
+          required: ['fullName', 'username', 'avatar', 'gender', 'stats', 'matchIds', 'createdAt', 'updatedAt'],
           properties: {
             fullName: {
               bsonType: 'string',
               minLength: 1,
               maxLength: 100,
-              description: 'Full name is required and must be a string'
+              description: 'Full name is required'
             },
             username: {
               bsonType: 'string',
               minLength: 1,
               maxLength: 50,
-              description: 'Username is required and must be a string'
+              description: 'Username is required'
             },
             avatar: {
               bsonType: 'string',
@@ -1552,59 +1605,34 @@ router.post('/admin/bots/init', adminAuthMiddleware(), async (ctx) => {
               bsonType: 'object',
               required: ['rating', 'wins', 'losses', 'draws', 'totalMatches'],
               properties: {
-                rating: {
-                  bsonType: 'number',
-                  minimum: 0,
-                  description: 'Rating must be a non-negative number'
-                },
-                wins: {
-                  bsonType: 'number',
-                  minimum: 0,
-                  description: 'Wins must be a non-negative number'
-                },
-                losses: {
-                  bsonType: 'number',
-                  minimum: 0,
-                  description: 'Losses must be a non-negative number'
-                },
-                draws: {
-                  bsonType: 'number',
-                  minimum: 0,
-                  description: 'Draws must be a non-negative number'
-                },
-                totalMatches: {
-                  bsonType: 'number',
-                  minimum: 0,
-                  description: 'Total matches must be a non-negative number'
-                }
+                rating: { bsonType: 'number', minimum: 0 },
+                wins: { bsonType: 'number', minimum: 0 },
+                losses: { bsonType: 'number', minimum: 0 },
+                draws: { bsonType: 'number', minimum: 0 },
+                totalMatches: { bsonType: 'number', minimum: 0 }
               }
             },
             matchIds: {
               bsonType: 'array',
-              description: 'Array of match IDs is required'
-            },
-            deployed: {
-              bsonType: 'bool',
-              description: 'Deployed status is required'
+              description: 'Array of match IDs'
             },
             createdAt: {
               bsonType: 'date',
-              description: 'Created date is required'
+              description: 'Created date'
             },
             updatedAt: {
               bsonType: 'date',
-              description: 'Updated date is required'
+              description: 'Updated date'
             }
           }
         }
       }
     });
     
-    // Create indexes
+    // Create indexes (deployed status is in Redis, not indexed here)
     const bots = db.collection('bots');
-    await bots.createIndex({ deployed: 1 });
     await bots.createIndex({ 'stats.rating': 1 });
-    await bots.createIndex({ deployed: 1, 'stats.rating': 1 });
+    await bots.createIndex({ username: 1 }, { unique: true });
     
     ctx.body = {
       success: true,
@@ -1706,7 +1734,7 @@ router.post('/admin/bots/generate', adminAuthMiddleware(), async (ctx) => {
           totalMatches: 0
         },
         matchIds: [], // Initialize empty array for match history
-        deployed: false,
+        // NOTE: deployed status is tracked in Redis (bots:deployed set), not MongoDB
         createdAt: new Date(),
         updatedAt: new Date()
       };
@@ -1721,13 +1749,12 @@ router.post('/admin/bots/generate', adminAuthMiddleware(), async (ctx) => {
         fullName: botDoc.fullName,
         username: botDoc.username,
         gender: botDoc.gender,
-        deployed: botDoc.deployed,
         hasStats: !!botDoc.stats,
         hasMatchIds: Array.isArray(botDoc.matchIds),
         hasDates: !!(botDoc.createdAt && botDoc.updatedAt)
       });
       
-      if (!botDoc.fullName || !botDoc.username || !botDoc.avatar || !botDoc.gender || !botDoc.stats || !Array.isArray(botDoc.matchIds) || typeof botDoc.deployed !== 'boolean' || !botDoc.createdAt || !botDoc.updatedAt) {
+      if (!botDoc.fullName || !botDoc.username || !botDoc.avatar || !botDoc.gender || !botDoc.stats || !Array.isArray(botDoc.matchIds) || !botDoc.createdAt || !botDoc.updatedAt) {
         throw new Error(`Invalid bot document ${i + 1}: ${JSON.stringify(botDoc)}`);
       }
     }
@@ -1745,10 +1772,37 @@ router.post('/admin/bots/generate', adminAuthMiddleware(), async (ctx) => {
     }));
     generateBotAvatars(botDocsWithIds).catch(err => console.error('Avatar generation failed:', err));
     
+    // Add newly created bots to rotation queue
+    const redis = getRedis();
+    const newBotIds = Object.keys(result.insertedIds).map(key => result.insertedIds[parseInt(key)].toString());
+    
+    try {
+      // Update totalBots count in rotation config
+      const totalBotsNow = await bots.countDocuments({});
+      await redis.hset(RedisKeys.botsRotationConfig, 'totalBots', totalBotsNow.toString());
+      
+      // Add new bots to rotation queue
+      for (const botId of newBotIds) {
+        await redis.rpush(RedisKeys.botsRotationQueue, botId);
+      }
+      console.log(`Added ${newBotIds.length} new bots to rotation queue`);
+      
+      // Trigger deployment check via pub/sub to deploy if below minimum
+      await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
+        type: 'checkDeployment',
+        reason: 'new_bots_created',
+        count: newBotIds.length
+      }));
+      console.log(`Notified bot service of ${newBotIds.length} new bots`);
+    } catch (redisError) {
+      console.error('Failed to add bots to rotation queue:', redisError);
+      // Continue - bots are created in MongoDB, they can be added to rotation manually
+    }
+    
     ctx.body = {
       success: true,
-      message: `Generated ${count} bots successfully`,
-      botIds: Object.keys(result.insertedIds).map(key => result.insertedIds[parseInt(key)].toString())
+      message: `Generated ${count} bots successfully and added to rotation queue`,
+      botIds: newBotIds
     };
   } catch (error: any) {
     console.error('Error generating bots:', error);
@@ -1784,45 +1838,27 @@ router.post('/admin/bots/deploy', adminAuthMiddleware(), async (ctx) => {
   try {
     const { botIds, deploy } = ctx.request.body as { botIds: string[]; deploy: boolean };
     
-    const mongoClient = await getMongoClient();
-    const db = mongoClient.db(DB_NAME);
-    const bots = db.collection('bots');
     const redis = getRedis();
     
-    // Update bot deployment status
-    await bots.updateMany(
-      { _id: { $in: botIds.map(id => new ObjectId(id)) } },
-      { 
-        $set: { 
-          deployed: deploy,
-          updatedAt: new Date()
-        }
-      }
-    );
-    
-    // Update Redis deployed set
+    // Deployed status is tracked in Redis only (bots:deployed set)
     if (deploy) {
-      // Get bot IDs for Redis
-      const deployedBots = await bots.find({ _id: { $in: botIds.map(id => new ObjectId(id)) } }).toArray();
-      for (const bot of deployedBots) {
-        await redis.sadd(RedisKeys.botsDeployedSet, bot._id.toString());
+      // Add to Redis deployed set
+      for (const botId of botIds) {
+        await redis.sadd(RedisKeys.botsDeployedSet, botId);
       }
       
       // Notify bot service to start cycles
       await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ type: 'deploy' }));
     } else {
       // Remove from deployed set
-      const deployedBots = await bots.find({ _id: { $in: botIds.map((id: string) => new ObjectId(id)) } }).toArray();
-      const deployedBotIds = deployedBots.map((bot: any) => bot._id.toString());
-      
-      for (const bot of deployedBots) {
-        await redis.srem(RedisKeys.botsDeployedSet, bot._id.toString());
+      for (const botId of botIds) {
+        await redis.srem(RedisKeys.botsDeployedSet, botId);
       }
       
       // Notify bot service to stop specific bots
       await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ 
         type: 'stop', 
-        botIds: deployedBotIds 
+        botIds 
       }));
     }
     
@@ -1880,33 +1916,127 @@ router.delete('/admin/bots/:id', adminAuthMiddleware(), async (ctx) => {
     const mongoClient = await getMongoClient();
     const db = mongoClient.db(DB_NAME);
     const bots = db.collection('bots');
+    const users = db.collection('users');
     const redis = getRedis();
     
     // Get bot info before deletion
     const bot = await bots.findOne({ _id: new ObjectId(botId) });
     
-    const result = await bots.deleteOne({ _id: new ObjectId(botId) });
-    
-    // Clean up avatar file from MinIO/S3
-    if (bot && bot.avatar) {
-      await deleteBotAvatar(bot.avatar);
-    }
-    
-    // Remove from Redis sets
-    if (bot) {
-      await redis.srem(RedisKeys.botsActiveSet, bot._id.toString());
-      await redis.srem(RedisKeys.botsDeployedSet, bot._id.toString());
-    }
-    
-    if (result.deletedCount === 0) {
+    if (!bot) {
       ctx.status = 404;
       ctx.body = { success: false, error: 'Bot not found' };
       return;
     }
     
+    const botIdStr = bot._id.toString();
+    
+    // 1. Check if bot is in an active match - end it with opponent winning
+    const currentMatchId = await redis.get(`bot:current_match:${botIdStr}`);
+    let matchEnded = false;
+    if (currentMatchId) {
+      console.log(`Bot ${botIdStr} is in active match ${currentMatchId}, ending match with opponent winning`);
+      
+      // Get match data to find opponent and roomId
+      const matchBlob = await redis.get(RedisKeys.matchKey(currentMatchId));
+      if (matchBlob) {
+        try {
+          const matchData = JSON.parse(matchBlob);
+          const playerIds = matchData.playerIds || [];
+          const opponentId = playerIds.find((id: string) => id !== botIdStr);
+          const roomId = matchData.roomId;
+          
+          if (opponentId && roomId) {
+            // Try to end the match directly via matchMaker
+            try {
+              const room = await matchMaker.getRoomById(roomId);
+              if (room && room.roomName === 'match') {
+                const matchRoom = room as any;
+                if (typeof matchRoom.endMatch === 'function') {
+                  // End match with opponent as winner (bot_deleted reason)
+                  await matchRoom.endMatch(`winner_${opponentId}`);
+                  matchEnded = true;
+                  console.log(`Ended match ${currentMatchId} with opponent ${opponentId} as winner (bot deleted)`);
+                }
+              }
+            } catch (roomErr) {
+              console.warn(`Failed to end match via room:`, roomErr);
+              // Fallback: publish event for any listeners
+              await redis.publish(
+                RedisKeys.matchEventsChannel,
+                JSON.stringify({
+                  type: 'force_end_match',
+                  matchId: currentMatchId,
+                  winnerUserId: opponentId,
+                  reason: 'bot_deleted',
+                  deletedBotId: botIdStr
+                })
+              );
+            }
+          }
+        } catch (parseErr) {
+          console.warn(`Failed to parse match blob for ${currentMatchId}:`, parseErr);
+        }
+      }
+    }
+    
+    // 2. Remove bot from ELO matchmaking queue
+    await redis.zrem(RedisKeys.eloQueue, botIdStr);
+    await redis.del(RedisKeys.queueJoinedAtKey(botIdStr));
+    console.log(`Removed bot ${botIdStr} from matchmaking queue`);
+    
+    // 3. Clean up all Redis state for this bot
+    await redis.srem(RedisKeys.botsActiveSet, botIdStr);
+    await redis.srem(RedisKeys.botsDeployedSet, botIdStr);
+    await redis.lrem(RedisKeys.botsRotationQueue, 0, botIdStr);
+    await redis.del(`bot:current_match:${botIdStr}`);
+    await redis.del(RedisKeys.botStateKey(botIdStr));
+    await redis.del(`queue:reservation:${botIdStr}`);
+    console.log(`Cleaned up Redis state for bot ${botIdStr}`);
+    
+    // 4. Delete orphaned user document with this bot's ID (if exists)
+    try {
+      const orphanResult = await users.deleteOne({ _id: new ObjectId(botId) });
+      if (orphanResult.deletedCount > 0) {
+        console.log(`Deleted orphaned user document for bot ${botIdStr}`);
+      }
+    } catch (orphanErr) {
+      console.warn(`Failed to check/delete orphaned user document:`, orphanErr);
+    }
+    
+    // 5. Delete the bot from bots collection
+    const result = await bots.deleteOne({ _id: new ObjectId(botId) });
+    
+    // 6. Clean up avatar file from MinIO/S3
+    if (bot.avatar) {
+      await deleteBotAvatar(bot.avatar);
+    }
+    
+    // 7. Update totalBots count in rotation config
+    const totalBotsNow = await bots.countDocuments({});
+    await redis.hset(RedisKeys.botsRotationConfig, 'totalBots', totalBotsNow.toString());
+    
+    // 8. Clear leaderboard cache (bots appear in leaderboard)
+    const leaderboardKeys = await scanRedisKeys(redis, 'leaderboard:*');
+    if (leaderboardKeys.length > 0) {
+      await redis.del(...leaderboardKeys);
+      console.log(`Cleared ${leaderboardKeys.length} leaderboard cache entries`);
+    }
+    
+    // 9. Notify bot service that a bot was deleted
+    await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({
+      type: 'botDeleted',
+      botId: botIdStr
+    }));
+    
     ctx.body = {
       success: true,
-      message: 'Bot deleted successfully'
+      message: 'Bot deleted successfully',
+      details: {
+        wasInMatch: !!currentMatchId,
+        matchEnded: matchEnded,
+        matchId: currentMatchId || null,
+        leaderboardCacheCleared: leaderboardKeys.length
+      }
     };
   } catch (error: any) {
     console.error('Error deleting bot:', error);
@@ -1939,6 +2069,10 @@ router.post('/admin/bots/reset', adminAuthMiddleware(), async (ctx) => {
       await bots.deleteMany({});
       await redis.del(RedisKeys.botsActiveSet);
       await redis.del(RedisKeys.botsDeployedSet);
+      await redis.del(RedisKeys.botsRotationQueue);
+      
+      // Update totalBots count to 0
+      await redis.hset(RedisKeys.botsRotationConfig, 'totalBots', '0');
     } else {
       // Reset stats only
       await bots.updateMany({}, {
@@ -1949,12 +2083,11 @@ router.post('/admin/bots/reset', adminAuthMiddleware(), async (ctx) => {
           'stats.draws': 0,
           'stats.totalMatches': 0,
           matchIds: [], // Reset match history
-          deployed: false,
           updatedAt: new Date()
         }
       });
       
-      // Clear Redis sets
+      // Clear Redis sets (deployed status is tracked in Redis)
       await redis.del(RedisKeys.botsActiveSet);
       await redis.del(RedisKeys.botsDeployedSet);
       
@@ -1970,6 +2103,60 @@ router.post('/admin/bots/reset', adminAuthMiddleware(), async (ctx) => {
     console.error('Error resetting bot data:', error);
     ctx.status = 500;
     ctx.body = { success: false, error: 'Failed to reset bot data' };
+  }
+});
+
+// Cleanup orphaned user records (users without usernames that appear on leaderboard)
+router.post('/admin/users/cleanup-orphans', adminAuthMiddleware(), async (ctx) => {
+  try {
+    const mongoClient = await getMongoClient();
+    const db = mongoClient.db(DB_NAME);
+    const users = db.collection('users');
+    const redis = getRedis();
+    
+    // Find users with stats.totalMatches > 0 but no username (orphaned records)
+    const orphanedUsers = await users.find({
+      'stats.totalMatches': { $gt: 0 },
+      $or: [
+        { username: { $exists: false } },
+        { username: null },
+        { username: '' }
+      ]
+    }).toArray();
+    
+    if (orphanedUsers.length === 0) {
+      ctx.body = { success: true, message: 'No orphaned user records found', deletedCount: 0 };
+      return;
+    }
+    
+    // Log what we're about to delete
+    console.log(`Found ${orphanedUsers.length} orphaned user records:`, 
+      orphanedUsers.map(u => ({ _id: u._id.toString(), rating: u.stats?.rating, totalMatches: u.stats?.totalMatches }))
+    );
+    
+    // Delete orphaned records
+    const deleteResult = await users.deleteMany({
+      _id: { $in: orphanedUsers.map(u => u._id) }
+    });
+    
+    // Clear leaderboard cache
+    const leaderboardKeys = await scanRedisKeys(redis, 'leaderboard:*');
+    if (leaderboardKeys.length > 0) {
+      await redis.del(...leaderboardKeys);
+      console.log(`Cleared ${leaderboardKeys.length} leaderboard cache entries`);
+    }
+    
+    ctx.body = {
+      success: true,
+      message: `Deleted ${deleteResult.deletedCount} orphaned user record(s)`,
+      deletedCount: deleteResult.deletedCount,
+      deletedIds: orphanedUsers.map(u => u._id.toString()),
+      leaderboardCacheCleared: leaderboardKeys.length
+    };
+  } catch (error: any) {
+    console.error('Error cleaning up orphaned users:', error);
+    ctx.status = 500;
+    ctx.body = { success: false, error: 'Failed to cleanup orphaned users' };
   }
 });
 
@@ -2470,39 +2657,44 @@ async function deleteBotAvatar(avatarUrl: string): Promise<void> {
 async function generateBotProfiles(count: number, gender?: 'male' | 'female' | 'random') {
   try {
     const genderText = gender && gender !== 'random' ? gender : 'random';
-    const prompt = `You are simulating a natural list of player identities from a real online gaming or coding platform.
+    const prompt = `Generate ${count} user profiles for a competitive coding platform. These should feel like REAL people scraped from an actual leaderboard—messy, inconsistent, human.
 
-Generate ${count} user profiles, each with:
+**FULL NAMES (display names):**
+These are what people set as their visible name. Real platforms have:
+- Actual full names with global diversity: "Priya Sharma", "Marcus Oyelaran", "김지훈", "Fatima Al-Hassan", "João Pedro Silva", "Yuki Tanaka", "Oluwaseun Adebayo"
+- Mixed heritage names that reflect real demographics: "Emily Nakamura", "Carlos Wei", "Aisha Johnson"
+- Single names or nicknames used as display names: "Dex", "Mango", "just kevin"
+- Lowercase or stylized names: "alex t.", "ryan !!!", "diana 🌙"
+- Names that are clearly usernames used as display names: "coolcat2003", "notarobot"
+- Occasional joke names: "Two Raccoons in a Trenchcoat", "Error 404"
 
-A display name (fullName) — what users might actually choose. Sometimes it's a real name, sometimes a nickname, sometimes weird, stylized, or includes numbers.
+**USERNAMES (handles):**
+These are @handles. Real ones look like:
+- Birth year suffixes: priya98, marcusO2001, jlee_99, fatima2k5
+- Keyboard laziness: thiago__, kev1n, _yuki, jao.pedro
+- Old childhood usernames that stuck: xXdragonslayerXx, sk8rboi, coolgamer123
+- Professional-ish: psharm, m.oyelaran, jtanaka
+- Random words + numbers: bluetiger47, mangolover, codebean99
+- Typos and abbreviations: jshn, prvya, mrcus_, emmyK
+- Inside jokes that make no sense: crunchwrap, notbread, fishleg
+- Minimal: jh, pt99, rx, mei_
 
-A username handle that looks like something real users pick (mixes of lowercase, numbers, symbols, slight misspellings, etc.).
-
-✅ Keep variety and realism:
-
-40% should look like normal gamer tags: NovaX, breezy_09, Artemis, jaydenlol
-30% should resemble real names or slightly modified ones: sarah_mendez, kevinliu21, t_akari  
-20% should be weird or meme-y: fishgod, 0rangejuice, crunchybeans
-10% should be minimalist or mysterious: lxr, m1nt, _void
-
-DONT MAKE THEM EXACTLY THE THINGS THAT HAVE BEEN MENTIONED ABOVE. PLEASE ADD VARIETY AND GO OUT OF THE BOX AND HAVE NAMES FROM DIFFERENT CULTURES AROUND THE WORLD.
+**CRITICAL REALISM RULES:**
+- NO fantasy/epic compound words (ShadowFlame, NightStorm, CyberWolf, TechNinja)
+- NO overly clean camelCase (DataWizard, CodeMaster, ByteRunner)
+- Usernames should look TYPED not DESIGNED—lowercase preferred, occasional typos
+- Global representation: include names from India, Nigeria, Brazil, Japan, Korea, Middle East, Europe, Latin America, Southeast Asia
+- Some should look like they haven't changed their username since 2012
+- Variety in "effort level"—some people care, some clearly don't
 
 Gender distribution: ${genderText}
 
-❌ Avoid perfectly clean or AI-looking usernames (like "SolarRift" or "DreamWalker").
-❌ Avoid repeating structure — randomness and inconsistency are good.
-❌ Make full names naturally plausible with realistic global diversity, sometimes include something obviously fake.
-
-Return as JSON array:
-[
-  {"fullName": "...", "username": "...", "gender": "male"},
-  ...
-]`;
+Return ONLY a JSON array, no markdown:
+[{"fullName": "...", "username": "...", "gender": "male"}, ...]`;
 
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o",
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.8,
       max_tokens: 1000,
     });
 
@@ -2628,8 +2820,8 @@ Use soft ambient lighting, a square 1:1 frame, no text, no watermarks, and no di
         // Download the image
         const imageBuffer = await fetch(imageUrl).then(res => res.arrayBuffer());
         
-                // Upload to MinIO
-                const fileName = `${bot._id}.png`;
+        // Upload to MinIO
+        const fileName = `${bot._id}.png`;
         const uploadParams = {
           Bucket: process.env.S3_BUCKET_NAME || 'codeclashers-avatars',
           Key: fileName,
@@ -2682,6 +2874,14 @@ httpServer.listen(port, '0.0.0.0', async () => {
     console.log('Reservation secret configured.');
   } else {
     console.warn('Reservation secret not configured; using default dev secret.');
+  }
+
+  // Start Redis cleanup worker
+  try {
+    startCleanupWorker();
+    console.log('Redis cleanup worker started successfully');
+  } catch (cleanupError) {
+    console.error('Failed to start Redis cleanup worker:', cleanupError);
   }
 
   try {

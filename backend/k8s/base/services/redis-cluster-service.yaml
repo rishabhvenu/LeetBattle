@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: codeclashers
+spec:
+  type: ClusterIP
+  externalIPs:
+    - ${ORACLE_VM_IP}  # External access on VM IP, port 6379
+  selector:
+    app: redis-cluster
+  ports:
+  - port: ${REDIS_PORT}
+    targetPort: 6379
+    protocol: TCP
+    name: client
+

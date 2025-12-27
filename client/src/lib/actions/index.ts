@@ -90,6 +90,7 @@ export {
   getTotalUsersCount,
   updateUser,
   getUserById,
+  cleanupOrphanedUsers,
 } from './admin';
 
 // Match history functions

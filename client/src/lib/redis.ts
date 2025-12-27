@@ -45,11 +45,22 @@ export function getRedis(): Cluster | Redis {
         port, 
         password, 
         lazyConnect: true,  // Don't connect immediately - wait until first command
-        maxRetriesPerRequest: 1,  // Reduced retries for faster failure
-        connectTimeout: 2000,  // 2 second connection timeout - fail fast
-        commandTimeout: 2000,  // 2 second command timeout - fail fast
+        maxRetriesPerRequest: 3,  // Allow retries for transient failures
+        connectTimeout: 5000,  // 5 second connection timeout
+        commandTimeout: 5000,  // 5 second command timeout
         enableOfflineQueue: true,  // Queue commands when Redis is offline - prevents "Stream isn't writeable" errors
-        retryStrategy: () => null,  // Don't retry on connection failure
+        retryStrategy: (times: number) => {
+          // Retry with exponential backoff, max 3 seconds
+          const delay = Math.min(times * 50, 3000);
+          return delay;
+        },
+        reconnectOnError: (err: Error) => {
+          // Reconnect on connection errors
+          const errorMessage = err.message.toLowerCase();
+          return errorMessage.includes('read econnreset') || 
+                 errorMessage.includes('connection closed') || 
+                 errorMessage.includes('connection is closed');
+        },
       });
     }
     

@@ -1,0 +1,41 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: codeclashers
+
+# Base resources
+resources:
+  - ../../base
+  
+  # Production-specific resources (MongoDB and Redis clusters)
+  - ../../mongodb
+  - ../../statefulsets/redis-cluster.yaml
+  - ../../services/redis-cluster-headless.yaml
+  - ../../services/redis-cluster-service.yaml
+  - ../../configmaps/redis-cluster-config.yaml
+  - ../../jobs/redis-cluster-init.yaml
+
+# Production image names (from GHCR)
+images:
+  - name: ghcr.io/rishabhvenu/codeclashers-colyseus
+    newTag: ${IMAGE_TAG}
+  - name: ghcr.io/rishabhvenu/codeclashers-bots
+    newTag: ${IMAGE_TAG}
+  - name: ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64
+    newTag: ${IMAGE_TAG}
+  - name: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64
+    newTag: ${IMAGE_TAG}
+
+# ConfigMap overrides for prod
+configMapGenerator:
+  - name: app-config
+    behavior: merge
+    literals:
+      - NODE_ENV=production
+      - REDIS_HOST=redis-cluster
+      - MONGODB_HOST=mongodb-mongos
+      - BOTS_ENABLED=true
+
+commonLabels:
+  environment: production
+

@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: colyseus
+  namespace: codeclashers
+spec:
+  type: NodePort  # Use NodePort for external access via public IP
+  selector:
+    app: colyseus
+  ports:
+  - port: 2567
+    targetPort: websocket
+    nodePort: 30565  # Use k3d exposed port (mapped to localhost:25565)
+    protocol: TCP
+

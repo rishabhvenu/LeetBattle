@@ -102,11 +102,14 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
   // Helper function to render profile picture
   const renderProfilePicture = (avatar: string | null, isWinner: boolean, isDraw: boolean) => {
     const avatarUrl = getAvatarUrl(avatar);
+    const isLoser = !isWinner && !isDraw;
     const avatarClasses = `w-24 h-24 ${
       isWinner
         ? "ring-4 ring-yellow-400 shadow-lg shadow-yellow-400/50"
         : isDraw
         ? "ring-4 ring-blue-400 shadow-lg shadow-blue-400/50"
+        : isLoser
+        ? "opacity-80"
         : ""
     }`;
 
@@ -141,9 +144,8 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
         {renderProfilePicture(player.avatar, player.isWinner, isDraw)}
       </div>
       <span className="mt-2 text-slate-200 font-bold text-lg">
-        {player.name}
+        {player.username}
       </span>
-      <span className="text-slate-400 text-sm">@{player.username}</span>
       <span
         className={`mt-2 font-bold text-xl ${
           player.isWinner
@@ -188,7 +190,7 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
 
   return (
     <div className="absolute inset-0 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-md"></div>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm"></div>
       <div className="relative flex flex-col items-center justify-center gap-12 z-10">
         <div className="flex items-center justify-center gap-12">
           <PlayerDisplay player={player1} />
@@ -212,9 +214,9 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
                 alt="Left sword"
                 width={96}
                 height={192}
-                className={`w-full h-full ${
+                className={`w-full h-full scale-90 ${
                   player1.isWinner || isDraw
-                    ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"
+                    ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.4)]"
                     : "filter brightness-75"
                 }`}
               />
@@ -228,9 +230,9 @@ const MatchResultAnimation: React.FC<MatchResultAnimationProps> = ({
                 alt="Right sword"
                 width={96}
                 height={192}
-                className={`w-full h-full ${
+                className={`w-full h-full scale-90 ${
                   player2.isWinner || isDraw
-                    ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.7)]"
+                    ? "filter brightness-125 drop-shadow-[0_0_8px_rgba(255,215,0,0.4)]"
                     : "filter brightness-75"
                 }`}
               />

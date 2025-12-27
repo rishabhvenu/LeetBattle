@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: codeclashers
+data:
+  PORT: "2567"
+  REDIS_PORT: "6379"
+  POSTGRES_PORT: "5432"
+  MONGODB_HOST: "mongodb"
+  MONGODB_PORT: "27017"
+  REDIS_HOST: "redis-cluster"  # Default, can be overridden via secrets
+  REDIS_CLUSTER_NODES: "redis-cluster-0.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-1.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-2.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-3.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-4.redis-cluster-headless.codeclashers.svc.cluster.local:6379,redis-cluster-5.redis-cluster-headless.codeclashers.svc.cluster.local:6379"  # Redis Cluster node list
+  REDIS_DB: "0"
+  REDIS_TLS: "false"
+  REDIS_TLS_REJECT_UNAUTHORIZED: "true"
+  POSTGRES_HOST: "postgres"
+  JUDGE0_HOST: "judge0-server"
+  JUDGE0_PORT: "2358"
+  COLYSEUS_HOST: "colyseus"
+  CORS_ORIGIN: ""  # Should be set via env var in deployment
+  NODE_ENV: "production"
+  BOTS_ENABLED: "true"
+  BOT_FILL_DELAY_MS: "15000"
+  BOT_TIME_DIST: "lognormal"
+  BOT_TIME_PARAMS_EASY: '{"muMinutes":30,"sigma":0.35}'
+  BOT_TIME_PARAMS_MEDIUM: '{"muMinutes":35,"sigma":0.35}'
+  BOT_TIME_PARAMS_HARD: '{"muMinutes":40,"sigma":0.35}'
+  BOT_LEADER_TTL_MS: "15000"
+

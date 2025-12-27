@@ -101,35 +101,37 @@ export function useQueueWebSocket({
         const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
         const response = await fetch(`${base}/queue/reservation?userId=${encodeURIComponent(userId)}`);
         
-        if (response.ok) {
-          const data = await response.json();
-          if (data.token) {
-            // Reservation found - match was created while tab was hidden
-            console.log('Match reservation found via HTTP poll - match was created while tab was hidden');
-            try {
-              const consumeResponse = await fetch(`${base}/reserve/consume`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: data.token })
-              });
-              
-              if (consumeResponse.ok) {
-                const reservationData = await consumeResponse.json();
-                handleMatchFound({
-                  matchId: reservationData.reservation.matchId,
-                  roomId: reservationData.reservation.roomId,
-                  problemId: reservationData.reservation.problemId
-                });
-              }
-            } catch (error) {
-              console.error('Failed to consume reservation:', error);
-            }
-          }
-        } else if (response.status === 404) {
-          // No reservation - continue polling
-        } else {
+        if (!response.ok) {
           console.warn('Unexpected response from reservation check:', response.status);
+          return;
         }
+        
+        const data = await response.json();
+        
+        // Check if a reservation was found (returns { found: false } when none exists)
+        if (data.found && data.token) {
+          // Reservation found - match was created while tab was hidden
+          console.log('Match reservation found via HTTP poll - match was created while tab was hidden');
+          try {
+            const consumeResponse = await fetch(`${base}/reserve/consume`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: data.token })
+            });
+            
+            if (consumeResponse.ok) {
+              const reservationData = await consumeResponse.json();
+              handleMatchFound({
+                matchId: reservationData.reservation.matchId,
+                roomId: reservationData.reservation.roomId,
+                problemId: reservationData.reservation.problemId
+              });
+            }
+          } catch (error) {
+            console.error('Failed to consume reservation:', error);
+          }
+        }
+        // If data.found is false, no reservation exists - continue polling silently
       } catch (error) {
         console.error('Error checking reservation:', error);
         // Continue polling even on error
@@ -257,44 +259,49 @@ export function useQueueWebSocket({
       const base = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL!;
       const response = await fetch(`${base}/queue/reservation?userId=${encodeURIComponent(userId)}`);
       
-      if (response.ok) {
-        const data = await response.json();
-        if (data.token) {
-          console.log('Match reservation found when tabbing back in - match was created while tab was hidden');
-          try {
-            const consumeResponse = await fetch(`${base}/reserve/consume`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token: data.token })
-            });
+      if (!response.ok) {
+        console.warn('Unexpected response checking reservation on visibility change:', response.status);
+        return;
+      }
+      
+      const data = await response.json();
+      
+      // Check if a reservation was found (returns { found: false } when none exists)
+      if (data.found && data.token) {
+        console.log('Match reservation found when tabbing back in - match was created while tab was hidden');
+        try {
+          const consumeResponse = await fetch(`${base}/reserve/consume`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: data.token })
+          });
+          
+          if (consumeResponse.ok) {
+            const reservationData = await consumeResponse.json();
             
-            if (consumeResponse.ok) {
-              const reservationData = await consumeResponse.json();
-              
-              // For guests, store match info in cookie
-              if (isGuest && reservationData.reservation?.matchId && reservationData.reservation?.roomId) {
-                const matchBootstrap = {
-                  guestId: userId,
-                  matchId: reservationData.reservation.matchId,
-                  roomId: reservationData.reservation.roomId,
-                  createdAt: Date.now(),
-                };
-                document.cookie = `codeclashers.guest.match=${encodeURIComponent(JSON.stringify(matchBootstrap))}; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax`;
-              }
-              
-              setQueueStatus('matched');
-              shouldCancelRef.current = false;
-              stopPolling();
-              if (roomRef.current) {
-                try { roomRef.current.leave(); } catch {}
-              }
-              setTimeout(() => {
-                router.push('/match');
-              }, isGuest ? 500 : 0);
+            // For guests, store match info in cookie
+            if (isGuest && reservationData.reservation?.matchId && reservationData.reservation?.roomId) {
+              const matchBootstrap = {
+                guestId: userId,
+                matchId: reservationData.reservation.matchId,
+                roomId: reservationData.reservation.roomId,
+                createdAt: Date.now(),
+              };
+              document.cookie = `codeclashers.guest.match=${encodeURIComponent(JSON.stringify(matchBootstrap))}; path=/; max-age=${7 * 24 * 60 * 60}; samesite=lax`;
             }
-          } catch (error) {
-            console.error('Failed to consume reservation:', error);
+            
+            setQueueStatus('matched');
+            shouldCancelRef.current = false;
+            stopPolling();
+            if (roomRef.current) {
+              try { roomRef.current.leave(); } catch {}
+            }
+            setTimeout(() => {
+              router.push('/match');
+            }, isGuest ? 500 : 0);
           }
+        } catch (error) {
+          console.error('Failed to consume reservation:', error);
         }
       }
     } catch (error) {

@@ -29,10 +29,11 @@ spec:
         - --bind_ip_all
         - --dbpath
         - /data/db
+        - --auth  # CRITICAL: Enforce authentication to prevent unauthorized access
         ports:
         - containerPort: ${MONGODB_PORT}
           name: mongodb
-          hostPort: ${MONGODB_PORT}  # Bind directly to host port for external access
+          hostPort: ${MONGODB_PORT}  # External access for frontend Lambda - SECURED by --auth flag above
         env:
         - name: MONGO_INITDB_ROOT_USERNAME
           valueFrom:

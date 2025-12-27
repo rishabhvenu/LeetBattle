@@ -101,30 +101,49 @@ graph TD
 ### Prerequisites
 
 - **Node.js** 18+
-- **Docker** and **Docker Compose**
+- **Docker** (for k3s and container images)
 - **npm** or **pnpm**
 
-### ⚡ Quick Start
+### ⚡ Quick Start (Recommended)
+
+**One command to set up everything:**
 
 ```bash
-# 1️⃣ Clone the repository
-git clone https://github.com/rishabhvenu/LeetBattle.git
-cd LeetBattle
+./scripts/dev-setup.sh
+```
 
-# 2️⃣ Start backend services (MongoDB, Redis, Judge0, Colyseus, MinIO)
+This creates a development environment that **mirrors production exactly**:
+- ✅ k3s Kubernetes cluster (same as production)
+- ✅ All backend services deployed
+- ✅ Same configuration, service names, and ports as prod
+- ✅ MinIO for S3 (AWS S3 in production)
+
+Then start the frontend:
+
+```bash
+cd client
+npm install
+npm run dev  # Open http://localhost:3000
+```
+
+**🎉 Your coding arena is ready!**
+
+See [Dev-Prod Parity Guide](context/backend/dev-prod-parity.md) for details.
+
+### Alternative: Docker Compose (Legacy)
+
+If you prefer the older Docker Compose setup:
+
+```bash
 cd backend
 docker-compose up -d
 
-# 3️⃣ Verify services are running
-docker-compose ps
-
-# 4️⃣ Install and start frontend
 cd ../client
 npm install
 npm run dev
 ```
 
-**🎉 Open http://localhost:3000** — Your coding arena is ready!
+**Note:** Docker Compose is deprecated and doesn't match production. Use k3s setup for best results.
 
 <details>
 <summary>📋 <b>Verify Backend Services</b></summary>

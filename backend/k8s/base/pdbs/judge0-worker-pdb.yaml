@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: judge0-worker-pdb
+  namespace: codeclashers
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: judge0-worker
+

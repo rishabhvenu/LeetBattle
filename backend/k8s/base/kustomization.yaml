@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: codeclashers
+
+resources:
+  # Namespace
+  - namespace.yaml
+  
+  # ConfigMaps
+  - configmaps/app-config.yaml
+  
+  # Services
+  - services/colyseus-service.yaml
+  - services/bots-service.yaml
+  - services/judge0-server-service.yaml
+  - services/postgres-service.yaml
+  
+  # Deployments
+  - deployments/colyseus.yaml
+  - deployments/bots.yaml
+  - deployments/judge0-server.yaml
+  - deployments/judge0-worker.yaml
+  - deployments/postgres.yaml
+  
+  # PodDisruptionBudgets
+  - pdbs/colyseus-pdb.yaml
+  - pdbs/bots-pdb.yaml
+  - pdbs/judge0-server-pdb.yaml
+  - pdbs/judge0-worker-pdb.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: codeclashers
+      app.kubernetes.io/managed-by: kustomize
+

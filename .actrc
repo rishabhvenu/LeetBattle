@@ -1,0 +1,22 @@
+# act configuration for running GitHub workflows locally
+# https://github.com/nektos/act
+
+# Use catthehacker's Ubuntu image (has more tools pre-installed)
+-P ubuntu-latest=catthehacker/ubuntu:act-latest
+-P self-hosted=catthehacker/ubuntu:act-latest
+
+# Load environment variables
+--env-file .env.act
+
+# Load secrets
+--secret-file .secrets.dev
+
+# Bind Docker socket (needed for building images)
+--bind
+
+# Use host network (allows accessing k3s on localhost)
+--container-architecture linux/amd64
+
+# Verbose output
+--verbose
+

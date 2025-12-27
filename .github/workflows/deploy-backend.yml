@@ -194,130 +194,53 @@ jobs:
 
       - name: Deploy to Kubernetes
         env:
+          # Image configuration
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
-          KUBECONFIG: /home/ubuntu/.kube/config
-          # Image tags for envsubst (set by image-tags step above)
+          IMAGE_REGISTRY: ghcr.io/rishabhvenu
           COLYSEUS_IMAGE: ${{ env.COLYSEUS_IMAGE }}
           BOTS_IMAGE: ${{ env.BOTS_IMAGE }}
           JUDGE0_IMAGE: ${{ env.JUDGE0_IMAGE }}
           JUDGE0_WORKER_IMAGE: ${{ env.JUDGE0_WORKER_IMAGE }}
-          # External IP for services
-          ORACLE_VM_IP: ${{ vars.COLYSEUS_HOST_IP }}
-          # Ports from secrets/vars (with defaults)
-          COLYSEUS_PORT: ${{ secrets.COLYSEUS_PORT || vars.COLYSEUS_PORT || '2567' }}
-          JUDGE0_PORT: ${{ secrets.JUDGE0_PORT || vars.JUDGE0_PORT || '2358' }}
-          MONGODB_PORT: ${{ secrets.MONGODB_PORT || vars.MONGODB_PORT || '27017' }}
-          REDIS_PORT: ${{ secrets.REDIS_PORT || vars.REDIS_PORT || '6379' }}
-          # Redis password for ConfigMap substitution
+          
+          # Kubernetes configuration
+          KUBECONFIG: /home/ubuntu/.kube/config
+          NAMESPACE: codeclashers
+          KUSTOMIZE_OVERLAY: overlays/prod
+          
+          # Secrets (for deployment)
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          # Resource configuration (from secrets/vars, with defaults)
-          K8S_MONGODB_REPLICAS: ${{ secrets.K8S_MONGODB_REPLICAS || '1' }}
-          K8S_MONGODB_MEMORY_REQUEST: ${{ secrets.K8S_MONGODB_MEMORY_REQUEST || '512Mi' }}
-          K8S_MONGODB_MEMORY_LIMIT: ${{ secrets.K8S_MONGODB_MEMORY_LIMIT || '1Gi' }}
-          K8S_MONGODB_CPU_REQUEST: ${{ secrets.K8S_MONGODB_CPU_REQUEST || '50m' }}
-          K8S_MONGODB_CPU_LIMIT: ${{ secrets.K8S_MONGODB_CPU_LIMIT || '200m' }}
-          K8S_REDIS_REPLICAS: ${{ secrets.K8S_REDIS_REPLICAS || '1' }}
-          K8S_REDIS_MEMORY_REQUEST: ${{ secrets.K8S_REDIS_MEMORY_REQUEST || '256Mi' }}
-          K8S_REDIS_MEMORY_LIMIT: ${{ secrets.K8S_REDIS_MEMORY_LIMIT || '512Mi' }}
-          K8S_REDIS_CPU_REQUEST: ${{ secrets.K8S_REDIS_CPU_REQUEST || '50m' }}
-          K8S_REDIS_CPU_LIMIT: ${{ secrets.K8S_REDIS_CPU_LIMIT || '200m' }}
-          K8S_POSTGRES_REPLICAS: ${{ secrets.K8S_POSTGRES_REPLICAS || '1' }}
-          K8S_POSTGRES_MEMORY_REQUEST: ${{ secrets.K8S_POSTGRES_MEMORY_REQUEST || '128Mi' }}
-          K8S_POSTGRES_MEMORY_LIMIT: ${{ secrets.K8S_POSTGRES_MEMORY_LIMIT || '256Mi' }}
-          K8S_POSTGRES_CPU_REQUEST: ${{ secrets.K8S_POSTGRES_CPU_REQUEST || '50m' }}
-          K8S_POSTGRES_CPU_LIMIT: ${{ secrets.K8S_POSTGRES_CPU_LIMIT || '200m' }}
-          K8S_COLYSEUS_REPLICAS: ${{ secrets.K8S_COLYSEUS_REPLICAS || '1' }}
-          K8S_COLYSEUS_MEMORY_REQUEST: ${{ secrets.K8S_COLYSEUS_MEMORY_REQUEST || '256Mi' }}
-          K8S_COLYSEUS_MEMORY_LIMIT: ${{ secrets.K8S_COLYSEUS_MEMORY_LIMIT || '512Mi' }}
-          K8S_COLYSEUS_CPU_REQUEST: ${{ secrets.K8S_COLYSEUS_CPU_REQUEST || '50m' }}
-          K8S_COLYSEUS_CPU_LIMIT: ${{ secrets.K8S_COLYSEUS_CPU_LIMIT || '200m' }}
-          K8S_JUDGE0_SERVER_REPLICAS: ${{ secrets.K8S_JUDGE0_SERVER_REPLICAS || '1' }}
-          K8S_JUDGE0_SERVER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_REQUEST || '256Mi' }}
-          K8S_JUDGE0_SERVER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_MEMORY_LIMIT || '512Mi' }}
-          K8S_JUDGE0_SERVER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_SERVER_CPU_REQUEST || '50m' }}
-          K8S_JUDGE0_SERVER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_SERVER_CPU_LIMIT || '200m' }}
-          K8S_JUDGE0_WORKER_REPLICAS: ${{ secrets.K8S_JUDGE0_WORKER_REPLICAS || '1' }}
-          K8S_JUDGE0_WORKER_MEMORY_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_REQUEST || '512Mi' }}
-          K8S_JUDGE0_WORKER_MEMORY_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_MEMORY_LIMIT || '1Gi' }}
-          K8S_JUDGE0_WORKER_CPU_REQUEST: ${{ secrets.K8S_JUDGE0_WORKER_CPU_REQUEST || '50m' }}
-          K8S_JUDGE0_WORKER_CPU_LIMIT: ${{ secrets.K8S_JUDGE0_WORKER_CPU_LIMIT || '400m' }}
-          K8S_BOTS_REPLICAS: ${{ secrets.K8S_BOTS_REPLICAS || '1' }}
-          K8S_BOTS_MEMORY_REQUEST: ${{ secrets.K8S_BOTS_MEMORY_REQUEST || '128Mi' }}
-          K8S_BOTS_MEMORY_LIMIT: ${{ secrets.K8S_BOTS_MEMORY_LIMIT || '256Mi' }}
-          K8S_BOTS_CPU_REQUEST: ${{ secrets.K8S_BOTS_CPU_REQUEST || '50m' }}
-          K8S_BOTS_CPU_LIMIT: ${{ secrets.K8S_BOTS_CPU_LIMIT || '200m' }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_USERNAME: ${{ secrets.MONGODB_USERNAME }}
+          MONGODB_PASSWORD: ${{ secrets.MONGODB_PASSWORD }}
+          INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
+          BOT_SERVICE_SECRET: ${{ secrets.BOT_SERVICE_SECRET }}
+          COLYSEUS_RESERVATION_SECRET: ${{ secrets.COLYSEUS_RESERVATION_SECRET }}
+          JUDGE0_POSTGRES_USER: ${{ secrets.JUDGE0_POSTGRES_USER }}
+          JUDGE0_POSTGRES_PASSWORD: ${{ secrets.JUDGE0_POSTGRES_PASSWORD }}
+          JUDGE0_POSTGRES_DB: ${{ secrets.JUDGE0_POSTGRES_DB }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          
+          # Variables
+          ORACLE_VM_IP: ${{ vars.COLYSEUS_HOST_IP }}
+          REDIS_HOST: ${{ vars.REDIS_HOST || 'redis-cluster' }}
+          REDIS_PORT: ${{ vars.REDIS_PORT || '6379' }}
+          S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
         run: |
           set -e
           
-          # Ensure envsubst is installed
-          if ! command -v envsubst &> /dev/null; then
-            echo "Installing gettext package for envsubst..."
-            sudo apt-get update && sudo apt-get install -y gettext-base
-          fi
+          echo "🚀 Deploying using unified scripts"
           
-          cd backend/k8s
+          # Run unified deployment script
+          ./scripts/deploy/apply-manifests.sh
           
-          # Apply manifests explicitly by subdirectory, EXCLUDING secrets/
-          # Namespace
-          k3s kubectl apply -f namespaces/
-          
-          # ConfigMaps (with env substitution for redis-cluster-config)
-          for file in configmaps/*.yaml; do
-            if [ -f "$file" ]; then
-              if [[ "$file" == *"redis-cluster-config"* ]]; then
-                # Redis cluster config needs password substitution
-                envsubst < "$file" | k3s kubectl apply -f -
-              else
-                k3s kubectl apply -f "$file"
-              fi
-            fi
-          done
-          
-          # Storage
-          k3s kubectl apply -f storage/
-          
-          # MongoDB (if exists in separate directory)
-          if [ -f mongodb/configmap.yaml ]; then
-            k3s kubectl apply -f mongodb/configmap.yaml
-          fi
-          if [ -f mongodb/headless-service.yaml ]; then
-            k3s kubectl apply -f mongodb/headless-service.yaml
-          fi
-          if [ -f mongodb/statefulset.yaml ]; then
-            envsubst < mongodb/statefulset.yaml | k3s kubectl apply -f -
-          fi
-          if [ -f mongodb/pdb.yaml ]; then
-            k3s kubectl apply -f mongodb/pdb.yaml
-          fi
-          
-          # StatefulSets (with env substitution)
-          for file in statefulsets/*.yaml; do
-            if [ -f "$file" ]; then
-              envsubst < "$file" | k3s kubectl apply -f -
-            fi
-          done
-          
-          # PodDisruptionBudgets
-          k3s kubectl apply -f pdbs/
-          
-          # Services (with env substitution for externalIPs)
-          for file in services/*.yaml; do
-            if [ -f "$file" ]; then
-              envsubst < "$file" | k3s kubectl apply -f -
-            fi
-          done
-          
-          # MongoDB service (if exists in separate directory)
-          if [ -f mongodb/service.yaml ]; then
-            envsubst < mongodb/service.yaml | k3s kubectl apply -f -
-          fi
-          
-          # Deployments (with env substitution for image tags)
-          for file in deployments/*.yaml; do
-            if [ -f "$file" ]; then
-              envsubst < "$file" | k3s kubectl apply -f -
-            fi
-          done
-          
-          echo "✅ All manifests applied successfully"
-          echo "Note: Secrets are managed separately via sync-secrets.yml workflow"
+          echo "✅ Deployment complete"
+      
+      - name: Health Check
+        env:
+          KUBECONFIG: /home/ubuntu/.kube/config
+          NAMESPACE: codeclashers
+        run: |
+          ./scripts/deploy/health-check.sh

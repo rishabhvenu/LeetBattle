@@ -170,22 +170,29 @@ export async function getUsers(
     // Calculate skip value for pagination
     const skip = (page - 1) * limit;
 
+    // Filter out incomplete user documents (orphaned bot stats entries)
+    // Valid users must have a username field
+    const validUserQuery = { ...query, username: { $exists: true, $ne: null } };
+
     // Get users with pagination
     const usersList = await users
-      .find(query)
+      .find(validUserQuery)
       .sort({ createdAt: -1 }) // Most recent first
       .skip(skip)
       .limit(limit)
       .toArray();
 
-    // Serialize ObjectIds and Dates for client components
-    const serializedUsers = usersList.map(user => ({
-      ...user,
-      _id: user._id.toString(),
-      createdAt: user.createdAt.toISOString(),
-      updatedAt: user.updatedAt.toISOString(),
-      lastLogin: user.lastLogin.toISOString(),
-    }));
+    // Deep serialize to convert all BSON types (ObjectId, Binary, etc.) to plain values
+    const serializedUsers = usersList.map(user => {
+      const plainUser = JSON.parse(JSON.stringify(user));
+      return {
+        ...plainUser,
+        _id: user._id?.toString() ?? plainUser._id,
+        createdAt: user.createdAt?.toISOString?.() ?? new Date().toISOString(),
+        updatedAt: user.updatedAt?.toISOString?.() ?? new Date().toISOString(),
+        lastLogin: user.lastLogin?.toISOString?.() ?? null,
+      };
+    });
 
     return { 
       success: true, 
@@ -241,7 +248,10 @@ export async function getTotalUsersCount(
       }
     }
 
-    const count = await users.countDocuments(query);
+    // Filter out incomplete user documents (orphaned bot stats entries)
+    const validUserQuery = { ...query, username: { $exists: true, $ne: null } };
+
+    const count = await users.countDocuments(validUserQuery);
     return { 
       success: true, 
       count 
@@ -405,13 +415,14 @@ export async function getUserById(userId: string) {
       return { success: false, error: 'User not found' };
     }
 
-    // Serialize ObjectIds and Dates for client components
+    // Deep serialize to convert all BSON types (ObjectId, Binary, etc.) to plain values
+    const plainUser = JSON.parse(JSON.stringify(user));
     const serializedUser = {
-      ...user,
-      _id: user._id.toString(),
-      createdAt: user.createdAt.toISOString(),
-      updatedAt: user.updatedAt.toISOString(),
-      lastLogin: user.lastLogin.toISOString(),
+      ...plainUser,
+      _id: user._id?.toString() ?? plainUser._id,
+      createdAt: user.createdAt?.toISOString?.() ?? new Date().toISOString(),
+      updatedAt: user.updatedAt?.toISOString?.() ?? new Date().toISOString(),
+      lastLogin: user.lastLogin?.toISOString?.() ?? null,
     };
 
     return { 
@@ -552,6 +563,49 @@ export async function inspectMatchInRedis(matchId: string) {
       keyExists: false,
       inActiveSet: false,
     };
+  }
+}
+
+/**
+ * Cleanup orphaned user records - users without usernames that appear on leaderboard
+ * This fixes the "Unknown" user issue on the leaderboard
+ */
+export async function cleanupOrphanedUsers(): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+  deletedCount?: number;
+  deletedIds?: string[];
+}> {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError };
+  }
+
+  try {
+    const cookieHeader = await getSessionCookieHeader();
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
+    if (!apiBase) {
+      return { success: false, error: 'Backend API URL not configured' };
+    }
+
+    const response = await fetch(`${apiBase}/admin/users/cleanup-orphans`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Cookie': cookieHeader,
+      },
+      credentials: 'include',
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      return { success: false, error: result.error || 'Failed to cleanup orphaned users' };
+    }
+    return result;
+  } catch (error) {
+    console.error('Error cleaning up orphaned users:', error);
+    return { success: false, error: 'Failed to cleanup orphaned users' };
   }
 }
 

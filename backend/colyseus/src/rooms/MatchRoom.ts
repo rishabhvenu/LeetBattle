@@ -43,6 +43,10 @@ export class MatchRoom extends Room {
   private botSimulationTimers: Record<string, { codeTimer: any; testTimer: any }> = {};
   private botSimulationState: Record<string, { currentLines: number; currentTests: number; maxTests: number }> = {};
   private botStats: Record<string, { submissions: number; testCasesSolved: number }> = {};
+  
+  // Timer tracking for proper cleanup (prevent memory leaks)
+  private allTimers: Set<any> = new Set();
+  private allIntervals: Set<any> = new Set();
 
   /**
    * Generate a deterministic hash for submission caching
@@ -56,6 +60,44 @@ export class MatchRoom extends Room {
     const hash = createHash('sha256').update(hashInput).digest('hex');
     
     return hash;
+  }
+
+  /**
+   * Tracked setTimeout to prevent memory leaks
+   */
+  private createTimeout(callback: () => void, delay: number): any {
+    const timer = this.clock.setTimeout(callback, delay);
+    this.allTimers.add(timer);
+    return timer;
+  }
+
+  /**
+   * Tracked setInterval to prevent memory leaks
+   */
+  private createInterval(callback: () => void, delay: number): any {
+    const interval = this.clock.setInterval(callback, delay);
+    this.allIntervals.add(interval);
+    return interval;
+  }
+
+  /**
+   * Clear a tracked timer
+   */
+  private clearTrackedTimer(timer: any): void {
+    if (timer && typeof timer.clear === 'function') {
+      timer.clear();
+      this.allTimers.delete(timer);
+    }
+  }
+
+  /**
+   * Clear a tracked interval
+   */
+  private clearTrackedInterval(interval: any): void {
+    if (interval && typeof interval.clear === 'function') {
+      interval.clear();
+      this.allIntervals.delete(interval);
+    }
   }
 
   /**
@@ -107,6 +149,10 @@ export class MatchRoom extends Room {
     // Store player IDs for bot completion time calculation
     (this as any).player1Id = options.player1Id;
     (this as any).player2Id = options.player2Id;
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:onCreate',message:'Match room created',data:{matchId:options.matchId,player1Id:options.player1Id,player2Id:options.player2Id,problemId:options.problemId,startTime:this.startTime},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
     
     configureRoomLifecycle(this, { autoDispose: false, seatReservationSeconds: 3600, isPrivate: false });
 
@@ -274,8 +320,8 @@ export class MatchRoom extends Room {
 
     // Bot completion scheduling is now handled in calculateAndStoreBotCompletionTimes()
 
-    // End match timer
-    this.clock.setInterval(async () => {
+    // End match timer (tracked to prevent memory leaks)
+    this.createInterval(async () => {
       if (Date.now() - this.startTime >= this.maxDuration) {
         console.log(`Match ${this.matchId} timed out - declaring draw`);
         
@@ -400,6 +446,14 @@ export class MatchRoom extends Room {
           return;
         }
 
+        // Send step 1: Compiling
+        client.send('submission_step', {
+          userId,
+          step: 'compiling',
+          message: 'Submitting to compiler...'
+        });
+        console.log(`[SUBMIT_CODE] Sent submission_step: compiling to ${userId}`);
+
         // Check cache for identical submission
         const cachedResult = await this.getCachedSubmissionResult(userId, language, source_code);
         if (cachedResult) {
@@ -455,6 +509,14 @@ export class MatchRoom extends Room {
           return; // Exit early with cached result
         }
 
+        // Send step 2: Running tests
+        client.send('submission_step', {
+          userId,
+          step: 'running_tests',
+          message: 'Running test cases...'
+        });
+        console.log(`[SUBMIT_CODE] Sent submission_step: running_tests to ${userId}`);
+
         // Execute code against all testCases
         const executionResult = await executeAllTestCases(
           mappedLang,
@@ -475,6 +537,14 @@ export class MatchRoom extends Room {
         // If all tests passed, analyze time complexity BEFORE storing submission
         if (executionResult.allPassed && problem.timeComplexity) {
           try {
+            // Send step 3: Analyzing complexity
+            client.send('submission_step', {
+              userId,
+              step: 'analyzing_complexity',
+              message: 'Analyzing time complexity...'
+            });
+            console.log(`[SUBMIT_CODE] Sent submission_step: analyzing_complexity to ${userId}`);
+            
             console.log(`Analyzing time complexity for user ${userId}, expected: ${problem.timeComplexity}`);
             // Dynamically import to avoid requiring OpenAI API key at startup
             const { analyzeTimeComplexity } = await import('../lib/complexityAnalyzer');
@@ -701,6 +771,9 @@ export class MatchRoom extends Room {
 
         // If all tests passed and we reach here, declare winner
         if (executionResult.allPassed) {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:humanWin',message:'HUMAN PLAYER DECLARED WINNER (all tests passed)',data:{userId,matchId:this.matchId,passedTests:executionResult.passedTests,totalTests:executionResult.totalTests},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+          // #endregion
           await this.updateMatchBlob((obj) => {
             obj.winnerUserId = userId;
             obj.endedAt = new Date().toISOString();
@@ -1066,6 +1139,32 @@ export class MatchRoom extends Room {
 
   async onDispose() {
     console.log(`MatchRoom disposed - matchId: ${this.matchId}`);
+    
+    // Clear ALL tracked timers and intervals to prevent memory leaks
+    console.log(`[onDispose] Clearing ${this.allTimers.size} timers and ${this.allIntervals.size} intervals`);
+    
+    for (const timer of this.allTimers) {
+      try {
+        if (timer && typeof timer.clear === 'function') {
+          timer.clear();
+        }
+      } catch (error) {
+        console.error('[onDispose] Error clearing timer:', error);
+      }
+    }
+    this.allTimers.clear();
+    
+    for (const interval of this.allIntervals) {
+      try {
+        if (interval && typeof interval.clear === 'function') {
+          interval.clear();
+        }
+      } catch (error) {
+        console.error('[onDispose] Error clearing interval:', error);
+      }
+    }
+    this.allIntervals.clear();
+    
     // Room disposal happens only when match ends (via disconnect() in endMatch)
     // NOT when players disconnect temporarily
     
@@ -1119,6 +1218,37 @@ export class MatchRoom extends Room {
     } catch (error) {
       console.error('Error in onDispose bot cleanup (safety net):', error);
     }
+    
+    // CRITICAL: Remove from active matches set as safety net if endMatch wasn't called
+    try {
+      const matchKey = RedisKeys.matchKey(this.matchId);
+      const matchRaw = await this.redis.get(matchKey);
+      if (matchRaw) {
+        const matchData = JSON.parse(matchRaw);
+        // If match is still ongoing, mark it as abandoned and remove from active set
+        if (matchData.status === 'ongoing' && !matchData.endedAt) {
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:onDispose:safetyNet',message:'SAFETY NET TRIGGERED - match abandoned without endMatch',data:{matchId:this.matchId,status:matchData.status,winnerUserId:matchData.winnerUserId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+          // #endregion
+          console.log(`[onDispose] Safety net: Match ${this.matchId} was ongoing - marking as abandoned and removing from active set`);
+          
+          // Update match blob to mark as abandoned
+          matchData.status = 'abandoned';
+          matchData.endedAt = new Date().toISOString();
+          matchData.abandonReason = 'room_disposed_without_endMatch';
+          await this.redis.setex(matchKey, 3600, JSON.stringify(matchData));
+          
+          // Remove from active matches set
+          await this.redis.srem(RedisKeys.activeMatchesSet, this.matchId);
+        }
+      }
+      // Also remove from active set even if no blob (just in case)
+      await this.redis.srem(RedisKeys.activeMatchesSet, this.matchId);
+    } catch (error) {
+      console.error(`[onDispose] Error in safety net cleanup for ${this.matchId}:`, error);
+    }
+    
+    console.log(`[onDispose] MatchRoom ${this.matchId} fully disposed - all timers cleared`);
   }
 
   private ensurePlayer(userId: string) {
@@ -1150,6 +1280,9 @@ export class MatchRoom extends Room {
   }
 
   private async endMatch(reason: string) {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:endMatch',message:'endMatch called',data:{matchId:this.matchId,reason,startTime:this.startTime,currentTime:Date.now()},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     // Calculate match duration in milliseconds
     this.matchDuration = Date.now() - this.startTime;
     console.log(`Match ${this.matchId} ended after ${this.matchDuration}ms (${Math.round(this.matchDuration / 1000)}s)`);
@@ -1571,30 +1704,40 @@ export class MatchRoom extends Room {
         try {
           // Check if this is a bot
           const bot = await this.isBotUser(playerId);
+          // #region agent log
+          fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:calcBotTimes',message:'isBotUser check',data:{playerId,isBot:bot,matchId:this.matchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+          // #endregion
           if (bot) {
             console.log(`Player ${playerId} is a bot, calculating completion time`);
             
             const problemDifficulty = (this.problemData?.difficulty || 'Medium') as 'Easy' | 'Medium' | 'Hard';
             const completionMs = this.sampleBotCompletionMs(problemDifficulty, this.matchId, playerId);
             
-            if (completionMs < this.maxDuration) {
-              console.log(`Storing bot completion time for ${playerId}: ${completionMs}ms`);
-              
-              await this.updateMatchBlob((obj) => {
-                if (!obj.botCompletionTimes) obj.botCompletionTimes = {};
-                obj.botCompletionTimes[playerId] = {
-                  plannedCompletionMs: completionMs,
-                  plannedCompletionTime: new Date(Date.now() + completionMs).toISOString()
-                };
-              });
-              
-              // Add bot to completion data for timer scheduling
-              botCompletionData.push({ botId: playerId, completionMs });
-              
-              console.log(`Bot completion time stored for ${playerId}: ${completionMs}ms`);
-            } else {
-              console.log(`Bot completion time ${completionMs}ms exceeds max duration, not storing`);
-            }
+            // Cap completion time at maxDuration - 30s buffer to ensure bot completes before match timeout
+            // This fixes the issue where bots with no completion time were caused by sampled times exceeding maxDuration
+            const maxCompletionMs = this.maxDuration - 30000; // 30 second buffer before match timeout
+            const cappedCompletionMs = (!isFinite(completionMs) || completionMs >= this.maxDuration) 
+              ? maxCompletionMs 
+              : completionMs;
+            
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:calcBotTimes',message:'Bot completion time calculated',data:{botId:playerId,matchId:this.matchId,difficulty:problemDifficulty,rawCompletionMs:completionMs,cappedCompletionMs,maxDuration:this.maxDuration,envEasy:process.env.BOT_TIME_PARAMS_EASY,envMedium:process.env.BOT_TIME_PARAMS_MEDIUM,envHard:process.env.BOT_TIME_PARAMS_HARD},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+            // #endregion
+            
+            console.log(`Storing bot completion time for ${playerId}: ${cappedCompletionMs}ms${completionMs !== cappedCompletionMs ? ` (capped from ${completionMs}ms)` : ''}`);
+            
+            await this.updateMatchBlob((obj) => {
+              if (!obj.botCompletionTimes) obj.botCompletionTimes = {};
+              obj.botCompletionTimes[playerId] = {
+                plannedCompletionMs: cappedCompletionMs,
+                plannedCompletionTime: new Date(Date.now() + cappedCompletionMs).toISOString()
+              };
+            });
+            
+            // Add bot to completion data for timer scheduling
+            botCompletionData.push({ botId: playerId, completionMs: cappedCompletionMs });
+            
+            console.log(`Bot completion time stored for ${playerId}: ${cappedCompletionMs}ms`);
           } else {
             console.log(`Player ${playerId} is not a bot`);
           }
@@ -1610,8 +1753,15 @@ export class MatchRoom extends Room {
         
         console.log(`Scheduling bot completion timer for ${botId} in ${completionMs}ms`);
         
-        this.botCompletionTimers[botId] = this.clock.setTimeout(async () => {
+        // #region agent log
+        fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:scheduleTimer',message:'Scheduling bot completion timer',data:{botId,matchId:this.matchId,completionMs,scheduledAt:Date.now()},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        
+        this.botCompletionTimers[botId] = this.createTimeout(async () => {
           try {
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:timerFired',message:'Bot completion timer FIRED',data:{botId,matchId:this.matchId,firedAt:Date.now()},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
             console.log(`🤖 Bot completion timer fired for ${botId} in match ${this.matchId}`);
             
             // Check if match is already finished
@@ -1619,6 +1769,9 @@ export class MatchRoom extends Room {
             const matchRaw = await this.redis.get(matchKey);
             if (matchRaw) {
               const matchData = JSON.parse(matchRaw);
+              // #region agent log
+              fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:timerFired:check',message:'Match status check before bot win',data:{botId,matchId:this.matchId,status:matchData.status,winnerUserId:matchData.winnerUserId,isAlreadyFinished:matchData.status==='finished'||!!matchData.winnerUserId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+              // #endregion
               if (matchData.status === 'finished' || matchData.winnerUserId) {
                 console.log(`Match ${this.matchId} already finished, skipping bot ${botId} completion`);
                 return;
@@ -1642,6 +1795,10 @@ export class MatchRoom extends Room {
             const ratingChanges = await this.calculateRatingChanges(winnerId, false);
             await this.updateMatchBlob((obj) => { obj.ratingChanges = ratingChanges; });
             await this.persistRatings(ratingChanges, winnerId, false);
+            
+            // #region agent log
+            fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:botWin',message:'BOT DECLARED WINNER',data:{botId,matchId:this.matchId,ratingChanges},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+            // #endregion
             
             console.log(`🤖 Bot ${botId} declared winner, broadcasting match_winner`);
             this.broadcast('match_winner', { userId: winnerId, reason: 'bot_completion', ratingChanges });
@@ -1815,29 +1972,29 @@ export class MatchRoom extends Room {
               console.log(`Initialized stats for bot ${playerId}`);
             }
             
-            // Update bot stats with proper rating calculation
+            // Update bot stats with atomic rating increment (prevents race conditions)
             const currentRating = botDoc.stats?.rating || 1200;
-            const newRating = currentRating + change;
             
-            console.log(`🤖 Updating bot ${playerId}: ${currentRating} -> ${newRating} (change: ${change})`);
+            console.log(`🤖 Updating bot ${playerId}: ${currentRating} + ${change} (expected: ${currentRating + change})`);
             console.log(`🤖 Match result: ${isDraw ? 'draw' : (winnerUserId === playerId ? 'win' : 'loss')}`);
             
             const updateResult = await bots.updateOne(
               { _id: botObjectId },
               { 
                 $inc: { 
+                  'stats.rating': change, // Atomic rating increment
                   'stats.totalMatches': 1, 
                   'stats.draws': isDraw ? 1 : 0, 
                   'stats.wins': (winnerUserId === playerId && !isDraw) ? 1 : 0, 
                   'stats.losses': (winnerUserId !== playerId && !isDraw) ? 1 : 0,
-                  'stats.timeCoded': this.matchDuration || 0 // Add time coded in milliseconds, default to 0 if undefined
+                  'stats.timeCoded': this.matchDuration || 0
                 },
-                $set: { 'stats.rating': newRating, updatedAt: new Date() },
+                $set: { updatedAt: new Date() },
                 $addToSet: { matchIds: new ObjectId(this.matchId) }
               }
             );
             
-            console.log(`🤖 Bot ${playerId} rating updated: ${currentRating} -> ${newRating} (change: ${change}), match result: ${isDraw ? 'draw' : (winnerUserId === playerId ? 'win' : 'loss')}, updateResult:`, updateResult);
+            console.log(`🤖 Bot ${playerId} rating atomically updated by ${change}, match result: ${isDraw ? 'draw' : (winnerUserId === playerId ? 'win' : 'loss')}, updateResult:`, updateResult);
           } catch (err) {
             console.error(`Failed to update bot ${playerId} stats:`, err);
           }
@@ -2229,7 +2386,7 @@ export class MatchRoom extends Room {
     // Random interval between 1-60 seconds
     const interval = Math.random() * 59000 + 1000; // 1-60 seconds
     
-    const timer = this.clock.setTimeout(() => {
+    const timer = this.createTimeout(() => {
       this.performBotCodeUpdate(botUserId);
       // Schedule next update
       this.scheduleBotCodeUpdate(botUserId);
@@ -2246,7 +2403,7 @@ export class MatchRoom extends Room {
     // Random interval between 500-1000 seconds (much less frequent than code updates)
     const interval = Math.random() * 500000 + 500000; // 500-1000 seconds
     
-    const timer = this.clock.setTimeout(() => {
+    const timer = this.createTimeout(() => {
       this.performBotTestCaseUpdate(botUserId);
       // Schedule next update
       this.scheduleBotTestCaseUpdate(botUserId);

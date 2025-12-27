@@ -56,7 +56,9 @@ export function MonacoReadOnly({
       domReadOnly: true,
       readOnlyMessage: {
         value: 'Code is read-only'
-      }
+      },
+      fontFamily: "'Courier New', Courier, monospace",
+      fontLigatures: false,
     });
 
     monacoEditorRef.current = editor;

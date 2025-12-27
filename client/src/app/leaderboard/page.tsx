@@ -22,7 +22,7 @@ export default async function LeaderboardPage() {
 
   return (
     <Layout session={layoutSession} showNavbar={true} logoutAction={logoutUser}>
-      <Leaderboard />
+      <Leaderboard currentUserId={session.user?.id} />
     </Layout>
   );
 }
