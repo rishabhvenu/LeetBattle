@@ -132,17 +132,17 @@ spec:
                 echo "Adding missing member: ${MEMBER}"
                 # Priority: earlier pods (lower index) get higher priority
                 PRIORITY=$((REPLICA_COUNT - i))
-                mongosh "$CONN_STR" --quiet <<EOF
-                try {
-                  rs.add({host: "${MEMBER}", priority: ${PRIORITY}})
-                } catch (e) {
-                  if (e.message.includes("already") || e.message.includes("duplicate")) {
-                    print("Member already exists")
-                  } else {
-                    throw e
+                mongosh "$CONN_STR" --quiet --eval "
+                  try {
+                    rs.add({host: '${MEMBER}', priority: ${PRIORITY}})
+                  } catch (e) {
+                    if (e.message.includes('already') || e.message.includes('duplicate')) {
+                      print('Member already exists')
+                    } else {
+                      throw e
+                    }
                   }
-                }
-EOF
+                "
               else
                 echo "Member ${MEMBER} already exists in replica set"
               fi
@@ -183,30 +183,30 @@ EOF
           echo ""
           echo "Using connection: ${CONN_STR}"
           
-          mongosh "$CONN_STR" --quiet <<EOF
-          try {
-            rs.initiate({
-              _id: "${REPLICA_SET_NAME}",
-              members: ${MEMBERS_JSON}
-            })
-          } catch (e) {
-            if (e.message.includes("already initialized")) {
-              print("Replica set already initialized")
-            } else {
-              throw e
+          mongosh "$CONN_STR" --quiet --eval "
+            try {
+              rs.initiate({
+                _id: '${REPLICA_SET_NAME}',
+                members: ${MEMBERS_JSON}
+              })
+            } catch (e) {
+              if (e.message.includes('already initialized')) {
+                print('Replica set already initialized')
+              } else {
+                throw e
+              }
             }
-          }
-          
-          print("Waiting for replica set to be ready...")
-          var status = rs.status()
-          while (status.ok !== 1) {
-            sleep(2000)
-            status = rs.status()
-          }
-          
-          print("Replica set ${REPLICA_SET_NAME} initialized successfully!")
-          print("Primary: " + status.members.find(m => m.stateStr === "PRIMARY").name)
-EOF
+            
+            print('Waiting for replica set to be ready...')
+            var status = rs.status()
+            while (status.ok !== 1) {
+              sleep(2000)
+              status = rs.status()
+            }
+            
+            print('Replica set ${REPLICA_SET_NAME} initialized successfully!')
+            print('Primary: ' + status.members.find(m => m.stateStr === 'PRIMARY').name)
+          "
           
           echo ""
           echo ""
