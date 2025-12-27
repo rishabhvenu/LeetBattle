@@ -28,24 +28,20 @@ echo "📦 Applying Kustomize overlay: $KUSTOMIZE_OVERLAY"
 # Export variables for envsubst in kustomize
 export ORACLE_VM_IP="${ORACLE_VM_IP:-}"
 
-# #region agent log - DEBUG: Capture kubectl info for hypothesis testing
-echo "🔍 DEBUG [HypA] kubectl version output (--short):"
-$KUBECTL version --client --short 2>&1 || echo "   --short flag failed/deprecated"
-echo "🔍 DEBUG [HypA] kubectl version output (modern):"
-$KUBECTL version --client -o yaml 2>&1 | head -5 || echo "   version command failed"
-KUBECTL_VERSION_RAW=$($KUBECTL version --client 2>&1 | head -1)
-echo "🔍 DEBUG [HypB] Raw version line: $KUBECTL_VERSION_RAW"
-echo "🔍 DEBUG [HypC] KUBECTL variable is: $KUBECTL"
-echo "🔍 DEBUG [HypC] which k3s: $(which k3s 2>&1 || echo 'not found')"
-echo "🔍 DEBUG [HypD] kustomize installed: $(command -v kustomize 2>&1 || echo 'not found')"
+# #region agent log - DEBUG: Verify fix is working
+echo "🔍 DEBUG [post-fix]: Checking kubectl kustomize support..."
+$KUBECTL kustomize --help > /dev/null 2>&1 && echo "🔍 DEBUG [post-fix]: kubectl kustomize supported ✓" || echo "🔍 DEBUG [post-fix]: kubectl kustomize NOT supported"
 # #endregion agent log
 
-if $KUBECTL version --client --short 2>/dev/null | grep -qE "v1\.(1[4-9]|[2-9][0-9])"; then
-    # kubectl 1.14+ has built-in kustomize support
-    echo "🔍 DEBUG: Using kubectl apply -k (version check passed)"
+# Check if kubectl has built-in kustomize support (kubectl 1.14+)
+# Using 'kubectl kustomize --help' which works on all modern kubectl versions
+# The old --short flag was removed in kubectl 1.27+
+if $KUBECTL kustomize --help > /dev/null 2>&1; then
+    # kubectl has built-in kustomize support
+    echo "   Using kubectl built-in kustomize"
     $KUBECTL apply -k "$KUSTOMIZE_OVERLAY"
 elif command -v kustomize &> /dev/null; then
-    echo "🔍 DEBUG: Using standalone kustomize"
+    echo "   Using standalone kustomize"
     kustomize build "$KUSTOMIZE_OVERLAY" | envsubst | $KUBECTL apply -f -
 else
     echo "   ❌ Error: kustomize not found and kubectl version doesn't support -k flag"
