@@ -39,9 +39,9 @@ $KUBECTL kustomize --help > /dev/null 2>&1 && echo "🔍 DEBUG [post-fix]: kubec
 # Note: Using --load-restrictor=LoadRestrictionsNone to allow ../../ paths in overlays
 if $KUBECTL kustomize --help > /dev/null 2>&1; then
     # kubectl has built-in kustomize support
-    # Use two-step: kustomize build with relaxed restrictions, then apply
+    # Use two-step: kustomize build with relaxed restrictions, envsubst for variable substitution, then apply
     echo "   Using kubectl built-in kustomize (with LoadRestrictionsNone for overlay paths)"
-    $KUBECTL kustomize "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | $KUBECTL apply -f -
+    $KUBECTL kustomize "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | envsubst | $KUBECTL apply -f -
 elif command -v kustomize &> /dev/null; then
     echo "   Using standalone kustomize"
     kustomize build "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | envsubst | $KUBECTL apply -f -
