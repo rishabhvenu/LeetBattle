@@ -73,11 +73,6 @@ export REDIS_PORT="${REDIS_PORT:-6379}"
 # List of variables to substitute (avoids replacing bash script variables like ${i})
 ENVSUBST_VARS='${COLYSEUS_IMAGE} ${BOTS_IMAGE} ${JUDGE0_IMAGE} ${JUDGE0_WORKER_IMAGE} ${IMAGE_TAG} ${IMAGE_REGISTRY} ${ORACLE_VM_IP} ${K8S_COLYSEUS_REPLICAS} ${K8S_COLYSEUS_CPU_REQUEST} ${K8S_COLYSEUS_MEMORY_REQUEST} ${K8S_COLYSEUS_CPU_LIMIT} ${K8S_COLYSEUS_MEMORY_LIMIT} ${K8S_BOTS_REPLICAS} ${K8S_BOTS_CPU_REQUEST} ${K8S_BOTS_MEMORY_REQUEST} ${K8S_BOTS_CPU_LIMIT} ${K8S_BOTS_MEMORY_LIMIT} ${K8S_JUDGE0_SERVER_REPLICAS} ${K8S_JUDGE0_SERVER_CPU_REQUEST} ${K8S_JUDGE0_SERVER_MEMORY_REQUEST} ${K8S_JUDGE0_SERVER_CPU_LIMIT} ${K8S_JUDGE0_SERVER_MEMORY_LIMIT} ${K8S_JUDGE0_WORKER_REPLICAS} ${K8S_JUDGE0_WORKER_CPU_REQUEST} ${K8S_JUDGE0_WORKER_MEMORY_REQUEST} ${K8S_JUDGE0_WORKER_CPU_LIMIT} ${K8S_JUDGE0_WORKER_MEMORY_LIMIT} ${K8S_POSTGRES_REPLICAS} ${K8S_POSTGRES_CPU_REQUEST} ${K8S_POSTGRES_MEMORY_REQUEST} ${K8S_POSTGRES_CPU_LIMIT} ${K8S_POSTGRES_MEMORY_LIMIT} ${K8S_REDIS_CPU_REQUEST} ${K8S_REDIS_MEMORY_REQUEST} ${K8S_REDIS_CPU_LIMIT} ${K8S_REDIS_MEMORY_LIMIT} ${MONGODB_PORT} ${JUDGE0_PORT} ${REDIS_PORT}'
 
-# #region agent log - DEBUG: Verify fix is working
-echo "🔍 DEBUG [post-fix]: Checking kubectl kustomize support..."
-$KUBECTL kustomize --help > /dev/null 2>&1 && echo "🔍 DEBUG [post-fix]: kubectl kustomize supported ✓" || echo "🔍 DEBUG [post-fix]: kubectl kustomize NOT supported"
-# #endregion agent log
-
 # Check if kubectl has built-in kustomize support (kubectl 1.14+)
 # Using 'kubectl kustomize --help' which works on all modern kubectl versions
 # The old --short flag was removed in kubectl 1.27+

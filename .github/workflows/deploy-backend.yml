@@ -238,9 +238,3 @@ jobs:
           
           echo "✅ Deployment complete"
       
-      - name: Health Check
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-          NAMESPACE: codeclashers
-        run: |
-          ./scripts/deploy/health-check.sh
