@@ -45,6 +45,10 @@ patches:
         path: /data/BOTS_ENABLED
         value: "true"
 
-commonLabels:
-  environment: production
+# Use labels instead of commonLabels to avoid modifying immutable selectors
+labels:
+  - pairs:
+      environment: production
+    includeSelectors: false
+    includeTemplates: true
 
