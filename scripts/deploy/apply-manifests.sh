@@ -36,13 +36,15 @@ $KUBECTL kustomize --help > /dev/null 2>&1 && echo "🔍 DEBUG [post-fix]: kubec
 # Check if kubectl has built-in kustomize support (kubectl 1.14+)
 # Using 'kubectl kustomize --help' which works on all modern kubectl versions
 # The old --short flag was removed in kubectl 1.27+
+# Note: Using --load-restrictor=LoadRestrictionsNone to allow ../../ paths in overlays
 if $KUBECTL kustomize --help > /dev/null 2>&1; then
     # kubectl has built-in kustomize support
-    echo "   Using kubectl built-in kustomize"
-    $KUBECTL apply -k "$KUSTOMIZE_OVERLAY"
+    # Use two-step: kustomize build with relaxed restrictions, then apply
+    echo "   Using kubectl built-in kustomize (with LoadRestrictionsNone for overlay paths)"
+    $KUBECTL kustomize "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | $KUBECTL apply -f -
 elif command -v kustomize &> /dev/null; then
     echo "   Using standalone kustomize"
-    kustomize build "$KUSTOMIZE_OVERLAY" | envsubst | $KUBECTL apply -f -
+    kustomize build "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | envsubst | $KUBECTL apply -f -
 else
     echo "   ❌ Error: kustomize not found and kubectl version doesn't support -k flag"
     echo "   Please install kustomize: https://kubectl.docs.kubernetes.io/installation/kustomize/"
