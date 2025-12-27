@@ -135,6 +135,7 @@ const initialState = {
   opponentLines: 0,
   opponentStats: {
     name: 'Opponent',
+    username: 'opponent',
     avatar: null,
     globalRank: 1234,
     gamesWon: 50,

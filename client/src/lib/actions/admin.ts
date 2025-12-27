@@ -3,7 +3,7 @@
 import connectDB, { getMongoClient } from '../mongodb';
 import { ObjectId } from 'mongodb';
 import { getRedis, RedisKeys } from '../redis';
-import { ensureAdminAccess } from './shared';
+import { ensureAdminAccess, getSessionCookieHeader } from './shared';
 import { adminLimiter, rateLimit, getClientIdentifier } from '../rateLimiter';
 import { DB_NAME, USERS_COLLECTION, SESSIONS_COLLECTION, type User } from './constants';
 
