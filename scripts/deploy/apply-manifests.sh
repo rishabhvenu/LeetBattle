@@ -26,7 +26,47 @@ echo ""
 echo "📦 Applying Kustomize overlay: $KUSTOMIZE_OVERLAY"
 
 # Export variables for envsubst in kustomize
+# Only substitute specific deployment variables, NOT bash script variables like ${i}
 export ORACLE_VM_IP="${ORACLE_VM_IP:-}"
+
+# Set default values for K8S resource variables if not already set
+export K8S_COLYSEUS_REPLICAS="${K8S_COLYSEUS_REPLICAS:-1}"
+export K8S_COLYSEUS_CPU_REQUEST="${K8S_COLYSEUS_CPU_REQUEST:-100m}"
+export K8S_COLYSEUS_MEMORY_REQUEST="${K8S_COLYSEUS_MEMORY_REQUEST:-256Mi}"
+export K8S_COLYSEUS_CPU_LIMIT="${K8S_COLYSEUS_CPU_LIMIT:-500m}"
+export K8S_COLYSEUS_MEMORY_LIMIT="${K8S_COLYSEUS_MEMORY_LIMIT:-512Mi}"
+
+export K8S_BOTS_REPLICAS="${K8S_BOTS_REPLICAS:-1}"
+export K8S_BOTS_CPU_REQUEST="${K8S_BOTS_CPU_REQUEST:-50m}"
+export K8S_BOTS_MEMORY_REQUEST="${K8S_BOTS_MEMORY_REQUEST:-128Mi}"
+export K8S_BOTS_CPU_LIMIT="${K8S_BOTS_CPU_LIMIT:-200m}"
+export K8S_BOTS_MEMORY_LIMIT="${K8S_BOTS_MEMORY_LIMIT:-256Mi}"
+
+export K8S_JUDGE0_SERVER_REPLICAS="${K8S_JUDGE0_SERVER_REPLICAS:-1}"
+export K8S_JUDGE0_SERVER_CPU_REQUEST="${K8S_JUDGE0_SERVER_CPU_REQUEST:-100m}"
+export K8S_JUDGE0_SERVER_MEMORY_REQUEST="${K8S_JUDGE0_SERVER_MEMORY_REQUEST:-256Mi}"
+export K8S_JUDGE0_SERVER_CPU_LIMIT="${K8S_JUDGE0_SERVER_CPU_LIMIT:-500m}"
+export K8S_JUDGE0_SERVER_MEMORY_LIMIT="${K8S_JUDGE0_SERVER_MEMORY_LIMIT:-512Mi}"
+
+export K8S_JUDGE0_WORKER_REPLICAS="${K8S_JUDGE0_WORKER_REPLICAS:-1}"
+export K8S_JUDGE0_WORKER_CPU_REQUEST="${K8S_JUDGE0_WORKER_CPU_REQUEST:-200m}"
+export K8S_JUDGE0_WORKER_MEMORY_REQUEST="${K8S_JUDGE0_WORKER_MEMORY_REQUEST:-512Mi}"
+export K8S_JUDGE0_WORKER_CPU_LIMIT="${K8S_JUDGE0_WORKER_CPU_LIMIT:-1000m}"
+export K8S_JUDGE0_WORKER_MEMORY_LIMIT="${K8S_JUDGE0_WORKER_MEMORY_LIMIT:-1Gi}"
+
+export K8S_POSTGRES_REPLICAS="${K8S_POSTGRES_REPLICAS:-1}"
+export K8S_POSTGRES_CPU_REQUEST="${K8S_POSTGRES_CPU_REQUEST:-100m}"
+export K8S_POSTGRES_MEMORY_REQUEST="${K8S_POSTGRES_MEMORY_REQUEST:-256Mi}"
+export K8S_POSTGRES_CPU_LIMIT="${K8S_POSTGRES_CPU_LIMIT:-500m}"
+export K8S_POSTGRES_MEMORY_LIMIT="${K8S_POSTGRES_MEMORY_LIMIT:-512Mi}"
+
+export K8S_REDIS_CPU_REQUEST="${K8S_REDIS_CPU_REQUEST:-50m}"
+export K8S_REDIS_MEMORY_REQUEST="${K8S_REDIS_MEMORY_REQUEST:-64Mi}"
+export K8S_REDIS_CPU_LIMIT="${K8S_REDIS_CPU_LIMIT:-200m}"
+export K8S_REDIS_MEMORY_LIMIT="${K8S_REDIS_MEMORY_LIMIT:-128Mi}"
+
+# List of variables to substitute (avoids replacing bash script variables like ${i})
+ENVSUBST_VARS='${COLYSEUS_IMAGE} ${BOTS_IMAGE} ${JUDGE0_IMAGE} ${JUDGE0_WORKER_IMAGE} ${IMAGE_TAG} ${IMAGE_REGISTRY} ${ORACLE_VM_IP} ${K8S_COLYSEUS_REPLICAS} ${K8S_COLYSEUS_CPU_REQUEST} ${K8S_COLYSEUS_MEMORY_REQUEST} ${K8S_COLYSEUS_CPU_LIMIT} ${K8S_COLYSEUS_MEMORY_LIMIT} ${K8S_BOTS_REPLICAS} ${K8S_BOTS_CPU_REQUEST} ${K8S_BOTS_MEMORY_REQUEST} ${K8S_BOTS_CPU_LIMIT} ${K8S_BOTS_MEMORY_LIMIT} ${K8S_JUDGE0_SERVER_REPLICAS} ${K8S_JUDGE0_SERVER_CPU_REQUEST} ${K8S_JUDGE0_SERVER_MEMORY_REQUEST} ${K8S_JUDGE0_SERVER_CPU_LIMIT} ${K8S_JUDGE0_SERVER_MEMORY_LIMIT} ${K8S_JUDGE0_WORKER_REPLICAS} ${K8S_JUDGE0_WORKER_CPU_REQUEST} ${K8S_JUDGE0_WORKER_MEMORY_REQUEST} ${K8S_JUDGE0_WORKER_CPU_LIMIT} ${K8S_JUDGE0_WORKER_MEMORY_LIMIT} ${K8S_POSTGRES_REPLICAS} ${K8S_POSTGRES_CPU_REQUEST} ${K8S_POSTGRES_MEMORY_REQUEST} ${K8S_POSTGRES_CPU_LIMIT} ${K8S_POSTGRES_MEMORY_LIMIT} ${K8S_REDIS_CPU_REQUEST} ${K8S_REDIS_MEMORY_REQUEST} ${K8S_REDIS_CPU_LIMIT} ${K8S_REDIS_MEMORY_LIMIT}'
 
 # #region agent log - DEBUG: Verify fix is working
 echo "🔍 DEBUG [post-fix]: Checking kubectl kustomize support..."
@@ -41,10 +81,14 @@ if $KUBECTL kustomize --help > /dev/null 2>&1; then
     # kubectl has built-in kustomize support
     # Use two-step: kustomize build with relaxed restrictions, envsubst for variable substitution, then apply
     echo "   Using kubectl built-in kustomize (with LoadRestrictionsNone for overlay paths)"
-    $KUBECTL kustomize "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | envsubst | $KUBECTL apply -f -
+    # Delete existing immutable jobs before applying (they can't be patched)
+    $KUBECTL delete job mongodb-replica-set-init redis-cluster-init -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+    $KUBECTL kustomize "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | envsubst "$ENVSUBST_VARS" | $KUBECTL apply -f -
 elif command -v kustomize &> /dev/null; then
     echo "   Using standalone kustomize"
-    kustomize build "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | envsubst | $KUBECTL apply -f -
+    # Delete existing immutable jobs before applying (they can't be patched)
+    $KUBECTL delete job mongodb-replica-set-init redis-cluster-init -n "$NAMESPACE" --ignore-not-found=true 2>/dev/null || true
+    kustomize build "$KUSTOMIZE_OVERLAY" --load-restrictor=LoadRestrictionsNone | envsubst "$ENVSUBST_VARS" | $KUBECTL apply -f -
 else
     echo "   ❌ Error: kustomize not found and kubectl version doesn't support -k flag"
     echo "   Please install kustomize: https://kubectl.docs.kubernetes.io/installation/kustomize/"
