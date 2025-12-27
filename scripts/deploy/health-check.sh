@@ -4,9 +4,24 @@
 
 set -e
 
-# Load configuration
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/config.sh"
+
+# Minimal config for health check (doesn't require secrets)
+# Use environment variables if set, otherwise detect
+export NAMESPACE="${NAMESPACE:-codeclashers}"
+export KUBECONFIG="${KUBECONFIG:-/home/ubuntu/.kube/config}"
+
+# Set kubectl command
+if [ -n "$GITHUB_ACTIONS" ]; then
+    export KUBECTL="k3s kubectl"
+elif command -v k3s &> /dev/null; then
+    export KUBECTL="k3s kubectl"
+elif command -v kubectl &> /dev/null; then
+    export KUBECTL="kubectl"
+else
+    echo "❌ Error: Neither k3s nor kubectl found"
+    exit 1
+fi
 
 echo "🏥 Running health checks for $NAMESPACE namespace"
 
