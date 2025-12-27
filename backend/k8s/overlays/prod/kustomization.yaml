@@ -26,15 +26,24 @@ images:
   - name: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64
     newTag: ${IMAGE_TAG}
 
-# ConfigMap overrides for prod
-configMapGenerator:
-  - name: app-config
-    behavior: merge
-    literals:
-      - NODE_ENV=production
-      - REDIS_HOST=redis-cluster
-      - MONGODB_HOST=mongodb-mongos
-      - BOTS_ENABLED=true
+# ConfigMap overrides for prod (using patch to merge with base ConfigMap)
+patches:
+  - target:
+      kind: ConfigMap
+      name: app-config
+    patch: |-
+      - op: replace
+        path: /data/NODE_ENV
+        value: "production"
+      - op: replace
+        path: /data/REDIS_HOST
+        value: "redis-cluster"
+      - op: replace
+        path: /data/MONGODB_HOST
+        value: "mongodb-mongos"
+      - op: replace
+        path: /data/BOTS_ENABLED
+        value: "true"
 
 commonLabels:
   environment: production
