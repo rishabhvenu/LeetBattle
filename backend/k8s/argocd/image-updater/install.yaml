@@ -1,0 +1,187 @@
+# ArgoCD Image Updater v0.15.1
+# Official installation: https://github.com/argoproj-labs/argocd-image-updater
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: argocd-image-updater
+    app.kubernetes.io/part-of: argocd-image-updater
+  name: argocd-image-updater
+  namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: argocd-image-updater
+    app.kubernetes.io/part-of: argocd-image-updater
+  name: argocd-image-updater
+  namespace: argocd
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - argoproj.io
+  resources:
+  - applications
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: argocd-image-updater
+    app.kubernetes.io/part-of: argocd-image-updater
+  name: argocd-image-updater
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: argocd-image-updater
+subjects:
+- kind: ServiceAccount
+  name: argocd-image-updater
+  namespace: argocd
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app.kubernetes.io/name: argocd-image-updater-config
+    app.kubernetes.io/part-of: argocd-image-updater
+  name: argocd-image-updater-config
+  namespace: argocd
+data:
+  # Image Updater polling interval
+  argocd.insecure: "true"
+  git.user: "argocd-image-updater"
+  git.email: "noreply@argoproj.io"
+  
+  # Log level
+  log.level: "info"
+  
+  # Kustomize configuration
+  kustomize.path: "backend/k8s/overlays/prod"
+  
+  # Registry configuration
+  registries.conf: |
+    registries:
+    - name: GitHub Container Registry
+      api_url: https://ghcr.io
+      prefix: ghcr.io
+      credentials: secret:argocd/ghcr-image-updater-secret#creds
+      default: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    app.kubernetes.io/name: argocd-image-updater-ssh-config
+    app.kubernetes.io/part-of: argocd-image-updater
+  name: argocd-image-updater-ssh-config
+  namespace: argocd
+data:
+  config: |
+    Host github.com
+      User git
+      StrictHostKeyChecking no
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/name: argocd-image-updater
+    app.kubernetes.io/part-of: argocd-image-updater
+  name: argocd-image-updater
+  namespace: argocd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-image-updater
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-image-updater
+    spec:
+      serviceAccountName: argocd-image-updater
+      containers:
+      - name: argocd-image-updater
+        image: quay.io/argoprojlabs/argocd-image-updater:v0.15.1
+        imagePullPolicy: IfNotPresent
+        command:
+        - /usr/local/bin/argocd-image-updater
+        - run
+        env:
+        - name: APPLICATIONS_API
+          value: argocd
+        - name: ARGOCD_GRPC_WEB
+          value: "true"
+        - name: ARGOCD_SERVER
+          value: argocd-server.argocd.svc.cluster.local
+        - name: ARGOCD_INSECURE
+          value: "true"
+        - name: ARGOCD_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: argocd-image-updater-secret
+              key: argocd.token
+        - name: IMAGE_UPDATER_KUSTOMIZE_PATH
+          value: backend/k8s/overlays/prod
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: ssh-known-hosts
+          mountPath: /app/config/ssh
+          readOnly: true
+        - name: ssh-config
+          mountPath: /app/.ssh
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: ssh-known-hosts
+        configMap:
+          name: argocd-ssh-known-hosts-cm
+      - name: ssh-config
+        configMap:
+          name: argocd-image-updater-ssh-config
+      - name: tmp
+        emptyDir: {}
+

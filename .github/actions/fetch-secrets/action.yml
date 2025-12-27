@@ -1,0 +1,72 @@
+name: 'Fetch AWS Secrets'
+description: 'Fetches secrets from AWS Secrets Manager and exports them as environment variables'
+inputs:
+  secret-names:
+    description: 'Comma-separated list of secret names to fetch from AWS Secrets Manager'
+    required: true
+  aws-region:
+    description: 'AWS region where secrets are stored'
+    default: 'us-east-1'
+    required: false
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Validate AWS credentials
+      shell: bash
+      run: |
+        if ! aws sts get-caller-identity &>/dev/null; then
+          echo "❌ Error: AWS credentials not configured"
+          echo "   Use aws-actions/configure-aws-credentials before this action"
+          exit 1
+        fi
+        echo "✅ AWS credentials validated"
+
+    - name: Fetch and export secrets
+      shell: bash
+      env:
+        SECRET_NAMES: ${{ inputs.secret-names }}
+        AWS_REGION: ${{ inputs.aws-region }}
+      run: |
+        set -e
+        
+        echo "🔐 Fetching secrets from AWS Secrets Manager"
+        echo "   Region: $AWS_REGION"
+        echo ""
+        
+        # Process each secret name
+        for secret_name in $(echo "$SECRET_NAMES" | tr ',' ' '); do
+          secret_name=$(echo "$secret_name" | xargs)  # Trim whitespace
+          echo "📖 Fetching secret: $secret_name"
+          
+          # Fetch secret value from AWS Secrets Manager
+          secret_json=$(aws secretsmanager get-secret-value \
+            --secret-id "$secret_name" \
+            --region "$AWS_REGION" \
+            --query SecretString \
+            --output text 2>&1)
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ Error fetching secret: $secret_name"
+            echo "$secret_json"
+            exit 1
+          fi
+          
+          # Parse JSON and export each key-value pair as environment variable
+          # Also mask sensitive values in GitHub Actions logs
+          echo "$secret_json" | jq -r 'to_entries | .[] | "\(.key)=\(.value)"' | while IFS='=' read -r key value; do
+            # Export to GITHUB_ENV for use in subsequent steps
+            echo "${key}=${value}" >> $GITHUB_ENV
+            
+            # Mask the value in logs (GitHub Actions security feature)
+            echo "::add-mask::${value}"
+            
+            # Log that we exported the key (without showing value)
+            echo "  ✓ Exported: $key"
+          done
+          
+          echo ""
+        done
+        
+        echo "✅ All secrets fetched and exported successfully"
+

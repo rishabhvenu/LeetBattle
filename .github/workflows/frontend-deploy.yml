@@ -256,27 +256,35 @@ jobs:
           role-session-name: GitHubActions-FrontendDeploy
           aws-region: us-east-1
 
+      - name: Fetch secrets from AWS Secrets Manager
+        uses: ./.github/actions/fetch-secrets
+        with:
+          secret-names: codeclashers/frontend
+          aws-region: us-east-1
+
       - name: Validate required secrets
         run: |
           if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
             echo "Error: AWS_ROLE_ARN secret is required for OIDC authentication"
             exit 1
           fi
-          if [ -z "${{ secrets.AWS_ACCOUNT_ID }}" ]; then
-            echo "Error: AWS_ACCOUNT_ID secret is required"
+          if [ -z "$AWS_ACCOUNT_ID" ]; then
+            echo "Error: AWS_ACCOUNT_ID is required"
             exit 1
           fi
 
       - name: Bootstrap CDK
         working-directory: ./client/infra
         env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          # AWS_ACCOUNT_ID is now fetched from Secrets Manager
+          AWS_ACCOUNT_ID: ${{ env.AWS_ACCOUNT_ID }}
         run: npx cdk bootstrap aws://$AWS_ACCOUNT_ID/us-east-1 || echo "Bootstrap already done"
 
       - name: Fetch hosted zone name (if ID provided)
         id: hosted-zone
         run: |
-          ROUTE53_HOSTED_ZONE_ID="${{ secrets.ROUTE53_HOSTED_ZONE_ID }}"
+          # ROUTE53_HOSTED_ZONE_ID is now fetched from Secrets Manager
+          ROUTE53_HOSTED_ZONE_ID="${ROUTE53_HOSTED_ZONE_ID}"
           ROUTE53_HOSTED_ZONE_NAME="${{ vars.ROUTE53_HOSTED_ZONE_NAME }}"
           
           if [ -z "$ROUTE53_HOSTED_ZONE_NAME" ] && [ -n "$ROUTE53_HOSTED_ZONE_ID" ]; then
@@ -302,11 +310,12 @@ jobs:
           echo "=== Domain Configuration Debug ==="
           ROUTE53_HOSTED_ZONE_NAME="${{ steps.hosted-zone.outputs.name || vars.ROUTE53_HOSTED_ZONE_NAME || 'leetbattle.net' }}"
           NEXTJS_DOMAIN_NAME="${{ vars.NEXTJS_DOMAIN_NAME }}"
-          echo "ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}"
+          # ROUTE53_HOSTED_ZONE_ID is now from Secrets Manager
+          echo "ROUTE53_HOSTED_ZONE_ID: ${ROUTE53_HOSTED_ZONE_ID:-'(not set)'}"
           echo "ROUTE53_HOSTED_ZONE_NAME: $ROUTE53_HOSTED_ZONE_NAME"
           echo "NEXTJS_DOMAIN_NAME: ${NEXTJS_DOMAIN_NAME:-'(not set)'}"
           echo ""
-          if [ -z "${{ secrets.ROUTE53_HOSTED_ZONE_ID }}" ]; then
+          if [ -z "$ROUTE53_HOSTED_ZONE_ID" ]; then
             echo "ℹ️  No ROUTE53_HOSTED_ZONE_ID set - CloudFront will deploy WITHOUT custom domains"
             echo "   CloudFront will use the default distribution domain (*.cloudfront.net)"
           elif [ -z "$NEXTJS_DOMAIN_NAME" ]; then
@@ -341,35 +350,33 @@ jobs:
         working-directory: ./client/infra
         id: deploy
         env:
-          CDK_DEFAULT_ACCOUNT: ${{ secrets.AWS_ACCOUNT_ID }}
+          # Secrets from AWS Secrets Manager (fetched in previous step)
+          CDK_DEFAULT_ACCOUNT: ${{ env.AWS_ACCOUNT_ID }}
           CDK_DEFAULT_REGION: us-east-1
+          ROUTE53_HOSTED_ZONE_ID: ${{ env.ROUTE53_HOSTED_ZONE_ID }}
+          MONGODB_URI: ${{ env.MONGODB_URI }}
+          NEXTAUTH_SECRET: ${{ env.NEXTAUTH_SECRET }}
+          REDIS_PASSWORD: ${{ env.REDIS_PASSWORD }}
+          INTERNAL_SERVICE_SECRET: ${{ env.INTERNAL_SERVICE_SECRET }}
+          OPENAI_API_KEY: ${{ env.OPENAI_API_KEY }}
+          # GitHub Variables (non-sensitive configuration)
           AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
           S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME }}
-          # S3_ENDPOINT: Only set for MinIO/S3-compatible services, NOT for AWS S3
-          # For AWS S3, leave unset - SDK auto-determines endpoint from region
           S3_ENDPOINT: ${{ vars.S3_ENDPOINT || '' }}
-          ROUTE53_HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
           ROUTE53_HOSTED_ZONE_NAME: ${{ steps.hosted-zone.outputs.name || vars.ROUTE53_HOSTED_ZONE_NAME || '' }}
           NEXTJS_DOMAIN_NAME: ${{ vars.NEXTJS_DOMAIN_NAME }}
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           REDIS_HOST: ${{ vars.REDIS_HOST }}
           REDIS_PORT: ${{ vars.REDIS_PORT }}
-          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
           REDIS_CLUSTER_ENABLED: ${{ vars.REDIS_CLUSTER_ENABLED || 'true' }}
           REDIS_CLUSTER_NODES: ${{ vars.REDIS_CLUSTER_NODES || '' }}
           NEXT_PUBLIC_API_BASE: ${{ vars.NEXT_PUBLIC_API_BASE }}
           NEXT_PUBLIC_COLYSEUS_HTTP_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_HTTP_URL }}
           NEXT_PUBLIC_COLYSEUS_WS_URL: ${{ vars.NEXT_PUBLIC_COLYSEUS_WS_URL }}
-          INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # NEXTJS_STATIC_BUCKET_NAME: Optional - only set if you want to reuse an existing bucket
-          # If not set, CDK will create a new bucket with auto-generated name
           COLYSEUS_DOMAIN: ${{ vars.COLYSEUS_DOMAIN }}
           COLYSEUS_HOST_IP: ${{ vars.COLYSEUS_HOST_IP }}
         run: |
-          npx cdk deploy --all --require-approval never --context account=${{ secrets.AWS_ACCOUNT_ID }} --context region=us-east-1
+          npx cdk deploy --all --require-approval never --context account=${{ env.AWS_ACCOUNT_ID }} --context region=us-east-1
 
       - name: Get CloudFront URL
         working-directory: ./client/infra

@@ -1,0 +1,69 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: codeclashers-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: codeclashers
+    environment: production
+  annotations:
+    # Enable Image Updater for this application
+    argocd-image-updater.argoproj.io/image-list: |
+      colyseus=ghcr.io/rishabhvenu/codeclashers-colyseus,
+      bots=ghcr.io/rishabhvenu/codeclashers-bots,
+      judge0-api=ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64,
+      judge0-worker=ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64
+    
+    # Update strategy: track :latest tag by digest changes
+    argocd-image-updater.argoproj.io/colyseus.update-strategy: latest
+    argocd-image-updater.argoproj.io/bots.update-strategy: latest
+    argocd-image-updater.argoproj.io/judge0-api.update-strategy: latest
+    argocd-image-updater.argoproj.io/judge0-worker.update-strategy: latest
+    
+    # Allow commit SHA tags (7-character hex strings)
+    argocd-image-updater.argoproj.io/colyseus.allow-tags: "regexp:^[a-f0-9]{7}$"
+    argocd-image-updater.argoproj.io/bots.allow-tags: "regexp:^[a-f0-9]{7}$"
+    argocd-image-updater.argoproj.io/judge0-api.allow-tags: "regexp:^[a-f0-9]{7}$"
+    argocd-image-updater.argoproj.io/judge0-worker.allow-tags: "regexp:^[a-f0-9]{7}$"
+    
+    # Write back method: Update kustomization.yaml in git
+    argocd-image-updater.argoproj.io/write-back-method: git:secret:argocd/git-creds
+    argocd-image-updater.argoproj.io/git-branch: main
+    
+    # Kustomize build path
+    argocd-image-updater.argoproj.io/write-back-target: "kustomization:backend/k8s/overlays/prod"
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/rishabhvenu/codeclashers.git
+    targetRevision: main
+    path: backend/k8s/overlays/prod
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: codeclashers
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+    - CreateNamespace=true
+    - PrunePropagationPolicy=foreground
+    - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  # Health assessment
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/replicas
+

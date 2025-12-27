@@ -1,4 +1,4 @@
-name: Deploy Backend to Oracle Cloud (Kubernetes)
+name: Build and Push Backend Images
 
 on:
   push:
@@ -29,9 +29,9 @@ on:
         type: boolean
         default: false
 
-# Ensure only one deployment runs at a time
+# Ensure only one build runs at a time
 concurrency:
-  group: backend-deployment
+  group: backend-images
   cancel-in-progress: false
 
 permissions:
@@ -69,7 +69,7 @@ jobs:
             judge0:
               - 'backend/judge0/**'
 
-  deploy:
+  build:
     runs-on: self-hosted  # Runs on your Oracle VM runner
     needs: changed-files
     
@@ -86,12 +86,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Ensure namespace exists
-        env:
-          KUBECONFIG: /home/ubuntu/.kube/config
-        run: |
-          sudo k3s kubectl create namespace codeclashers --dry-run=client -o yaml | sudo k3s kubectl apply -f -
 
       - name: Generate image tag
         id: meta
@@ -164,77 +158,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha
 
-      - name: Set image tags for deployment
-        id: image-tags
+      - name: Summary
         run: |
-          # Use IMAGE_TAG if build ran, otherwise use 'latest'
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit SHA:** \`${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Images Built:" >> $GITHUB_STEP_SUMMARY
+          
           if [ "${{ steps.build-colyseus.outcome }}" != "skipped" ]; then
-            echo "COLYSEUS_IMAGE=ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
-          else
-            echo "COLYSEUS_IMAGE=ghcr.io/rishabhvenu/codeclashers-colyseus:latest" >> $GITHUB_ENV
+            echo "- ✅ Colyseus: \`ghcr.io/rishabhvenu/codeclashers-colyseus:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [ "${{ steps.build-bots.outcome }}" != "skipped" ]; then
-            echo "BOTS_IMAGE=ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
-          else
-            echo "BOTS_IMAGE=ghcr.io/rishabhvenu/codeclashers-bots:latest" >> $GITHUB_ENV
+            echo "- ✅ Bots: \`ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [ "${{ steps.build-judge0-api.outcome }}" != "skipped" ]; then
-            echo "JUDGE0_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
-          else
-            echo "JUDGE0_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:latest" >> $GITHUB_ENV
+            echo "- ✅ Judge0 API: \`ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
           fi
           
           if [ "${{ steps.build-judge0-worker.outcome }}" != "skipped" ]; then
-            echo "JUDGE0_WORKER_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:${{ env.IMAGE_TAG }}" >> $GITHUB_ENV
-          else
-            echo "JUDGE0_WORKER_IMAGE=ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:latest" >> $GITHUB_ENV
+            echo "- ✅ Judge0 Worker: \`ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
           fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** ArgoCD Image Updater will automatically detect and deploy these images to the cluster." >> $GITHUB_STEP_SUMMARY
 
-      - name: Deploy to Kubernetes
-        env:
-          # Image configuration
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
-          IMAGE_REGISTRY: ghcr.io/rishabhvenu
-          COLYSEUS_IMAGE: ${{ env.COLYSEUS_IMAGE }}
-          BOTS_IMAGE: ${{ env.BOTS_IMAGE }}
-          JUDGE0_IMAGE: ${{ env.JUDGE0_IMAGE }}
-          JUDGE0_WORKER_IMAGE: ${{ env.JUDGE0_WORKER_IMAGE }}
-          
-          # Kubernetes configuration
-          KUBECONFIG: /home/ubuntu/.kube/config
-          NAMESPACE: codeclashers
-          KUSTOMIZE_OVERLAY: overlays/prod
-          
-          # Secrets (for deployment)
-          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          MONGODB_USERNAME: ${{ secrets.MONGODB_USERNAME }}
-          MONGODB_PASSWORD: ${{ secrets.MONGODB_PASSWORD }}
-          INTERNAL_SERVICE_SECRET: ${{ secrets.INTERNAL_SERVICE_SECRET }}
-          BOT_SERVICE_SECRET: ${{ secrets.BOT_SERVICE_SECRET }}
-          COLYSEUS_RESERVATION_SECRET: ${{ secrets.COLYSEUS_RESERVATION_SECRET }}
-          JUDGE0_POSTGRES_USER: ${{ secrets.JUDGE0_POSTGRES_USER }}
-          JUDGE0_POSTGRES_PASSWORD: ${{ secrets.JUDGE0_POSTGRES_PASSWORD }}
-          JUDGE0_POSTGRES_DB: ${{ secrets.JUDGE0_POSTGRES_DB }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          
-          # Variables
-          ORACLE_VM_IP: ${{ vars.COLYSEUS_HOST_IP }}
-          REDIS_HOST: ${{ vars.REDIS_HOST || 'redis-cluster' }}
-          REDIS_PORT: ${{ vars.REDIS_PORT || '6379' }}
-          S3_BUCKET_NAME: ${{ vars.S3_BUCKET_NAME }}
-          AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-        run: |
-          set -e
-          
-          echo "🚀 Deploying using unified scripts"
-          
-          # Run unified deployment script
-          ./scripts/deploy/apply-manifests.sh
-          
-          echo "✅ Deployment complete"
       

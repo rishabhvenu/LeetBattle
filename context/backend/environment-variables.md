@@ -2,26 +2,46 @@
 
 Complete reference for all environment variables used across frontend and backend services.
 
+**MIGRATION NOTICE:** As of this update, secrets are managed through AWS Secrets Manager instead of GitHub Secrets. GitHub Variables are still used for non-sensitive configuration values.
+
 ---
 
 ## Quick Reference
 
-### GitHub Secrets (Sensitive)
+### AWS Secrets Manager (Sensitive Data)
 
-| Secret | Required By | Description |
-|--------|-------------|-------------|
-| `MONGODB_URI` | Frontend, Backend | Full MongoDB connection string |
-| `REDIS_PASSWORD` | Frontend, Backend | Redis authentication password |
-| `INTERNAL_SERVICE_SECRET` | Frontend, Backend | Internal service auth (must match) |
-| `BOT_SERVICE_SECRET` | Backend | Bot service authentication |
-| `COLYSEUS_RESERVATION_SECRET` | Backend | Room reservation secret |
-| `OPENAI_API_KEY` | Backend | OpenAI API key for bot generation |
-| `JUDGE0_POSTGRES_USER` | Backend | Judge0 database user |
-| `JUDGE0_POSTGRES_PASSWORD` | Backend | Judge0 database password |
-| `JUDGE0_POSTGRES_DB` | Backend | Judge0 database name |
-| `NEXTAUTH_SECRET` | Frontend | NextAuth.js session secret |
-| `AWS_ROLE_ARN` | Frontend | OIDC authentication role |
-| `AWS_ACCOUNT_ID` | Frontend | AWS account ID |
+All sensitive secrets are now stored in AWS Secrets Manager and fetched during GitHub Actions deployment:
+
+| Secret Group | AWS Secret Name | Description |
+|--------------|----------------|-------------|
+| Backend | `codeclashers/backend` | All backend service secrets |
+| Frontend | `codeclashers/frontend` | All frontend deployment secrets |
+| Registry | `codeclashers/ghcr` | GitHub Container Registry PAT |
+
+**Backend Secrets** (`codeclashers/backend`):
+- `REDIS_PASSWORD`, `MONGODB_URI` (username/password are automatically extracted from URI)
+- `JUDGE0_POSTGRES_USER`, `JUDGE0_POSTGRES_PASSWORD`, `JUDGE0_POSTGRES_DB`
+- `OPENAI_API_KEY`, `INTERNAL_SERVICE_SECRET`, `BOT_SERVICE_SECRET`
+- `COLYSEUS_RESERVATION_SECRET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
+- `GRAFANA_ADMIN_USER`, `GRAFANA_ADMIN_PASSWORD`
+
+**Note:** Only `MONGODB_URI` is required. The URI should include credentials: `mongodb://username:password@host:port/db?authSource=admin`. Username and password are automatically extracted by deployment scripts.
+
+**Frontend Secrets** (`codeclashers/frontend`):
+- `NEXTAUTH_SECRET`, `MONGODB_URI`, `REDIS_PASSWORD`
+- `OPENAI_API_KEY`, `INTERNAL_SERVICE_SECRET`
+- `AWS_ROLE_ARN`, `AWS_ACCOUNT_ID`, `ROUTE53_HOSTED_ZONE_ID`
+
+**Registry Secrets** (`codeclashers/ghcr`):
+- `GHCR_PAT`
+
+### GitHub Secrets (Infrastructure Only)
+
+Only one GitHub Secret remains - used for OIDC authentication:
+
+| Secret | Description |
+|--------|-------------|
+| `AWS_ROLE_ARN` | OIDC role for AWS authentication |
 
 ### GitHub Variables (Non-Sensitive)
 
@@ -317,12 +337,50 @@ Services now fail fast if critical env vars are missing. Check logs for:
 
 Before deploying:
 
-- [ ] All GitHub Secrets set correctly
-- [ ] All GitHub Variables configured
-- [ ] `INTERNAL_SERVICE_SECRET` matches frontend/backend
-- [ ] `MONGODB_URI` includes full connection string with credentials
+- [ ] AWS Secrets Manager secrets populated with correct values
+- [ ] IAM policy attached to OIDC role (`AWS_ROLE_ARN`)
+- [ ] GitHub Variables (non-sensitive) configured
+- [ ] `INTERNAL_SERVICE_SECRET` matches between frontend/backend secrets
+- [ ] `MONGODB_URI` includes full connection string with credentials (format: `mongodb://username:password@host:port/db?authSource=admin`)
+- [ ] MongoDB username/password are automatically extracted from URI (not required separately)
 - [ ] `REDIS_HOST` points to correct IP/hostname
 - [ ] `NEXT_PUBLIC_COLYSEUS_*` URLs point to public endpoints
 - [ ] Backend services have `LoadBalancer` type
 - [ ] Frontend can reach backend via external IPs
+
+## Migration from GitHub Secrets
+
+If migrating from GitHub Secrets to AWS Secrets Manager:
+
+1. **Create secrets structure:**
+   ```bash
+   ./scripts/secrets/create-secrets-manager.sh
+   ```
+
+2. **Migrate values (interactive):**
+   ```bash
+   ./scripts/secrets/migrate-to-aws.sh
+   ```
+
+3. **Attach IAM policy:**
+   ```bash
+   ./scripts/secrets/attach-iam-policy.sh
+   ```
+
+4. **Test deployment:**
+   - Run `sync-secrets.yml` workflow for K8s
+   - Run `frontend-build.yml` and `frontend-deploy.yml` for Lambda
+
+5. **(Optional) Remove old GitHub Secrets:**
+   - Keep `AWS_ROLE_ARN` for OIDC authentication
+   - Remove all other secrets (now in Secrets Manager)
+
+---
+
+## Related Documentation
+
+- **AWS Secrets Manager:** [`backend/k8s/argocd/README-IAM-POLICY.md`](../../backend/k8s/argocd/README-IAM-POLICY.md)
+- **Local Development:** [`local-development.md`](./local-development.md)
+- **Deployment:** [`deployment.md`](./deployment.md)
+- **ArgoCD:** [`argocd.md`](./argocd.md)
 
