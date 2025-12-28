@@ -1579,7 +1579,7 @@ router.post('/admin/bots/init', adminAuthMiddleware(), async (ctx) => {
       validator: {
         $jsonSchema: {
           bsonType: 'object',
-          required: ['fullName', 'username', 'avatar', 'gender', 'stats', 'matchIds', 'createdAt', 'updatedAt'],
+          required: ['fullName', 'username', 'avatar', 'gender', 'stats', 'matchIds', 'deployed', 'createdAt', 'updatedAt'],
           properties: {
             fullName: {
               bsonType: 'string',
@@ -1615,6 +1615,10 @@ router.post('/admin/bots/init', adminAuthMiddleware(), async (ctx) => {
             matchIds: {
               bsonType: 'array',
               description: 'Array of match IDs'
+            },
+            deployed: {
+              bsonType: 'bool',
+              description: 'Deployed status is required'
             },
             createdAt: {
               bsonType: 'date',
@@ -1734,7 +1738,7 @@ router.post('/admin/bots/generate', adminAuthMiddleware(), async (ctx) => {
           totalMatches: 0
         },
         matchIds: [], // Initialize empty array for match history
-        // NOTE: deployed status is tracked in Redis (bots:deployed set), not MongoDB
+        deployed: false, // Required by schema; actual deployment state tracked in Redis (bots:deployed set)
         createdAt: new Date(),
         updatedAt: new Date()
       };
