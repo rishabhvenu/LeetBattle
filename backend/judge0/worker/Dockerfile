@@ -37,6 +37,7 @@ RUN apt-get update && \
       unzip \
       cgroup-tools \
       libseccomp-dev \
+      libsystemd-dev \
       asciidoc \
       tzdata && \
     # Install Node.js
