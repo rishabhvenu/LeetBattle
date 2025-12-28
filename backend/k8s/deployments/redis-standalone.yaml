@@ -1,0 +1,58 @@
+# Redis Standalone for External Access (AWS Lambda)
+# This is a single Redis instance (non-cluster) for external clients
+# that cannot handle Redis Cluster MOVED redirects to internal pod IPs
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-standalone
+  namespace: codeclashers
+  labels:
+    app: redis-standalone
+    purpose: external-access
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-standalone
+  template:
+    metadata:
+      labels:
+        app: redis-standalone
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command:
+        - redis-server
+        - --requirepass
+        - $(REDIS_PASSWORD)
+        - --appendonly
+        - "yes"
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: REDIS_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-standalone-external
+  namespace: codeclashers
+  labels:
+    app: redis-standalone
+    purpose: external-access
+spec:
+  type: NodePort
+  selector:
+    app: redis-standalone
+  ports:
+  - port: 6379
+    targetPort: 6379
+    nodePort: 30380
+    protocol: TCP
+    name: redis
+

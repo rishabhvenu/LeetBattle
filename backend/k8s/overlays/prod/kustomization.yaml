@@ -15,16 +15,16 @@ resources:
   - ../../configmaps/redis-cluster-config.yaml
   - ../../jobs/redis-cluster-init.yaml
 
-# Production image names (from GHCR)
+# Production image tags (ArgoCD Image Updater will manage these)
 images:
   - name: ghcr.io/rishabhvenu/codeclashers-colyseus
-    newTag: ${IMAGE_TAG}
+    newTag: latest
   - name: ghcr.io/rishabhvenu/codeclashers-bots
-    newTag: ${IMAGE_TAG}
+    newTag: latest
   - name: ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64
-    newTag: ${IMAGE_TAG}
+    newTag: latest
   - name: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64
-    newTag: ${IMAGE_TAG}
+    newTag: latest
 
 # ConfigMap overrides for prod (using patch to merge with base ConfigMap)
 patches:

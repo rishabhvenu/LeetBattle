@@ -192,3 +192,4 @@ kubectl delete namespace argocd
 - [ArgoCD Image Updater](https://argocd-image-updater.readthedocs.io/)
 - [Kustomize](https://kubectl.docs.kubernetes.io/references/kustomize/)
 
+

@@ -37,7 +37,9 @@ To sync secrets from GitHub to Kubernetes:
 ## Required GitHub Secrets
 
 - `REDIS_PASSWORD`
-- `MONGODB_URI` (or `MONGODB_USERNAME` + `MONGODB_PASSWORD`)
+- `MONGODB_URI` (must include credentials: `mongodb://username:password@host:port/db?authSource=admin`)
+  - Username and password are automatically extracted from URI during deployment
+  - `MONGODB_USERNAME` and `MONGODB_PASSWORD` are no longer required separately
 - `JUDGE0_POSTGRES_USER`
 - `JUDGE0_POSTGRES_PASSWORD`
 - `JUDGE0_POSTGRES_DB`

@@ -180,10 +180,12 @@ The setup uses default development values. To customize, edit `create-dev-secret
 
 ```bash
 export REDIS_PASSWORD="your_password"
-export MONGODB_PASSWORD="your_password"
+export MONGODB_URI="mongodb://admin:admin123@localhost:32017/codeclashers?authSource=admin"
 export OPENAI_API_KEY="your_key"
 ./create-dev-secrets.sh
 ```
+
+**Note:** Only `MONGODB_URI` is required. Username and password are automatically extracted from the URI. The format should be: `mongodb://username:password@host:port/db?authSource=admin`
 
 ### Image Building
 

@@ -1,0 +1,23 @@
+# MongoDB External Access Service
+# This NodePort service exposes MongoDB for external access (e.g., from AWS Lambda)
+# WARNING: Exposing MongoDB externally has security implications - ensure proper authentication
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-external
+  namespace: codeclashers
+  labels:
+    app: mongodb
+    environment: production
+    purpose: external-access
+spec:
+  type: NodePort
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+    nodePort: 30017
+    protocol: TCP
+    name: mongodb
+

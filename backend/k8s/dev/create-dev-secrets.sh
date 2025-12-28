@@ -33,10 +33,45 @@ if ! kubectl get namespace "$NAMESPACE" > /dev/null 2>&1; then
   kubectl create namespace "$NAMESPACE"
 fi
 
+# Function to extract MongoDB credentials from URI
+extract_mongodb_credentials() {
+    local uri="${1:-}"
+    
+    if [ -z "$uri" ]; then
+        return 1
+    fi
+    
+    # Extract username and password from URI
+    if echo "$uri" | grep -qE '^mongodb(\+srv)?://[^@]+@'; then
+        MONGODB_USERNAME=$(echo "$uri" | sed -n 's|^mongodb\(+srv\)\?://\([^:]*\):\([^@]*\)@.*|\2|p')
+        MONGODB_PASSWORD=$(echo "$uri" | sed -n 's|^mongodb\(+srv\)\?://\([^:]*\):\([^@]*\)@.*|\3|p')
+        
+        # URL decode password in case it contains special characters
+        if [ -n "$MONGODB_PASSWORD" ]; then
+            MONGODB_PASSWORD=$(printf '%b\n' "${MONGODB_PASSWORD//%/\\x}")
+        fi
+    fi
+    
+    # Set defaults if extraction failed
+    MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+    MONGODB_PASSWORD="${MONGODB_PASSWORD:-}"
+}
+
 # Default dev values
 REDIS_PASSWORD="${REDIS_PASSWORD:-redis_dev_password_123}"
-MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
-MONGODB_PASSWORD="${MONGODB_PASSWORD:-admin123}"
+
+# Extract MongoDB credentials from URI if provided, otherwise use defaults
+if [ -n "${MONGODB_URI:-}" ]; then
+    extract_mongodb_credentials "$MONGODB_URI"
+    MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+    MONGODB_PASSWORD="${MONGODB_PASSWORD:-admin123}"
+else
+    # Default dev values if URI not provided
+    MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+    MONGODB_PASSWORD="${MONGODB_PASSWORD:-admin123}"
+    # Create default URI for dev
+    MONGODB_URI="${MONGODB_URI:-mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@localhost:32017/codeclashers?authSource=admin}"
+fi
 JUDGE0_POSTGRES_USER="${JUDGE0_POSTGRES_USER:-judge0}"
 JUDGE0_POSTGRES_PASSWORD="${JUDGE0_POSTGRES_PASSWORD:-judge0_secure_pass_456}"
 JUDGE0_POSTGRES_DB="${JUDGE0_POSTGRES_DB:-judge0}"
@@ -65,7 +100,7 @@ kubectl create secret generic app-secrets-dev \
   --from-literal=MONGODB_USERNAME="$MONGODB_USERNAME" \
   --from-literal=MONGODB_PASSWORD="$MONGODB_PASSWORD" \
   --from-literal=MONGODB_URI_INTERNAL="mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@mongodb-dev.codeclashers-dev.svc.cluster.local:27017/codeclashers?authSource=admin" \
-  --from-literal=MONGODB_URI="mongodb://${MONGODB_USERNAME}:${MONGODB_PASSWORD}@localhost:32017/codeclashers?authSource=admin" \
+  --from-literal=MONGODB_URI="$MONGODB_URI" \
   --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
   --from-literal=INTERNAL_SERVICE_SECRET="$INTERNAL_SERVICE_SECRET" \
   --from-literal=BOT_SERVICE_SECRET="$BOT_SERVICE_SECRET" \

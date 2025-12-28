@@ -4,7 +4,7 @@ metadata:
   name: bots
   namespace: codeclashers
 spec:
-  replicas: ${K8S_BOTS_REPLICAS}
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -22,7 +22,7 @@ spec:
       - name: ghcr-secret
       containers:
       - name: bots
-        image: ${BOTS_IMAGE}
+        image: ghcr.io/rishabhvenu/codeclashers-bots:latest
         ports:
         - containerPort: 3000
         env:
@@ -98,11 +98,11 @@ spec:
               key: MONGODB_URI_INTERNAL
         resources:
           requests:
-            memory: ${K8S_BOTS_MEMORY_REQUEST}
-            cpu: ${K8S_BOTS_CPU_REQUEST}
+            memory: "256Mi"
+            cpu: "100m"
           limits:
-            memory: ${K8S_BOTS_MEMORY_LIMIT}
-            cpu: ${K8S_BOTS_CPU_LIMIT}
+            memory: "512Mi"
+            cpu: "250m"
         livenessProbe:
           exec:
             command:

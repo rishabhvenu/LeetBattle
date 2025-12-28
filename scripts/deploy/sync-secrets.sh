@@ -25,17 +25,53 @@ if ! command -v envsubst &> /dev/null; then
     fi
 fi
 
-# Extract MongoDB username and password from URI if not provided separately
-if [ -z "$MONGODB_USERNAME" ] && [ -n "$MONGODB_URI" ]; then
-    export MONGODB_USERNAME=$(echo "$MONGODB_URI" | sed -n 's|mongodb://\([^:]*\):\([^@]*\)@.*|\1|p' || echo "admin")
-    MONGO_PASS=$(echo "$MONGODB_URI" | sed -n 's|mongodb://\([^:]*\):\([^@]*\)@.*|\2|p' || echo "")
-    if [ -n "$MONGO_PASS" ]; then
-        export MONGODB_PASSWORD="$MONGO_PASS"
+# Function to extract MongoDB credentials from URI
+# Always extract from URI - username/password are derived, not required separately
+extract_mongodb_credentials() {
+    local uri="${1:-}"
+    
+    if [ -z "$uri" ]; then
+        return 1
     fi
+    
+    # Extract username and password from URI
+    # Pattern: mongodb://username:password@host:port/db
+    # Also handles: mongodb+srv://username:password@host/db
+    if echo "$uri" | grep -qE '^mongodb(\+srv)?://[^@]+@'; then
+        # Extract username (everything between :// and :)
+        export MONGODB_USERNAME=$(echo "$uri" | sed -n 's|^mongodb\(+srv\)\?://\([^:]*\):\([^@]*\)@.*|\2|p')
+        # Extract password (everything between : and @)
+        export MONGODB_PASSWORD=$(echo "$uri" | sed -n 's|^mongodb\(+srv\)\?://\([^:]*\):\([^@]*\)@.*|\3|p')
+        
+        # URL decode password in case it contains special characters
+        if [ -n "$MONGODB_PASSWORD" ]; then
+            # Basic URL decoding for common cases
+            MONGODB_PASSWORD=$(printf '%b\n' "${MONGODB_PASSWORD//%/\\x}")
+        fi
+    fi
+    
+    # Set defaults if extraction failed
+    export MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+    export MONGODB_PASSWORD="${MONGODB_PASSWORD:-}"
+}
+
+# Always extract MongoDB credentials from URI
+# MONGODB_USERNAME and MONGODB_PASSWORD are derived from MONGODB_URI, not required separately
+if [ -n "${MONGODB_URI:-}" ]; then
+    extract_mongodb_credentials "$MONGODB_URI"
+else
+    echo "❌ Error: MONGODB_URI is required"
+    exit 1
 fi
 
-# Default MongoDB username if still not set
-export MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+# Verify extraction succeeded
+if [ -z "${MONGODB_USERNAME:-}" ] || [ -z "${MONGODB_PASSWORD:-}" ]; then
+    echo "⚠️  Warning: Could not extract MONGODB_USERNAME/PASSWORD from MONGODB_URI"
+    echo "   URI format should be: mongodb://username:password@host:port/db"
+    echo "   Falling back to defaults (username: admin, password: empty)"
+    export MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+    export MONGODB_PASSWORD="${MONGODB_PASSWORD:-}"
+fi
 
 # Generate MongoDB keyfile if not provided
 if [ -z "$MONGODB_KEYFILE" ]; then

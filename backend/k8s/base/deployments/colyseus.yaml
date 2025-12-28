@@ -4,7 +4,7 @@ metadata:
   name: colyseus
   namespace: codeclashers
 spec:
-  replicas: ${K8S_COLYSEUS_REPLICAS}
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -22,7 +22,7 @@ spec:
       - name: ghcr-secret
       containers:
       - name: colyseus
-        image: ${COLYSEUS_IMAGE}
+        image: ghcr.io/rishabhvenu/codeclashers-colyseus:latest
         ports:
         - name: websocket
           containerPort: 2567
@@ -127,11 +127,11 @@ spec:
               optional: true
         resources:
           requests:
-            memory: ${K8S_COLYSEUS_MEMORY_REQUEST}
-            cpu: ${K8S_COLYSEUS_CPU_REQUEST}
+            memory: "512Mi"
+            cpu: "250m"
           limits:
-            memory: ${K8S_COLYSEUS_MEMORY_LIMIT}
-            cpu: ${K8S_COLYSEUS_CPU_LIMIT}
+            memory: "1Gi"
+            cpu: "500m"
         startupProbe:
           httpGet:
             path: /health

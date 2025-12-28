@@ -168,3 +168,4 @@ kubectl delete application codeclashers-prod -n argocd  # Removes app
 kubectl delete namespace argocd  # Removes ArgoCD
 ```
 
+

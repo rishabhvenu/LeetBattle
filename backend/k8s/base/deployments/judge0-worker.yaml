@@ -4,7 +4,7 @@ metadata:
   name: judge0-worker
   namespace: codeclashers
 spec:
-  replicas: ${K8S_JUDGE0_WORKER_REPLICAS}
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -25,7 +25,7 @@ spec:
         image: postgres:15-alpine
         command: ['sh', '-c', 'until pg_isready -h postgres -p 5432; do echo waiting for postgres; sleep 2; done;']
       - name: run-migrations
-        image: ${JUDGE0_WORKER_IMAGE}
+        image: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:latest
         command: ['sh', '-c', 'rails db:create || true; rails db:migrate || true; rails db:seed || true']
         env:
         - name: RAILS_ENV
@@ -73,7 +73,7 @@ spec:
               key: JUDGE0_POSTGRES_DB
       containers:
       - name: judge0-worker
-        image: ${JUDGE0_WORKER_IMAGE}
+        image: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64:latest
         command: ["./scripts/workers"]
         env:
         - name: RAILS_ENV
@@ -117,11 +117,11 @@ spec:
               key: JUDGE0_POSTGRES_DB
         resources:
           requests:
-            memory: ${K8S_JUDGE0_WORKER_MEMORY_REQUEST}
-            cpu: ${K8S_JUDGE0_WORKER_CPU_REQUEST}
+            memory: "512Mi"
+            cpu: "250m"
           limits:
-            memory: ${K8S_JUDGE0_WORKER_MEMORY_LIMIT}
-            cpu: ${K8S_JUDGE0_WORKER_CPU_LIMIT}
+            memory: "1Gi"
+            cpu: "500m"
         # Judge0 workers require privileged access for code execution
         securityContext:
           privileged: true

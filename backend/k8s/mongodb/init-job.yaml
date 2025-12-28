@@ -239,6 +239,8 @@ spec:
               name: mongodb-config
               key: REPLICA_COUNT
               optional: true
+        # MongoDB credentials are extracted from MONGODB_URI by sync-secrets.sh
+        # Only MONGODB_URI is required - username/password are derived automatically
         - name: MONGO_INITDB_ROOT_USERNAME
           valueFrom:
             secretKeyRef:

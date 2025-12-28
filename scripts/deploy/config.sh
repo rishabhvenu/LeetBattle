@@ -82,6 +82,41 @@ echo "     Bots: $BOTS_IMAGE"
 echo "     Judge0 API: $JUDGE0_IMAGE"
 echo "     Judge0 Worker: $JUDGE0_WORKER_IMAGE"
 
+# Function to extract MongoDB credentials from URI
+# Extracts username and password from mongodb://[username]:[password]@host:port/db format
+extract_mongodb_credentials() {
+    local uri="${1:-}"
+    
+    if [ -z "$uri" ]; then
+        return 1
+    fi
+    
+    # Extract username and password from URI
+    # Pattern: mongodb://username:password@host:port/db
+    # Also handles: mongodb+srv://username:password@host/db
+    if echo "$uri" | grep -qE '^mongodb(\+srv)?://[^@]+@'; then
+        # Extract username (everything between :// and :)
+        export MONGODB_USERNAME=$(echo "$uri" | sed -n 's|^mongodb\(+srv\)\?://\([^:]*\):\([^@]*\)@.*|\2|p')
+        # Extract password (everything between : and @)
+        export MONGODB_PASSWORD=$(echo "$uri" | sed -n 's|^mongodb\(+srv\)\?://\([^:]*\):\([^@]*\)@.*|\3|p')
+        
+        # URL decode password in case it contains special characters
+        if [ -n "$MONGODB_PASSWORD" ]; then
+            # Basic URL decoding for common cases
+            MONGODB_PASSWORD=$(printf '%b\n' "${MONGODB_PASSWORD//%/\\x}")
+        fi
+    fi
+    
+    # Set defaults if extraction failed
+    export MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+    export MONGODB_PASSWORD="${MONGODB_PASSWORD:-}"
+}
+
+# Extract MongoDB credentials from URI if not already set
+if [ -n "${MONGODB_URI:-}" ] && [ -z "${MONGODB_USERNAME:-}" ]; then
+    extract_mongodb_credentials "$MONGODB_URI"
+fi
+
 # Verify required variables
 REQUIRED_VARS=(
     "REDIS_PASSWORD"
@@ -97,6 +132,15 @@ for var in "${REQUIRED_VARS[@]}"; do
         exit 1
     fi
 done
+
+# Verify MongoDB credentials were extracted or set
+if [ -z "${MONGODB_USERNAME:-}" ] || [ -z "${MONGODB_PASSWORD:-}" ]; then
+    echo "⚠️  Warning: Could not extract MONGODB_USERNAME/PASSWORD from MONGODB_URI"
+    echo "   URI format should be: mongodb://username:password@host:port/db"
+    echo "   Falling back to defaults (username: admin, password: empty)"
+    export MONGODB_USERNAME="${MONGODB_USERNAME:-admin}"
+    export MONGODB_PASSWORD="${MONGODB_PASSWORD:-}"
+fi
 
 echo "✅ Configuration loaded successfully"
 

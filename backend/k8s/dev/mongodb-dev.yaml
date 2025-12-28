@@ -22,6 +22,8 @@ spec:
         ports:
         - containerPort: 27017
         env:
+        # MongoDB credentials are extracted from MONGODB_URI by create-dev-secrets.sh
+        # Only MONGODB_URI is required - username/password are derived automatically
         - name: MONGO_INITDB_ROOT_USERNAME
           valueFrom:
             secretKeyRef:
