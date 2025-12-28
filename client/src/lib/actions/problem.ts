@@ -408,9 +408,6 @@ export async function verifyProblemSolutions(problemId: string) {
     // Use internal service secret for server-to-server auth (more reliable than cookie forwarding)
     const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
     
-    // #region agent log
-    console.log('[DEBUG-VERIFY] Request details:', JSON.stringify({colyseusUrl:COLYSEUS_URL,hasInternalSecret:!!internalSecret,signatureExists:!!problem.signature,testCasesCount:problem.testCases?.length,solutionLangs:Object.keys(validationSolutions)}));
-    // #endregion
     
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60000);
@@ -437,9 +434,6 @@ export async function verifyProblemSolutions(problemId: string) {
         error instanceof Error && error.name === 'AbortError'
           ? 'Verification request timed out after 60 seconds'
           : (error as Error).message;
-      // #region agent log
-      console.error('[DEBUG-VERIFY] Fetch exception:', reason);
-      // #endregion
       return {
         success: false,
         error: `Validation request failed: ${reason}`,
@@ -449,11 +443,6 @@ export async function verifyProblemSolutions(problemId: string) {
     }
  
     if (!validationResponse.ok) {
-      // #region agent log
-      let errorBody = '';
-      try { errorBody = await validationResponse.text(); } catch {}
-      console.error('[DEBUG-VERIFY] 500 Error:', JSON.stringify({status:validationResponse.status,statusText:validationResponse.statusText,errorBody:errorBody.substring(0,2000)}));
-      // #endregion
       return {
         success: false,
         error: `Validation endpoint error: ${validationResponse.status} ${validationResponse.statusText}`
