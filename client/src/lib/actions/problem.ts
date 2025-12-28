@@ -212,8 +212,8 @@ export async function generateProblem(data: {
         : '';
 
     const artifactsResponse = await openai.chat.completions.create({
-      // Use a stronger model for generating solutions and test cases
-      model: 'gpt-4o',
+      // Use the latest GPT-5.2 model for generating solutions and test cases
+      model: 'gpt-5.2',
       messages: [
         { role: 'system', content: PROBLEM_ARTIFACT_PROMPT },
         ...(specialInputInstructions
