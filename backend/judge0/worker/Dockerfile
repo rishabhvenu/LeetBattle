@@ -77,4 +77,5 @@ RUN chmod +x ./scripts/* || true
 RUN ln -sf /usr/bin/python3 /usr/bin/python || true
 
 # Worker runs resque workers
-CMD ["bash", "-c", "source ./scripts/load-config && COUNT=2 QUEUE=* bundle exec rake resque:workers"]
+# Setup isolate cgroup paths before starting workers
+CMD ["bash", "-c", "mkdir -p /run/isolate/locks /var/local/lib/isolate && touch /run/isolate/cgroup && echo /sys/fs/cgroup > /run/isolate/cgroup && source ./scripts/load-config && COUNT=2 QUEUE=* bundle exec rake resque:workers"]
