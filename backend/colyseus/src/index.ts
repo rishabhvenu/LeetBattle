@@ -1725,7 +1725,7 @@ router.post('/admin/bots/generate', adminAuthMiddleware(), async (ctx) => {
         fullName: profile.fullName,
         username: profile.username,
         avatar: 'placeholder_avatar.png', // Will be updated with generated avatar
-        gender: profile.gender === 'male' || profile.gender === 'female' || profile.gender === 'nonbinary' ? profile.gender : 'male', // Ensure valid gender
+        gender: profile.gender === 'male' || profile.gender === 'female' ? profile.gender : 'male', // Ensure valid gender (schema only allows male/female)
         stats: {
           rating,
           wins: 0,
@@ -2711,7 +2711,7 @@ Return ONLY a JSON array, no markdown:
       ...profile,
       gender: profile.gender === 'male' || profile.gender === 'female' ? profile.gender : 'male'
     }));
-  } catch (error) {
+  } catch (error: any) {
     console.error('OpenAI profile generation failed, using fallback:', error);
     
     // Fallback to mock data
