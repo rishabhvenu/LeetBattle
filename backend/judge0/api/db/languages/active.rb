@@ -91,8 +91,8 @@
     name: "C++ (GCC 9.2.0)",
     is_archived: false,
     source_file: "main.cpp",
-    compile_cmd: "/usr/local/gcc-9.2.0/bin/g++ %s main.cpp",
-    run_cmd: "LD_LIBRARY_PATH=/usr/local/gcc-9.2.0/lib64 ./a.out"
+    compile_cmd: "/usr/bin/g++ %s main.cpp",
+    run_cmd: "./a.out"
   },
   {
     id: 55,
@@ -152,15 +152,15 @@
     name: "Java (OpenJDK 13.0.1)",
     is_archived: false,
     source_file: "Main.java",
-    compile_cmd: "/usr/local/openjdk13/bin/javac %s Main.java",
-    run_cmd: "/usr/local/openjdk13/bin/java Main"
+    compile_cmd: "/usr/bin/javac %s Main.java",
+    run_cmd: "/usr/bin/java Main"
   },
   {
     id: 63,
     name: "JavaScript (Node.js 12.14.0)",
     is_archived: false,
     source_file: "script.js",
-    run_cmd: "/usr/local/node-12.14.0/bin/node script.js"
+    run_cmd: "/usr/bin/node script.js"
   },
   {
     id: 64,
@@ -220,7 +220,7 @@
     name: "Python (3.8.1)",
     is_archived: false,
     source_file: "script.py",
-    run_cmd: "/usr/local/python-3.8.1/bin/python3 script.py"
+    run_cmd: "/usr/bin/python3 script.py"
   },
   {
     id: 72,
@@ -242,8 +242,8 @@
     name: "TypeScript (3.7.4)",
     is_archived: false,
     source_file: "script.ts",
-    compile_cmd: "/usr/bin/tsc %s script.ts",
-    run_cmd: "/usr/local/node-12.14.0/bin/node script.js"
+    compile_cmd: "/usr/bin/npx tsc %s script.ts",
+    run_cmd: "/usr/bin/node script.js"
   },
   {
     id: 75,

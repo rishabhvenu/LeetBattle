@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: judge0-server
+  namespace: pharogames-dev
+spec:
+  type: NodePort
+  selector:
+    app: judge0-server
+  ports:
+    - port: 2358  # Internal port
+      targetPort: 2358
+      protocol: TCP
+      name: http
+      nodePort: 32358  # NodePort (accessible via k3d loadbalancer on port 2358)
+
