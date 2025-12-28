@@ -2707,8 +2707,17 @@ Return ONLY a JSON array, no markdown:
       throw new Error('No response from OpenAI');
     }
 
+    // Strip markdown code blocks if present (OpenAI sometimes wraps JSON in ```json ... ```)
+    let jsonContent = response.trim();
+    if (jsonContent.startsWith('```')) {
+      // Remove opening code fence (```json or ```)
+      jsonContent = jsonContent.replace(/^```(?:json)?\s*\n?/, '');
+      // Remove closing code fence
+      jsonContent = jsonContent.replace(/\n?```\s*$/, '');
+    }
+
     // Parse the JSON response
-    const profiles = JSON.parse(response);
+    const profiles = JSON.parse(jsonContent);
     
     // Validate and sanitize the profiles
     return profiles.map((profile: any) => ({
