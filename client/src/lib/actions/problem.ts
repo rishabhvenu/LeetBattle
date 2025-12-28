@@ -405,13 +405,11 @@ export async function verifyProblemSolutions(problemId: string) {
     // Call Colyseus validation endpoint
     const COLYSEUS_URL = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || 'http://localhost:2567';
     
-    // Forward session cookie to backend for admin auth (Edge operation via dynamic import)
-    const { getSessionCookie } = await import('../session-edge');
-    const sessionId = await getSessionCookie();
-    const cookieHeader = sessionId ? `codeclashers.sid=${sessionId}` : '';
+    // Use internal service secret for server-to-server auth (more reliable than cookie forwarding)
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
     
     // #region agent log
-    console.log('[DEBUG-VERIFY] Request details:', JSON.stringify({colyseusUrl:COLYSEUS_URL,hasCookie:!!cookieHeader,signatureExists:!!problem.signature,testCasesCount:problem.testCases?.length,solutionLangs:Object.keys(validationSolutions)}));
+    console.log('[DEBUG-VERIFY] Request details:', JSON.stringify({colyseusUrl:COLYSEUS_URL,hasInternalSecret:!!internalSecret,signatureExists:!!problem.signature,testCasesCount:problem.testCases?.length,solutionLangs:Object.keys(validationSolutions)}));
     // #endregion
     
     const controller = new AbortController();
@@ -423,9 +421,8 @@ export async function verifyProblemSolutions(problemId: string) {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+          ...(internalSecret ? { 'X-Internal-Secret': internalSecret, 'X-Service-Name': 'frontend-lambda' } : {}),
         },
-        credentials: 'include',
         body: JSON.stringify({
           signature: problem.signature,
           solutions: validationSolutions,
