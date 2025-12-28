@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -35,6 +35,34 @@ export function EditProblemDialog({
   onProblemChange,
   onSolutionsChange,
 }: EditProblemDialogProps) {
+  // Store raw string values for test case inputs/outputs to allow editing invalid JSON
+  const [testCaseRawValues, setTestCaseRawValues] = useState<Record<number, { input: string; output: string }>>({});
+
+  // Initialize raw values when editingProblem changes or dialog opens
+  useEffect(() => {
+    if (editingProblem?.testCases && isOpen) {
+      setTestCaseRawValues(prev => {
+        const updated: Record<number, { input: string; output: string }> = {};
+        editingProblem.testCases!.forEach((testCase, index) => {
+          // Preserve existing raw values if they exist (user is editing)
+          // Otherwise initialize from the testCase data
+          if (prev[index]) {
+            updated[index] = prev[index];
+          } else {
+            updated[index] = {
+              input: JSON.stringify(testCase.input, null, 2),
+              output: JSON.stringify(testCase.output, null, 2),
+            };
+          }
+        });
+        return updated;
+      });
+    } else if (!isOpen) {
+      // Clear raw values when dialog closes
+      setTestCaseRawValues({});
+    }
+  }, [editingProblem?._id, isOpen]);
+
   if (!editingProblem) return null;
 
   const listNodeParameters = editingProblem.signature?.parameters?.filter((param) =>
@@ -267,6 +295,20 @@ export function EditProblemDialog({
                         const updated = [...(editingProblem.testCases || [])];
                         updated.splice(index, 1);
                         onProblemChange({ ...editingProblem, testCases: updated });
+                        // Remove raw values for deleted test case and reindex
+                        const newRawValues: Record<number, { input: string; output: string }> = {};
+                        updated.forEach((tc, idx) => {
+                          const oldIdx = idx < index ? idx : idx + 1;
+                          if (testCaseRawValues[oldIdx]) {
+                            newRawValues[idx] = testCaseRawValues[oldIdx];
+                          } else {
+                            newRawValues[idx] = {
+                              input: JSON.stringify(tc.input, null, 2),
+                              output: JSON.stringify(tc.output, null, 2),
+                            };
+                          }
+                        });
+                        setTestCaseRawValues(newRawValues);
                       }}
                       className="text-red-600 border-red-500 hover:bg-red-50"
                     >
@@ -277,14 +319,26 @@ export function EditProblemDialog({
                     <div>
                       <Label className="text-black/70 text-sm">Input</Label>
                       <Textarea
-                        value={JSON.stringify(testCase.input, null, 2)}
+                        value={testCaseRawValues[index]?.input ?? JSON.stringify(testCase.input, null, 2)}
                         onChange={(e) => {
+                          // Always update raw string value immediately to allow typing
+                          setTestCaseRawValues(prev => ({
+                            ...prev,
+                            [index]: {
+                              ...prev[index],
+                              input: e.target.value,
+                              output: prev[index]?.output ?? JSON.stringify(testCase.output, null, 2),
+                            }
+                          }));
+                          
+                          // Try to parse and update actual testCase if JSON is valid
                           try {
+                            const parsed = JSON.parse(e.target.value);
                             const updated = [...(editingProblem.testCases || [])];
-                            updated[index] = { ...updated[index], input: JSON.parse(e.target.value) };
+                            updated[index] = { ...updated[index], input: parsed };
                             onProblemChange({ ...editingProblem, testCases: updated });
                           } catch (error) {
-                            // Invalid JSON, don't update
+                            // Invalid JSON - raw value already updated, don't update testCase
                           }
                         }}
                         className="bg-white border-blue-200 text-black text-sm font-mono"
@@ -294,14 +348,26 @@ export function EditProblemDialog({
                     <div>
                       <Label className="text-black/70 text-sm">Expected Output</Label>
                       <Textarea
-                        value={JSON.stringify(testCase.output, null, 2)}
+                        value={testCaseRawValues[index]?.output ?? JSON.stringify(testCase.output, null, 2)}
                         onChange={(e) => {
+                          // Always update raw string value immediately to allow typing
+                          setTestCaseRawValues(prev => ({
+                            ...prev,
+                            [index]: {
+                              ...prev[index],
+                              input: prev[index]?.input ?? JSON.stringify(testCase.input, null, 2),
+                              output: e.target.value,
+                            }
+                          }));
+                          
+                          // Try to parse and update actual testCase if JSON is valid
                           try {
+                            const parsed = JSON.parse(e.target.value);
                             const updated = [...(editingProblem.testCases || [])];
-                            updated[index] = { ...updated[index], output: JSON.parse(e.target.value) };
+                            updated[index] = { ...updated[index], output: parsed };
                             onProblemChange({ ...editingProblem, testCases: updated });
                           } catch (error) {
-                            // Invalid JSON, don't update
+                            // Invalid JSON - raw value already updated, don't update testCase
                           }
                         }}
                         className="bg-white border-blue-200 text-black text-sm font-mono"
@@ -345,10 +411,19 @@ export function EditProblemDialog({
                 variant="outline"
                 onClick={() => {
                   const newTestCase = { input: {}, output: null };
+                  const newIndex = (editingProblem.testCases || []).length;
                   onProblemChange({
                     ...editingProblem,
                     testCases: [...(editingProblem.testCases || []), newTestCase]
                   });
+                  // Initialize raw values for the new test case
+                  setTestCaseRawValues(prev => ({
+                    ...prev,
+                    [newIndex]: {
+                      input: JSON.stringify(newTestCase.input, null, 2),
+                      output: JSON.stringify(newTestCase.output, null, 2),
+                    }
+                  }));
                 }}
                 className="w-full border-blue-200 text-black hover:bg-blue-50"
               >
