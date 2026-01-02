@@ -458,9 +458,13 @@ export class QueueRoom extends Room {
 
   /**
    * Release distributed locks for match creation
+   * Note: Delete keys separately to avoid CROSSSLOT errors in Redis Cluster
    */
   private async releaseMatchLock(player1Id: string, player2Id: string): Promise<void> {
-    await this.redis.del(`lock:match:${player1Id}`, `lock:match:${player2Id}`);
+    await Promise.all([
+      this.redis.del(`lock:match:${player1Id}`),
+      this.redis.del(`lock:match:${player2Id}`)
+    ]);
   }
 
   /**
@@ -486,18 +490,11 @@ export class QueueRoom extends Room {
     try {
       console.log(`Creating match - ${player1.userId} (${player1.rating}) vs ${player2.userId} (${player2.rating}), diff: ${Math.abs(player1.rating - player2.rating)}`);
       
-      // Step 2: Use Redis WATCH/MULTI/EXEC for atomic check-and-set
-      await this.redis.watch(
-        RedisKeys.eloQueue,
-        `queue:reservation:${player1.userId}`,
-        `queue:reservation:${player2.userId}`,
-        RedisKeys.botStateKey(player1.userId),
-        RedisKeys.botStateKey(player2.userId),
-        RedisKeys.botsActiveSet
-      );
-      
-      // Verify players still available
-      // Note: player2 might not be in queue if it's a deployed/undeployed bot for bot-bot matching
+      // Step 2: Verify players still available
+      // Note: We rely on distributed locks (acquireMatchLock) for atomicity instead of WATCH
+      // because Redis Cluster requires all WATCH keys to hash to the same slot, which is
+      // not possible with our current key structure (queue:* and bots:* hash to different slots)
+      // The distributed locks provide sufficient protection against race conditions
       const availabilityResults = await Promise.all([
         this.redis.zscore(RedisKeys.eloQueue, player1.userId),
         this.redis.zscore(RedisKeys.eloQueue, player2.userId),
@@ -521,7 +518,6 @@ export class QueueRoom extends Room {
       // A bot with a reservation (even if expired) or in active set should NOT be matched
       if (!p1InQueue || p1Reservation || p1IsBotActive || 
           (!p2CanBeNonQueued && !p2InQueue) || p2Reservation || p2IsBotActive) {
-        await this.redis.unwatch();
         console.log(`Players no longer available for matching: p1InQueue=${!!p1InQueue}, p2InQueue=${!!p2InQueue} (canBeNonQueued=${p2CanBeNonQueued}), p1Reservation=${!!p1Reservation}, p2Reservation=${!!p2Reservation}, p1IsBotActive=${p1IsBotActive}, p2IsBotActive=${p2IsBotActive}`);
         return;
       }
@@ -531,7 +527,6 @@ export class QueueRoom extends Room {
       if (p2IsBot) {
         const p2CurrentMatch = await this.redis.get(`bot:current_match:${player2.userId}`);
         if (p2CurrentMatch) {
-          await this.redis.unwatch();
           console.log(`Bot ${player2.userId} already has current_match ${p2CurrentMatch}, rejecting match`);
           return;
         }
@@ -540,50 +535,50 @@ export class QueueRoom extends Room {
       if (p1IsBot) {
         const p1CurrentMatch = await this.redis.get(`bot:current_match:${player1.userId}`);
         if (p1CurrentMatch) {
-          await this.redis.unwatch();
           console.log(`Bot ${player1.userId} already has current_match ${p1CurrentMatch}, rejecting match`);
           return;
         }
       }
       
       // Step 3: Create reservations BEFORE creating match room
+      // Note: We can't use MULTI with keys from different slots in Redis Cluster
+      // Instead, we perform operations individually. The distributed locks ensure atomicity.
       const tempReservation = JSON.stringify({ status: 'creating' });
-      const multi = this.redis.multi();
-      multi.setex(`queue:reservation:${player1.userId}`, 60, tempReservation);
-      multi.setex(`queue:reservation:${player2.userId}`, 60, tempReservation);
-      // Only remove from queue if they're actually in queue
-      multi.zrem(RedisKeys.eloQueue, player1.userId);
+      
+      // Create reservations
+      await Promise.all([
+        this.redis.setex(`queue:reservation:${player1.userId}`, 60, tempReservation),
+        this.redis.setex(`queue:reservation:${player2.userId}`, 60, tempReservation)
+      ]);
+      
+      // Remove from queue
+      await this.redis.zrem(RedisKeys.eloQueue, player1.userId);
       if (p2InQueue) {
-        multi.zrem(RedisKeys.eloQueue, player2.userId);
+        await this.redis.zrem(RedisKeys.eloQueue, player2.userId);
       }
       
       // Remove humans from both queued players set and human players set
       p1IsHuman = !(await isBotUser(player1.userId));
       p2IsHuman = !(await isBotUser(player2.userId));
       if (p1IsHuman) {
-        multi.srem(RedisKeys.queuedPlayersSet, player1.userId);
-        multi.srem(RedisKeys.humanPlayersSet, player1.userId);
+        await Promise.all([
+          this.redis.srem(RedisKeys.queuedPlayersSet, player1.userId),
+          this.redis.srem(RedisKeys.humanPlayersSet, player1.userId)
+        ]);
       }
       if (p2IsHuman) {
-        multi.srem(RedisKeys.queuedPlayersSet, player2.userId);
-        multi.srem(RedisKeys.humanPlayersSet, player2.userId);
+        await Promise.all([
+          this.redis.srem(RedisKeys.queuedPlayersSet, player2.userId),
+          this.redis.srem(RedisKeys.humanPlayersSet, player2.userId)
+        ]);
       }
       
       // CRITICAL: Add bots to active set IMMEDIATELY to prevent duplicate matches
-      // Also set current_match pointer for additional safety
       if (!p1IsHuman) {
-        multi.sadd(RedisKeys.botsActiveSet, player1.userId);
-        // Will be set after match is created, but we mark it here to prevent race conditions
+        await this.redis.sadd(RedisKeys.botsActiveSet, player1.userId);
       }
       if (!p2IsHuman) {
-        multi.sadd(RedisKeys.botsActiveSet, player2.userId);
-        // Will be set after match is created, but we mark it here to prevent race conditions
-      }
-      
-      const execResult = await multi.exec();
-      if (!execResult) {
-        console.log('Transaction failed - players were matched by another process');
-        return;
+        await this.redis.sadd(RedisKeys.botsActiveSet, player2.userId);
       }
       
       // Step 4: Now create the match (players locked out of queue)
@@ -696,46 +691,44 @@ export class QueueRoom extends Room {
       }
     } catch (e) {
       console.error('Error creating match:', e);
+      
       try {
-        await this.redis.unwatch();
-      } catch {}
+        // Rollback: Clear temporary reservations
+        await Promise.all([
+          this.redis.del(`queue:reservation:${player1.userId}`),
+          this.redis.del(`queue:reservation:${player2.userId}`)
+        ]);
 
-      try {
-        const multi = this.redis.multi();
-
-        // Always clear temporary reservations that were set before match creation.
-        multi.del(
-          `queue:reservation:${player1.userId}`,
-          `queue:reservation:${player2.userId}`
-        );
-
-        // Ensure bots no longer appear as active if match creation failed.
+        // Ensure bots no longer appear as active if match creation failed
         if (!p1IsHuman) {
-          multi.srem(RedisKeys.botsActiveSet, player1.userId);
+          await this.redis.srem(RedisKeys.botsActiveSet, player1.userId);
         }
         if (!p2IsHuman) {
-          multi.srem(RedisKeys.botsActiveSet, player2.userId);
+          await this.redis.srem(RedisKeys.botsActiveSet, player2.userId);
         }
 
-        // Restore queue membership that was removed prior to match creation.
+        // Restore queue membership that was removed prior to match creation
         if (p1InQueue) {
-          multi.zadd(RedisKeys.eloQueue, player1.rating, player1.userId);
+          await this.redis.zadd(RedisKeys.eloQueue, player1.rating, player1.userId);
         }
         if (p2InQueue) {
-          multi.zadd(RedisKeys.eloQueue, player2.rating, player2.userId);
+          await this.redis.zadd(RedisKeys.eloQueue, player2.rating, player2.userId);
         }
 
-        // Re-add human tracking state if it was removed.
+        // Re-add human tracking state if it was removed
         if (p1IsHuman) {
-          multi.sadd(RedisKeys.queuedPlayersSet, player1.userId);
-          multi.sadd(RedisKeys.humanPlayersSet, player1.userId);
+          await Promise.all([
+            this.redis.sadd(RedisKeys.queuedPlayersSet, player1.userId),
+            this.redis.sadd(RedisKeys.humanPlayersSet, player1.userId)
+          ]);
         }
         if (p2IsHuman) {
-          multi.sadd(RedisKeys.queuedPlayersSet, player2.userId);
-          multi.sadd(RedisKeys.humanPlayersSet, player2.userId);
+          await Promise.all([
+            this.redis.sadd(RedisKeys.queuedPlayersSet, player2.userId),
+            this.redis.sadd(RedisKeys.humanPlayersSet, player2.userId)
+          ]);
         }
 
-        await multi.exec();
         console.warn(
           `Rolled back reservations for players ${player1.userId} and ${player2.userId} after match creation failure`
         );
@@ -812,15 +805,8 @@ export class QueueRoom extends Room {
     }
 
     try {
-      // Use atomic transaction to prevent duplicate matches
-      await this.redis.watch(
-        RedisKeys.eloQueue,
-        `queue:reservation:${userId}`,
-        `queue:reservation:${botMatch.userId}`,
-        RedisKeys.botsActiveSet
-      );
-      
-      // Re-check availability atomically (both human and bot)
+      // Re-check availability (we rely on the matchmaking cycle's sequential processing
+      // and the fact that we check availability right before matching to prevent duplicates)
       const [stillInQueue, humanReservation, botStillInQueue, botReservation, botIsActive] = await Promise.all([
         this.redis.zscore(RedisKeys.eloQueue, userId),
         this.redis.get(`queue:reservation:${userId}`),
@@ -830,30 +816,32 @@ export class QueueRoom extends Room {
       ]);
       
       if (!stillInQueue || humanReservation || !botStillInQueue || botReservation || botIsActive) {
-        await this.redis.unwatch();
         console.log(`Match no longer available: humanInQueue=${!!stillInQueue}, humanReservation=${!!humanReservation}, botInQueue=${!!botStillInQueue}, botReservation=${!!botReservation}, botIsActive=${botIsActive}`);
         return false;
       }
       
-      // Atomically remove from queue, create reservations, and add to active set
+      // Remove from queue, create reservations, and add to active set
+      // Note: We can't use MULTI with keys from different slots in Redis Cluster
+      // The matchmaking cycle's sequential processing provides sufficient protection
       const tempReservation = JSON.stringify({ status: 'creating' });
-      const multi = this.redis.multi();
-      multi.setex(`queue:reservation:${userId}`, 60, tempReservation);
-      multi.setex(`queue:reservation:${botMatch.userId}`, 60, tempReservation);
-      multi.zrem(RedisKeys.eloQueue, userId, botMatch.userId);
-      multi.del(RedisKeys.queueJoinedAtKey(userId));
-      multi.del(RedisKeys.queueJoinedAtKey(botMatch.userId));
-      multi.sadd(RedisKeys.botsActiveSet, botMatch.userId); // CRITICAL: Mark bot as active immediately
+      await Promise.all([
+        this.redis.setex(`queue:reservation:${userId}`, 60, tempReservation),
+        this.redis.setex(`queue:reservation:${botMatch.userId}`, 60, tempReservation)
+      ]);
+      
+      await this.redis.zrem(RedisKeys.eloQueue, userId, botMatch.userId);
+      await Promise.all([
+        this.redis.del(RedisKeys.queueJoinedAtKey(userId)),
+        this.redis.del(RedisKeys.queueJoinedAtKey(botMatch.userId))
+      ]);
+      
+      await this.redis.sadd(RedisKeys.botsActiveSet, botMatch.userId); // CRITICAL: Mark bot as active immediately
       
       // Remove human from queued players set and human players set
-      multi.srem(RedisKeys.queuedPlayersSet, userId);
-      multi.srem(RedisKeys.humanPlayersSet, userId);
-      
-      const execResult = await multi.exec();
-      if (!execResult) {
-        console.log('Transaction failed - bot was matched by another process');
-        return false;
-      }
+      await Promise.all([
+        this.redis.srem(RedisKeys.queuedPlayersSet, userId),
+        this.redis.srem(RedisKeys.humanPlayersSet, userId)
+      ]);
 
       // Create human vs bot match (players are now locked out of queue)
       const result = await createMatch(
@@ -924,34 +912,30 @@ export class QueueRoom extends Room {
       return true;
     } catch (e) {
       console.warn('Failed to create bot match:', e);
+      
       try {
-        await this.redis.unwatch();
-      } catch {}
+        // Rollback: Clear reservations and restore state
+        await Promise.all([
+          this.redis.del(`queue:reservation:${userId}`),
+          this.redis.del(`queue:reservation:${botMatch.userId}`)
+        ]);
+        
+        await this.redis.srem(RedisKeys.botsActiveSet, botMatch.userId);
 
-      try {
-        const multi = this.redis.multi();
+        // Restore queue membership and tracking for both players
+        await Promise.all([
+          this.redis.zadd(RedisKeys.eloQueue, rating, userId),
+          this.redis.zadd(RedisKeys.eloQueue, botMatch.rating, botMatch.userId),
+          this.redis.sadd(RedisKeys.queuedPlayersSet, userId),
+          this.redis.sadd(RedisKeys.humanPlayersSet, userId)
+        ]);
 
-        multi.del(
-          `queue:reservation:${userId}`,
-          `queue:reservation:${botMatch.userId}`
-        );
-        multi.srem(RedisKeys.botsActiveSet, botMatch.userId);
-
-        // Restore queue membership and tracking for both players.
-        multi.zadd(RedisKeys.eloQueue, rating, userId);
-        multi.zadd(RedisKeys.eloQueue, botMatch.rating, botMatch.userId);
-        multi.sadd(RedisKeys.queuedPlayersSet, userId);
-        multi.sadd(RedisKeys.humanPlayersSet, userId);
-
-        // Restore joined timestamps so wait-time logic remains consistent.
-        multi.setex(RedisKeys.queueJoinedAtKey(userId), 3600, Date.now().toString());
-        multi.setex(
-          RedisKeys.queueJoinedAtKey(botMatch.userId),
-          3600,
-          Date.now().toString()
-        );
-
-        await multi.exec();
+        // Restore joined timestamps so wait-time logic remains consistent
+        await Promise.all([
+          this.redis.setex(RedisKeys.queueJoinedAtKey(userId), 3600, Date.now().toString()),
+          this.redis.setex(RedisKeys.queueJoinedAtKey(botMatch.userId), 3600, Date.now().toString())
+        ]);
+        
         console.warn(
           `Rolled back reservations for human ${userId} and bot ${botMatch.userId} after failed bot match`
         );
