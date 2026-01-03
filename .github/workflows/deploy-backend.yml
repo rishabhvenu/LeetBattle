@@ -118,12 +118,11 @@ jobs:
         with:
           context: ./backend/bots
           push: true
-          no-cache: true
           tags: |
             ghcr.io/rishabhvenu/codeclashers-bots:${{ env.IMAGE_TAG }}
             ghcr.io/rishabhvenu/codeclashers-bots:latest
           cache-from: type=gha
-          cache-to: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push Judge0 API image
         id: build-judge0-api
