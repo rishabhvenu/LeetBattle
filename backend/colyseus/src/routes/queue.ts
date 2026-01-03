@@ -118,15 +118,9 @@ export function registerQueueRoutes(router: Router) {
 
       // Calculate longest wait time for any human player in queue
       let longestHumanWaitMs = 0;
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'queue.ts:general-stats',message:'Calculating longestHumanWaitMs',data:{queuedHumansCount},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B'})}).catch(()=>{});
-      // #endregion
       if (queuedHumansCount > 0) {
         const humanPlayerIds = await redis.smembers(RedisKeys.humanPlayersSet);
         const now = Date.now();
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'queue.ts:general-stats',message:'Human players in set',data:{humanPlayerIds,count:humanPlayerIds.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-        // #endregion
         for (const playerId of humanPlayerIds) {
           // Check if player is actually in the queue
           const inQueue = await redis.zscore(RedisKeys.eloQueue, playerId);
@@ -134,9 +128,6 @@ export function registerQueueRoutes(router: Router) {
             const joinedAtRaw = await redis.get(RedisKeys.queueJoinedAtKey(playerId));
             if (joinedAtRaw) {
               const waitMs = now - parseInt(joinedAtRaw, 10);
-              // #region agent log
-              fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'queue.ts:general-stats',message:'Player wait time',data:{playerId,waitMs,joinedAtRaw,now},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-              // #endregion
               if (waitMs > longestHumanWaitMs) {
                 longestHumanWaitMs = waitMs;
               }

@@ -93,7 +93,7 @@ get_service_name() {
     judge0) echo "judge0-server" ;;
     judge0-worker) echo "judge0-worker" ;;
     mongodb) echo "mongodb-dev" ;;
-    redis) echo "redis-dev" ;;
+    redis) echo "redis-cluster-dev" ;;
     postgres) echo "postgres" ;;
     minio) echo "minio-dev" ;;
     prometheus) echo "prometheus" ;;

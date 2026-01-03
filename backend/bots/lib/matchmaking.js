@@ -234,17 +234,11 @@ async function checkAndManageBotDeployment(redis, options = {}) {
     const queueStats = await getQueueStats();
     const globalStats = await getGlobalStats();
     
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'matchmaking.js:checkAndManageBotDeployment',message:'Raw globalStats from API',data:{globalStats,queueStats},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A,B,C'})}).catch(()=>{});
-    // #endregion
     
     const botsInQueue = queueStats.botsInQueue || 0;
     const humansWaiting = globalStats.queuedHumansCount || 0;
     const longestHumanWaitMs = globalStats.longestHumanWaitMs || 0;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'matchmaking.js:checkAndManageBotDeployment',message:'Extracted values',data:{humansWaiting,longestHumanWaitMs,botsInQueue,threshold:EXTRA_BOT_DEPLOY_WAIT_THRESHOLD_MS},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C,D'})}).catch(()=>{});
-    // #endregion
     
     // CRITICAL: Count both deployed AND active bots when checking minimum
     // Deployed = bots in queue waiting to match
@@ -263,23 +257,14 @@ async function checkAndManageBotDeployment(redis, options = {}) {
     if (effectivelyDeployed < minDeployed) {
       botsToDeploy = minDeployed - effectivelyDeployed;
       console.log(`Below minimum: need ${botsToDeploy} bots to reach ${minDeployed} (effective: ${effectivelyDeployed})`);
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'matchmaking.js:checkAndManageBotDeployment',message:'Decision: Below minimum',data:{effectivelyDeployed,minDeployed,botsToDeploy},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
     } else if (humansWaiting > 0 && longestHumanWaitMs > EXTRA_BOT_DEPLOY_WAIT_THRESHOLD_MS) {
       // Only deploy extra bots if a human has been waiting > 15 seconds
       botsToDeploy = Math.max(0, humansWaiting - botsInQueue);
       if (botsToDeploy > 0) {
         console.log(`${humansWaiting} humans waiting for ${Math.round(longestHumanWaitMs / 1000)}s (>${EXTRA_BOT_DEPLOY_WAIT_THRESHOLD_MS / 1000}s), ${botsInQueue} bots in queue, need ${botsToDeploy} more`);
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'matchmaking.js:checkAndManageBotDeployment',message:'Decision: Extra bots for waiting humans',data:{humansWaiting,longestHumanWaitMs,botsInQueue,botsToDeploy},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
     } else if (humansWaiting > 0) {
       console.log(`${humansWaiting} humans waiting but only for ${Math.round(longestHumanWaitMs / 1000)}s (<${EXTRA_BOT_DEPLOY_WAIT_THRESHOLD_MS / 1000}s threshold), minimum already met`);
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'matchmaking.js:checkAndManageBotDeployment',message:'Decision: Wait time below threshold',data:{humansWaiting,longestHumanWaitMs,threshold:EXTRA_BOT_DEPLOY_WAIT_THRESHOLD_MS},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-      // #endregion
     }
     
     // Cap at totalBots if set (count both deployed and active)
@@ -290,9 +275,6 @@ async function checkAndManageBotDeployment(redis, options = {}) {
       const queueLength = await redis.llen('bots:rotation:queue');
       const rotationQueueContents = await redis.lrange('bots:rotation:queue', 0, -1);
       console.log(`Deploying ${botsToDeploy} bots, rotation queue length: ${queueLength}`);
-      // #region agent log
-      fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'matchmaking.js:checkAndManageBotDeployment',message:'About to deploy bots',data:{botsToDeploy,queueLength,rotationQueueContents,maxCanDeploy},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
       
       for (let i = 0; i < botsToDeploy; i++) {
         if (deployDelayMs > 0 && i > 0) {

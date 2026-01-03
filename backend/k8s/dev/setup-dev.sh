@@ -82,7 +82,7 @@ kubectl wait --namespace=codeclashers-dev \
 
 kubectl wait --namespace=codeclashers-dev \
   --for=condition=ready pod \
-  --selector=app=redis-dev \
+  --selector=app=redis-cluster-dev \
   --timeout=300s || true
 
 kubectl wait --namespace=codeclashers-dev \

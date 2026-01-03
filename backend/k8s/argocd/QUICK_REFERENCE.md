@@ -169,3 +169,6 @@ kubectl delete namespace argocd  # Removes ArgoCD
 ```
 
 
+
+
+

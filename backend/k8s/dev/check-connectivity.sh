@@ -142,7 +142,7 @@ if kubectl get deployment colyseus -n $NAMESPACE > /dev/null 2>&1; then
     
     # Test Redis host
     redis_host=$(kubectl exec -n $NAMESPACE deployment/colyseus -- env 2>/dev/null | grep "^REDIS_HOST=" | cut -d'=' -f2 || echo "")
-    if [ "$redis_host" = "redis" ] || echo "$redis_host" | grep -q "redis.codeclashers-dev.svc.cluster.local"; then
+    if [ "$redis_host" = "redis-cluster-dev" ] || echo "$redis_host" | grep -q "redis-cluster-dev.codeclashers-dev.svc.cluster.local"; then
         echo -e "  ${GREEN}✓${NC} Redis host correct: $redis_host"
         PASS=$((PASS + 1))
     else

@@ -10,7 +10,7 @@ echo ""
 
 # Desired restart order (each entry is colon-separated: type:name)
 ORDER=(
-  "deployment:redis-dev"
+  "statefulset:redis-cluster-dev"
   "deployment:mongodb-dev"
   "deployment:judge0-server"
   "deployment:colyseus"

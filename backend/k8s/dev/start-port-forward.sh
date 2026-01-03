@@ -59,7 +59,7 @@ start_port_forward() {
 start_port_forward "mongodb-dev" 27017 27017
 # Use 6380 for Redis since local Redis may be on 6379
 # If local Redis is stopped, change this back to 6379:6379
-start_port_forward "redis" 6380 6379
+start_port_forward "redis-cluster-dev" 6380 6379
 start_port_forward "colyseus" 2567 2567
 start_port_forward "judge0-server" 2358 2358
 start_port_forward "minio-dev" 9000 9000

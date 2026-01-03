@@ -114,7 +114,7 @@ if [ -z "$DEPLOYMENTS" ]; then
 fi
 
 # Services that use ReadWriteOnce volumes (need special handling)
-RWO_SERVICES="mongodb-dev redis-dev postgres minio-dev"
+RWO_SERVICES="mongodb-dev redis-cluster-dev postgres minio-dev"
 
 echo "Found deployments:"
 echo "$DEPLOYMENTS" | tr ' ' '\n' | sed 's/^/  - /'

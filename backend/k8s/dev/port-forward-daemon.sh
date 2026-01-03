@@ -64,7 +64,7 @@ echo ""
 # Start all port forwards
 start_port_forward "mongodb-dev" 27017 27017
 # Use 6380 for Redis since local Redis or k3d loadbalancer may be on 6379
-start_port_forward "redis" 6380 6379
+start_port_forward "redis-cluster-dev" 6380 6379
 start_port_forward "colyseus" 2567 2567
 start_port_forward "judge0-server" 2358 2358
 start_port_forward "minio-dev" 9000 9000

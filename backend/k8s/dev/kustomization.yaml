@@ -13,8 +13,11 @@ resources:
   # Local Dev: Single MongoDB instance (not replica set)
   - mongodb-dev.yaml
   
-  # Local Dev: Single Redis instance (not cluster)
-  - redis-dev.yaml
+  # Local Dev: Redis Cluster (3 nodes, matches production behavior)
+  - statefulsets/redis-cluster-dev.yaml
+  - services/redis-cluster-headless-dev.yaml
+  - services/redis-cluster-dev.yaml
+  - jobs/redis-cluster-init-dev.yaml
   
   # Local Dev: MinIO for S3 (instead of AWS S3)
   - minio-dev.yaml
@@ -70,8 +73,9 @@ configMapGenerator:
       disableNameSuffixHash: true
     literals:
       - NODE_ENV=development
-      - REDIS_HOST=redis
+      - REDIS_HOST=redis-cluster-dev
       - REDIS_PORT=6379
+      - REDIS_CLUSTER_NODES=redis-cluster-dev-0.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local:6379,redis-cluster-dev-1.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local:6379,redis-cluster-dev-2.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local:6379
       - MONGODB_HOST=mongodb-dev
       - MONGODB_PORT=27017
       - POSTGRES_HOST=postgres

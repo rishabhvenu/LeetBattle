@@ -89,7 +89,7 @@ echo "Creating development secrets in namespace $NAMESPACE..."
 kubectl create secret generic app-secrets-dev \
   --namespace="$NAMESPACE" \
   --from-literal=REDIS_PASSWORD="$REDIS_PASSWORD" \
-  --from-literal=REDIS_HOST="redis" \
+  --from-literal=REDIS_HOST="redis-cluster-dev" \
   --from-literal=REDIS_PORT="6379" \
   --from-literal=JUDGE0_PORT="2358" \
   --from-literal=MONGODB_PORT="27017" \

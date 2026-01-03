@@ -150,9 +150,6 @@ export class MatchRoom extends Room {
     (this as any).player1Id = options.player1Id;
     (this as any).player2Id = options.player2Id;
     
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:onCreate',message:'Match room created',data:{matchId:options.matchId,player1Id:options.player1Id,player2Id:options.player2Id,problemId:options.problemId,startTime:this.startTime},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
-    // #endregion
     
     configureRoomLifecycle(this, { autoDispose: false, seatReservationSeconds: 3600, isPrivate: false });
 
@@ -771,9 +768,6 @@ export class MatchRoom extends Room {
 
         // If all tests passed and we reach here, declare winner
         if (executionResult.allPassed) {
-          // #region agent log
-          fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:humanWin',message:'HUMAN PLAYER DECLARED WINNER (all tests passed)',data:{userId,matchId:this.matchId,passedTests:executionResult.passedTests,totalTests:executionResult.totalTests},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
-          // #endregion
           await this.updateMatchBlob((obj) => {
             obj.winnerUserId = userId;
             obj.endedAt = new Date().toISOString();
@@ -1227,9 +1221,6 @@ export class MatchRoom extends Room {
         const matchData = JSON.parse(matchRaw);
         // If match is still ongoing, mark it as abandoned and remove from active set
         if (matchData.status === 'ongoing' && !matchData.endedAt) {
-          // #region agent log
-          fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:onDispose:safetyNet',message:'SAFETY NET TRIGGERED - match abandoned without endMatch',data:{matchId:this.matchId,status:matchData.status,winnerUserId:matchData.winnerUserId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-          // #endregion
           console.log(`[onDispose] Safety net: Match ${this.matchId} was ongoing - marking as abandoned and removing from active set`);
           
           // Update match blob to mark as abandoned
@@ -1280,9 +1271,6 @@ export class MatchRoom extends Room {
   }
 
   private async endMatch(reason: string) {
-    // #region agent log
-    fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:endMatch',message:'endMatch called',data:{matchId:this.matchId,reason,startTime:this.startTime,currentTime:Date.now()},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
     // Calculate match duration in milliseconds
     this.matchDuration = Date.now() - this.startTime;
     console.log(`Match ${this.matchId} ended after ${this.matchDuration}ms (${Math.round(this.matchDuration / 1000)}s)`);
@@ -1704,9 +1692,6 @@ export class MatchRoom extends Room {
         try {
           // Check if this is a bot
           const bot = await this.isBotUser(playerId);
-          // #region agent log
-          fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:calcBotTimes',message:'isBotUser check',data:{playerId,isBot:bot,matchId:this.matchId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
           if (bot) {
             console.log(`Player ${playerId} is a bot, calculating completion time`);
             
@@ -1720,9 +1705,6 @@ export class MatchRoom extends Room {
               ? maxCompletionMs 
               : completionMs;
             
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:calcBotTimes',message:'Bot completion time calculated',data:{botId:playerId,matchId:this.matchId,difficulty:problemDifficulty,rawCompletionMs:completionMs,cappedCompletionMs,maxDuration:this.maxDuration,envEasy:process.env.BOT_TIME_PARAMS_EASY,envMedium:process.env.BOT_TIME_PARAMS_MEDIUM,envHard:process.env.BOT_TIME_PARAMS_HARD},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-            // #endregion
             
             console.log(`Storing bot completion time for ${playerId}: ${cappedCompletionMs}ms${completionMs !== cappedCompletionMs ? ` (capped from ${completionMs}ms)` : ''}`);
             
@@ -1753,15 +1735,9 @@ export class MatchRoom extends Room {
         
         console.log(`Scheduling bot completion timer for ${botId} in ${completionMs}ms`);
         
-        // #region agent log
-        fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:scheduleTimer',message:'Scheduling bot completion timer',data:{botId,matchId:this.matchId,completionMs,scheduledAt:Date.now()},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         
         this.botCompletionTimers[botId] = this.createTimeout(async () => {
           try {
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:timerFired',message:'Bot completion timer FIRED',data:{botId,matchId:this.matchId,firedAt:Date.now()},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             console.log(`🤖 Bot completion timer fired for ${botId} in match ${this.matchId}`);
             
             // Check if match is already finished
@@ -1769,9 +1745,6 @@ export class MatchRoom extends Room {
             const matchRaw = await this.redis.get(matchKey);
             if (matchRaw) {
               const matchData = JSON.parse(matchRaw);
-              // #region agent log
-              fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:timerFired:check',message:'Match status check before bot win',data:{botId,matchId:this.matchId,status:matchData.status,winnerUserId:matchData.winnerUserId,isAlreadyFinished:matchData.status==='finished'||!!matchData.winnerUserId},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
-              // #endregion
               if (matchData.status === 'finished' || matchData.winnerUserId) {
                 console.log(`Match ${this.matchId} already finished, skipping bot ${botId} completion`);
                 return;
@@ -1796,9 +1769,6 @@ export class MatchRoom extends Room {
             await this.updateMatchBlob((obj) => { obj.ratingChanges = ratingChanges; });
             await this.persistRatings(ratingChanges, winnerId, false);
             
-            // #region agent log
-            fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'MatchRoom.ts:botWin',message:'BOT DECLARED WINNER',data:{botId,matchId:this.matchId,ratingChanges},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
-            // #endregion
             
             console.log(`🤖 Bot ${botId} declared winner, broadcasting match_winner`);
             this.broadcast('match_winner', { userId: winnerId, reason: 'bot_completion', ratingChanges });

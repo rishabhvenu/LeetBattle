@@ -160,7 +160,7 @@ kustomize build . | kubectl apply -f -
 
 ### Local Development (This Setup)
 - **MongoDB**: Single instance (no replica set)
-- **Redis**: Single instance (no cluster)
+- **Redis**: 3-node cluster (matches production behavior, smaller scale)
 - **MinIO**: Local S3-compatible storage
 - **Replicas**: 1 per service (for resource efficiency)
 - **Namespace**: `codeclashers-dev`
@@ -231,6 +231,26 @@ kubectl logs -n codeclashers-dev -l environment=development --tail=100
 kubectl logs -n codeclashers-dev -l app=colyseus --tail=100 -f
 ```
 
+### Redis Cluster Initialization
+
+After deploying the Redis Cluster StatefulSet, you need to initialize the cluster:
+
+```bash
+# Wait for all Redis pods to be ready
+kubectl wait --namespace=codeclashers-dev \
+  --for=condition=ready pod \
+  --selector=app=redis-cluster-dev \
+  --timeout=300s
+
+# Run the initialization job
+kubectl apply -f jobs/redis-cluster-init-dev.yaml
+
+# Check initialization status
+kubectl logs -n codeclashers-dev job/redis-cluster-init-dev
+```
+
+The initialization job is idempotent - it will skip initialization if the cluster is already set up.
+
 ### Wipe Redis (Development Only)
 
 ```bash
@@ -239,7 +259,7 @@ cd backend/k8s/dev
 ./wipe-redis.sh --yes      # skips confirmation (dangerous)
 ```
 
-This runs `FLUSHALL` against the dev Redis instance (`redis-dev` deployment) and verifies the key count is zero afterward. Use cautiously—this removes **all** cached data in the dev namespace.
+This runs `FLUSHALL` against the dev Redis Cluster pods (`redis-cluster-dev` StatefulSet) and verifies the key count is zero afterward. Use cautiously—this removes **all** cached data in the dev namespace.
 
 ### Auto-Start Port Forwarding
 
@@ -258,7 +278,7 @@ This will start the port-forward daemon in the background automatically.
 kubectl port-forward -n codeclashers-dev svc/mongodb-dev 27017:27017
 
 # Redis
-kubectl port-forward -n codeclashers-dev svc/redis 6379:6379
+kubectl port-forward -n codeclashers-dev svc/redis-cluster-dev 6379:6379
 
 # Colyseus
 kubectl port-forward -n codeclashers-dev svc/colyseus 2567:2567
@@ -307,7 +327,7 @@ k3d uses the `local-path-provisioner` which stores volumes on the host filesyste
 
 **Persistent Volumes:**
 - MongoDB: 8Gi (`mongodb-data-dev`)
-- Redis: 2Gi (`redis-data-dev`)
+- Redis: 2Gi per node (`redis-cluster-dev-0`, `redis-cluster-dev-1`, `redis-cluster-dev-2`)
 - MinIO: 10Gi (`minio-data-dev`)
 
 To backup data before cluster deletion, you can export data from MongoDB/Redis or copy files from MinIO.
@@ -373,7 +393,10 @@ dev/
 ├── kustomization.yaml        # Main kustomize config
 ├── namespace-dev.yaml        # Development namespace
 ├── mongodb-dev.yaml          # Single MongoDB instance
-├── redis-dev.yaml            # Single Redis instance
+├── statefulsets/redis-cluster-dev.yaml  # Redis Cluster StatefulSet (3 nodes)
+├── services/redis-cluster-dev.yaml     # Redis Cluster service
+├── services/redis-cluster-headless-dev.yaml  # Redis Cluster headless service
+└── jobs/redis-cluster-init-dev.yaml    # Redis Cluster initialization job
 ├── minio-dev.yaml            # MinIO for local S3
 ├── patches/
 │   └── deployments.yaml      # Dev-specific deployment patches

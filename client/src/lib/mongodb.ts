@@ -72,34 +72,66 @@ async function connectDB() {
 
 // MongoClient singleton for native driver operations
 let clientPromise: Promise<MongoClient> | null = null;
+let clientInstance: MongoClient | null = null;
 
 export async function getMongoClient(): Promise<MongoClient> {
+  // Check if existing client is still connected
+  if (clientInstance) {
+    try {
+      // Quick ping to verify connection is alive
+      await Promise.race([
+        clientInstance.db().command({ ping: 1 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('ping timeout')), 1000))
+      ]);
+      return clientInstance;
+    } catch {
+      // Connection is stale, reset and reconnect
+      clientPromise = null;
+      clientInstance = null;
+      try { await clientInstance?.close(); } catch { /* ignore */ }
+    }
+  }
+  
   if (!clientPromise) {
     const client = new MongoClient(MONGODB_URI, {
       monitorCommands: false,
       maxPoolSize: 10,
-      serverSelectionTimeoutMS: 3000,  // Reduced to 3s - fail fast if MongoDB unavailable
-      socketTimeoutMS: 5000,  // Reduced to 5s - fail faster
-      connectTimeoutMS: 3000,  // Reduced to 3s - connection timeout
-      retryWrites: false,  // Disable retries to fail fast
+      serverSelectionTimeoutMS: 5000,  // Increased for pod restart tolerance
+      socketTimeoutMS: 10000,  // Increased for pod restart tolerance
+      connectTimeoutMS: 5000,  // Increased for pod restart tolerance
+      retryWrites: true,  // Enable retries for resilience
+      retryReads: true,   // Enable read retries
+      family: 4,          // Force IPv4 to avoid IPv6 issues
     });
-    // Add timeout wrapper to prevent hanging (5 second total timeout - more aggressive)
+    
+    // Listen for connection events to reset client on disconnect
+    client.on('close', () => {
+      clientPromise = null;
+      clientInstance = null;
+    });
+    
+    // Add timeout wrapper to prevent hanging (10 second total timeout for pod restart tolerance)
     clientPromise = Promise.race([
       client.connect(),
       new Promise<never>((_, reject) => 
         setTimeout(() => {
           clientPromise = null; // Reset on timeout so we can retry
+          clientInstance = null;
           // Try to close the client if connection attempt is hanging
           try {
             client.close().catch(() => {}); // Ignore close errors
           } catch {
             // Ignore
           }
-          reject(new Error('MongoDB client connection timeout after 5s'));
-        }, 5000)
+          reject(new Error('MongoDB client connection timeout after 10s'));
+        }, 10000)
       ),
-    ]).catch((error) => {
+    ]).then((connectedClient) => {
+      clientInstance = connectedClient;
+      return connectedClient;
+    }).catch((error) => {
       clientPromise = null; // Reset on any error
+      clientInstance = null;
       // Try to close the client
       try {
         client.close().catch(() => {}); // Ignore close errors

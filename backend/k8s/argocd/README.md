@@ -193,3 +193,6 @@ kubectl delete namespace argocd
 - [Kustomize](https://kubectl.docs.kubernetes.io/references/kustomize/)
 
 
+
+
+

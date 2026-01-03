@@ -5,7 +5,7 @@ set -euo pipefail
 
 NAMESPACE="codeclashers-dev"
 SECRET_NAME="app-secrets-dev"
-APP_LABEL="redis-dev"
+APP_LABEL="redis-cluster-dev"
 CONFIRM=true
 
 usage() {
@@ -82,10 +82,13 @@ echo "🧹 Flushing ALL Redis data from pod(s):"
 while IFS= read -r REDIS_POD; do
   [[ -z "$REDIS_POD" ]] && continue
   echo "   → FLUSHALL on $REDIS_POD"
-  echo "   → FLUSHALL on $REDIS_POD"
-  kubectl exec -n "$NAMESPACE" "$REDIS_POD" -- sh -c "redis-cli -a '$PASSWORD' --no-auth-warning FLUSHALL" >/tmp/redis-flush.log
-  kubectl exec -n "$NAMESPACE" "$REDIS_POD" -- sh -c "redis-cli -a '$PASSWORD' --no-auth-warning SCRIPT FLUSH" >/tmp/redis-flush.log
-  kubectl exec -n "$NAMESPACE" "$REDIS_POD" -- sh -c "redis-cli -a '$PASSWORD' --no-auth-warning FUNCTION FLUSH" >/tmp/redis-flush.log || true
+  # Use synchronous FLUSHALL to ensure completion (cluster distributes keys across nodes)
+  # We flush each node individually to clear all keys in the cluster
+  kubectl exec -n "$NAMESPACE" "$REDIS_POD" -- sh -c "redis-cli -a '$PASSWORD' --no-auth-warning FLUSHALL" >/tmp/redis-flush.log 2>&1
+  # Wait a moment for async operations to complete
+  sleep 1
+  kubectl exec -n "$NAMESPACE" "$REDIS_POD" -- sh -c "redis-cli -a '$PASSWORD' --no-auth-warning SCRIPT FLUSH" >/tmp/redis-flush.log 2>&1 || true
+  kubectl exec -n "$NAMESPACE" "$REDIS_POD" -- sh -c "redis-cli -a '$PASSWORD' --no-auth-warning FUNCTION FLUSH" >/tmp/redis-flush.log 2>&1 || true
   ((REDIS_PODS_COUNT++))
 done <<< "$REDIS_PODS_RAW"
 

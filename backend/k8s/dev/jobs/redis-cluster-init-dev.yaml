@@ -1,0 +1,58 @@
+# Redis Cluster initialization job for dev (3 nodes, no replicas)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init-dev
+  namespace: codeclashers-dev
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: cluster-init
+        image: redis:7-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          
+          echo "Waiting for all Redis nodes to be ready..."
+          for i in 0 1 2; do
+            until redis-cli -h redis-cluster-dev-${i}.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local -a ${REDIS_PASSWORD} -p 6379 ping > /dev/null 2>&1; do
+              echo "Waiting for redis-cluster-dev-${i}..."
+              sleep 5
+            done
+            echo "redis-cluster-dev-${i} is ready"
+          done
+          
+          # Check if cluster is already initialized (idempotent)
+          echo "Checking if Redis cluster is already initialized..."
+          if redis-cli -h redis-cluster-dev-0.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local -a ${REDIS_PASSWORD} -p 6379 cluster info 2>/dev/null | grep -q 'cluster_state:ok'; then
+            echo "✅ Redis cluster already initialized. Checking cluster status..."
+            redis-cli -h redis-cluster-dev-0.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local -a ${REDIS_PASSWORD} -p 6379 cluster nodes
+            echo ""
+            echo "Cluster is healthy. Skipping initialization."
+            exit 0
+          fi
+          
+          echo "Creating Redis cluster (3 nodes, no replicas for dev)..."
+          redis-cli \
+            --cluster create \
+            redis-cluster-dev-0.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local:6379 \
+            redis-cluster-dev-1.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local:6379 \
+            redis-cluster-dev-2.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local:6379 \
+            --cluster-replicas 0 \
+            -a ${REDIS_PASSWORD} \
+            --cluster-yes
+          
+          echo "Redis cluster initialization complete!"
+          echo "Cluster status:"
+          redis-cli -h redis-cluster-dev-0.redis-cluster-headless-dev.codeclashers-dev.svc.cluster.local -a ${REDIS_PASSWORD} -p 6379 cluster nodes
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets-dev
+              key: REDIS_PASSWORD
+

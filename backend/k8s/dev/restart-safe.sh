@@ -9,7 +9,7 @@ echo "🔄 Safely restarting all services in namespace: $NAMESPACE"
 echo ""
 
 # Services that use ReadWriteOnce volumes (need special handling)
-RWO_SERVICES="mongodb-dev redis-dev postgres minio-dev"
+RWO_SERVICES="mongodb-dev redis-cluster-dev postgres minio-dev"
 
 # Monitoring services (handled as regular deployments, no persistent volumes in dev)
 MONITORING_SERVICES="prometheus grafana"
