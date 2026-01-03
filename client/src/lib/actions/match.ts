@@ -4,12 +4,11 @@ import connectDB, { getMongoClient } from '../mongodb';
 import { ObjectId } from 'mongodb';
 import { getRedis, RedisKeys } from '../redis';
 import { tryToObjectId } from '../utilsObjectId';
-import { assertAdminSession } from '../session';
-import { DB_NAME } from './constants';
 import { getUserStatsCached, getAvatarByIdAction } from './user';
 import { generateStarterCode } from './match/helpers';
 import { ensureAdminAccess, getSessionCookieHeader } from './shared';
 import { REST_ENDPOINTS } from '../../constants/RestEndpoints';
+import { DB_NAME } from './constants';
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
@@ -341,12 +340,22 @@ export async function forceBotWin(matchId: string, botUserId: string) {
   try {
     const cookieHeader = await getSessionCookieHeader();
     const apiBase = REST_ENDPOINTS.API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+    
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Cookie': cookieHeader,
+    };
+    
+    // Use internal secret for server-to-server calls (Lambda -> Colyseus)
+    if (internalSecret) {
+      headers['X-Internal-Secret'] = internalSecret;
+      headers['X-Service-Name'] = 'frontend-lambda';
+    }
+    
     const response = await fetch(`${apiBase}/admin/matches/${matchId}/force-bot-win`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Cookie': cookieHeader,
-      },
+      headers,
       credentials: 'include',
       body: JSON.stringify({ botUserId }),
     });
@@ -363,184 +372,42 @@ export async function forceBotWin(matchId: string, botUserId: string) {
 }
 
 export async function getActiveMatches() {
+  const adminError = await ensureAdminAccess();
+  if (adminError) {
+    return { success: false, error: adminError, matches: [] };
+  }
+
   try {
-    await assertAdminSession();
-    const redis = getRedis();
-    await connectDB();
-    const client = await getMongoClient();
-    const mongoDb = client.db(DB_NAME);
-    const users = mongoDb.collection('users');
-    const problems = mongoDb.collection('problems');
-
-    // Get active match IDs from Redis with timeout
-    let activeMatchIds: string[] = [];
-    try {
-      activeMatchIds = await Promise.race([
-        redis.smembers(RedisKeys.activeMatchesSet),
-        new Promise<string[]>((_, reject) => 
-          setTimeout(() => reject(new Error('Redis timeout')), 2000)
-        )
-      ]).catch(() => []);
-    } catch (error) {
-      console.warn('Redis unavailable for getActiveMatches, returning empty list:', error);
-      return { success: true, matches: [] };
+    const cookieHeader = await getSessionCookieHeader();
+    const apiBase = REST_ENDPOINTS.API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
+    const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
+    
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Cookie': cookieHeader,
+    };
+    
+    // Use internal secret for server-to-server calls (Lambda -> Colyseus)
+    if (internalSecret) {
+      headers['X-Internal-Secret'] = internalSecret;
+      headers['X-Service-Name'] = 'frontend-lambda';
     }
     
-    if (activeMatchIds.length === 0) {
-      return { success: true, matches: [] };
+    const response = await fetch(`${apiBase}/admin/matches/active`, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+    });
+
+    const result = await response.json();
+    if (!response.ok) {
+      return { 
+        success: false, 
+        error: result.error || result.message || 'Authentication required', 
+        matches: [] 
+      };
     }
-
-    const matches = [];
-    
-    for (const matchId of activeMatchIds) {
-      try {
-        // Get match data from Redis
-        const matchKey = RedisKeys.matchKey(matchId);
-        const matchRaw = await redis.get(matchKey);
-        
-        if (!matchRaw) continue;
-        
-        const matchData = JSON.parse(matchRaw);
-
-        // Skip if match is finished
-        if (matchData.status === 'finished' || matchData.endedAt) continue;
-        
-        // Get problem details
-        let problemTitle = 'Unknown Problem';
-        let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
-        
-        if (matchData.problem) {
-          problemTitle = matchData.problem.title || 'Unknown Problem';
-          const diff = matchData.problem.difficulty || 'Medium';
-          difficulty = (diff === 'Easy' || diff === 'Medium' || diff === 'Hard') ? diff : 'Medium';
-        } else if (matchData.problemId) {
-          // Fallback to MongoDB
-          try {
-            const problem = await problems.findOne({ _id: new ObjectId(matchData.problemId) });
-            if (problem) {
-              problemTitle = problem.title || 'Unknown Problem';
-              const diff = problem.difficulty || 'Medium';
-              difficulty = (diff === 'Easy' || diff === 'Medium' || diff === 'Hard') ? diff : 'Medium';
-            }
-          } catch (error) {
-            console.warn(`Could not fetch problem ${matchData.problemId}:`, error);
-          }
-        }
-        
-        // Process players
-        const players = [];
-        const playerIds = Object.keys(matchData.players || {});
-        
-        for (const playerId of playerIds) {
-          // Guests and any non-ObjectId playerIds should never be passed to new ObjectId
-          const isValidObjectId = ObjectId.isValid(playerId);
-          const isGuest = playerId.startsWith('guest_') || !isValidObjectId;
-
-          // Check if this is a bot by looking up in MongoDB (only for valid ObjectIds)
-          let isBot = false;
-          let botCompletionInfo = null;
-          let botUsername = null;
-          let botAvatar = null;
-          
-          if (isValidObjectId) {
-            try {
-              const user = await users.findOne(
-                { _id: new ObjectId(playerId) },
-                { projection: { username: 1, 'profile.avatar': 1, 'stats.rating': 1 } }
-              );
-              
-              if (!user) {
-                // Check if it's a bot
-                const bots = mongoDb.collection('bots');
-                const bot = await bots.findOne(
-                  { _id: new ObjectId(playerId) },
-                  { projection: { username: 1, avatar: 1 } }
-                );
-
-                if (bot) {
-                  isBot = true;
-                  botUsername = bot.username || `Bot ${playerId}`;
-                  botAvatar = bot.avatar;
-
-                  // Get bot completion info from match data
-                  if (matchData.botCompletionTimes && matchData.botCompletionTimes[playerId]) {
-                    botCompletionInfo = matchData.botCompletionTimes[playerId];
-                  } else {
-                    // No bot completion info found for this playerId
-                  }
-                }
-              }
-            } catch (error) {
-              console.warn(`Could not check if ${playerId} is a bot:`, error);
-            }
-          } else {
-            console.log(`Skipping bot/user DB lookup for non-ObjectId playerId ${playerId} (guest: ${isGuest})`);
-          }
-          
-          const playerInfo = {
-            userId: playerId,
-            username: isBot ? botUsername : (matchData.players[playerId]?.username || playerId),
-            isBot,
-            rating: 1200,
-            linesWritten: matchData.linesWritten?.[playerId] || 0,
-            avatar: isBot ? botAvatar : undefined,
-            botCompletionInfo
-          };
-          
-          // Get real user data if not a bot and we have a valid ObjectId
-          if (!isBot && isValidObjectId) {
-            try {
-              const user = await users.findOne(
-                { _id: new ObjectId(playerId) },
-                { projection: { username: 1, 'profile.avatar': 1, 'stats.rating': 1 } }
-              );
-              if (user) {
-                playerInfo.username = user.username || playerInfo.username;
-                playerInfo.rating = user.stats?.rating || playerInfo.rating;
-                playerInfo.avatar = user.profile?.avatar;
-              }
-            } catch (error) {
-              console.warn(`Could not fetch user ${playerId}:`, error);
-            }
-          } else if (!isValidObjectId) {
-            console.log(`Guest or non-ObjectId player ${playerId} - using match data only for display`);
-          }
-          
-          players.push(playerInfo);
-        }
-        
-        // Calculate time elapsed and remaining
-        const startTime = matchData.startedAt ? new Date(matchData.startedAt).getTime() : Date.now();
-        const timeElapsed = Date.now() - startTime;
-        const maxDuration = 45 * 60 * 1000; // 45 minutes in milliseconds
-        const timeRemaining = Math.max(0, maxDuration - timeElapsed);
-        
-        // Process submissions
-        const submissions = (matchData.submissions || []).map((sub: { userId: string; timestamp: string; passed: boolean; language: string }) => ({
-          userId: sub.userId,
-          timestamp: sub.timestamp,
-          passed: sub.passed,
-          language: sub.language
-        }));
-        
-        matches.push({
-          matchId,
-          problemId: matchData.problemId,
-          problemTitle,
-          difficulty,
-          players,
-          status: matchData.status || 'ongoing',
-          startedAt: matchData.startedAt || new Date(startTime).toISOString(),
-          timeElapsed,
-          timeRemaining,
-          submissions
-        });
-      } catch (error) {
-        console.warn(`Error processing match ${matchId}:`, error);
-      }
-    }
-    
-    return { success: true, matches };
+    return result;
   } catch (error) {
     console.error('Error fetching active matches:', error);
     return { 
