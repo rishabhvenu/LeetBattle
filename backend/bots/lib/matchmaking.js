@@ -298,7 +298,17 @@ async function checkAndManageBotDeployment(redis, options = {}) {
         if (deployDelayMs > 0 && i > 0) {
           await sleep(deployDelayMs);
         }
-        const nextBotId = await redis.lpop('bots:rotation:queue');
+        let nextBotId = await redis.lpop('bots:rotation:queue');
+        
+        // If rotation queue is empty, try to recover limbo bots
+        if (!nextBotId && i === 0) {
+          console.log('Rotation queue empty, attempting to recover limbo bots...');
+          const recoveredCount = await recoverLimboBots(redis);
+          if (recoveredCount > 0) {
+            nextBotId = await redis.lpop('bots:rotation:queue');
+          }
+        }
+        
         if (nextBotId) {
           console.log(`Deploying bot ${nextBotId} from rotation queue`);
           await deployBot(redis, nextBotId, {
@@ -847,6 +857,79 @@ async function rotateBot(redis, completedBotId) {
 }
 
 /**
+ * Recover bots that are in "limbo" - not tracked in any Redis set
+ * This handles the case where bots finish matches but don't get returned to rotation queue
+ * @param {Redis} redis - Redis client
+ * @returns {Promise<number>} Number of bots recovered
+ */
+async function recoverLimboBots(redis) {
+  try {
+    const allBots = await getAllBots();
+    if (!allBots || allBots.length === 0) {
+      return 0;
+    }
+    
+    // Get all tracking sets
+    const [deployed, active, cycling, rotationQueue] = await Promise.all([
+      redis.smembers('bots:deployed'),
+      redis.smembers('bots:active'),
+      redis.smembers('bots:cycling'),
+      redis.lrange('bots:rotation:queue', 0, -1),
+    ]);
+    
+    const deployedSet = new Set(deployed);
+    const activeSet = new Set(active);
+    const cyclingSet = new Set(cycling);
+    const rotationSet = new Set(rotationQueue);
+    
+    let recoveredCount = 0;
+    
+    for (const bot of allBots) {
+      const botId = bot._id.toString();
+      
+      // Check if bot is tracked anywhere
+      const isTracked = deployedSet.has(botId) || 
+                        activeSet.has(botId) || 
+                        cyclingSet.has(botId) || 
+                        rotationSet.has(botId);
+      
+      if (!isTracked) {
+        // Also check queue:elo and reservation
+        const [inQueue, hasReservation, currentMatch] = await Promise.all([
+          redis.zscore('queue:elo', botId),
+          redis.get(`queue:reservation:${botId}`),
+          redis.get(`bot:current_match:${botId}`),
+        ]);
+        
+        if (!inQueue && !hasReservation && !currentMatch) {
+          // Bot is completely untracked - add to rotation queue
+          console.log(`[recover] Bot ${botId} found in limbo, adding to rotation queue`);
+          await redis.lrem('bots:rotation:queue', 0, botId); // Remove if exists
+          await redis.rpush('bots:rotation:queue', botId);
+          recoveredCount++;
+        } else if (currentMatch) {
+          // Has stale currentMatch pointer - clean it up
+          console.log(`[recover] Bot ${botId} has stale current_match ${currentMatch}, cleaning up`);
+          await redis.del(`bot:current_match:${botId}`);
+          await redis.lrem('bots:rotation:queue', 0, botId);
+          await redis.rpush('bots:rotation:queue', botId);
+          recoveredCount++;
+        }
+      }
+    }
+    
+    if (recoveredCount > 0) {
+      console.log(`[recover] Recovered ${recoveredCount} limbo bots to rotation queue`);
+    }
+    
+    return recoveredCount;
+  } catch (error) {
+    console.error('[recover] Error recovering limbo bots:', error);
+    return 0;
+  }
+}
+
+/**
  * Prune stale cycling bots that have been stuck for too long
  * This handles cases where MongoDB/connection issues prevented proper cleanup
  * @param {Redis} redis - Redis client
@@ -1020,6 +1103,7 @@ module.exports = {
   rotateBot,
   pruneDeployedBots,
   pruneStaleCyclingBots,
+  recoverLimboBots,
   closeMongoClient,
   waitForMatch,
   // Export constants for testing
