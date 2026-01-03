@@ -211,6 +211,16 @@ async function executeBatchTestCases(
       };
     }
   
+  // #region agent log - DEBUG: Log Judge0 result to console for k8s pod logs
+  console.log(`[DEBUG_H4] ${language} Judge0 result: status=${result.status.id} (${result.status.description})`);
+  if (result.stderr) {
+    console.log(`[DEBUG_H4] ${language} stderr (first 2000 chars):\n${result.stderr.substring(0, 2000)}`);
+  }
+  if (result.stdout && language === 'python') {
+    console.log(`[DEBUG_H4] ${language} stdout (first 500 chars):\n${result.stdout.substring(0, 500)}`);
+  }
+  // #endregion
+  
   // Log detailed error information
   if (result.status.id !== 3) {
     console.error(`${language} batch execution failed:`, {
