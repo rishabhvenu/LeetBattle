@@ -422,182 +422,54 @@ export async function getActiveMatches() {
 
 /**
  * Get match data including problem, opponent stats, and starter code
+ * Uses Colyseus API instead of direct Redis access to avoid cluster MOVED redirect issues
  */
 export async function getMatchData(matchId: string, userId: string) {
   try {
-    const redis = getRedis();
-    const matchKey = RedisKeys.matchKey(matchId);
+    // Use Colyseus API to get match data - avoids Redis Cluster MOVED redirect issues from Lambda
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
     
-    console.log('Looking for match with key:', matchKey, 'for userId:', userId);
+    console.log('Fetching match data from Colyseus API for matchId:', matchId, 'userId:', userId);
     
-    // Get match data from Redis
-    const matchRaw = await redis.get(matchKey);
-    if (!matchRaw) {
-      console.log('Match not found in Redis with key:', matchKey);
-      return { success: false, error: 'match_not_found' };
-    }
+    const response = await fetch(`${apiBase}/match/data?matchId=${encodeURIComponent(matchId)}&userId=${encodeURIComponent(userId)}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    });
     
-    console.log('Match found in Redis, parsing data...');
-    
-    const matchData = JSON.parse(matchRaw);
-    const problem = matchData.problem;
-    
-    // Get opponent userId from match players (array format)
-    const playerUserIds = Array.isArray(matchData.players) 
-      ? matchData.players 
-      : Object.keys(matchData.players || {});
-    const opponentUserId = playerUserIds.find((id: string) => id !== userId) || playerUserIds[0];
-    
-    // Get opponent stats (handle bots and guests)
-    let opponentStats;
-    if (opponentUserId.startsWith('guest_')) {
-      // Guest opponent gets default stats
-      opponentStats = {
-        rating: 1200,
-        wins: 0,
-        losses: 0,
-        totalMatches: 0
-      };
-    } else if (opponentUserId.length === 24) {
-      // Check if it's a bot or regular user (24-char ObjectId)
-      await connectDB();
-      const client = await getMongoClient();
-      const db = client.db(DB_NAME);
-      
-      // First check if it's a bot
-      const bots = db.collection('bots');
-      const bot = await bots.findOne(
-        { _id: new ObjectId(opponentUserId) },
-        { projection: { 'stats.rating': 1, 'stats.wins': 1, 'stats.losses': 1, 'stats.totalMatches': 1 } }
-      );
-      
-      if (bot) {
-        // It's a bot - use bot stats
-        opponentStats = {
-          rating: bot.stats?.rating || 1200,
-          wins: bot.stats?.wins || 0,
-          losses: bot.stats?.losses || 0,
-          totalMatches: bot.stats?.totalMatches || 0
-        };
-      } else {
-        // It's a regular user - use getUserStatsCached
-        opponentStats = await getUserStatsCached(opponentUserId);
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.log('Match not found via API for matchId:', matchId);
+        return { success: false, error: 'match_not_found' };
       }
-    } else {
-      // Regular user - use getUserStatsCached
-      opponentStats = await getUserStatsCached(opponentUserId);
+      console.error('Match API error:', response.status, await response.text());
+      return { success: false, error: 'fetch_failed' };
     }
     
-    // Get current user stats (handle guest users)
-    let userStats;
-    if (userId.startsWith('guest_')) {
-      // Guest users get default stats
-      userStats = {
-        rating: 1200,
-        wins: 0,
-        losses: 0,
-        totalMatches: 0
-      };
-    } else {
-      userStats = await getUserStatsCached(userId);
-    }
+    const apiData = await response.json();
+    console.log('Match data received from API');
     
-    // Get opponent info from Redis playerData
-    const opponentPlayerData = matchData.playerData?.[opponentUserId];
-    
-    let opponentAvatar = null;
-    let opponentUsername = 'Opponent';
-    let opponentName = 'Opponent';
-    
-    // Check Redis first for username
-    if (opponentPlayerData) {
-      opponentUsername = opponentPlayerData.username || 'Opponent';
-    }
-    
-    // Always fetch avatar using centralized function (handles both users and bots)
-    const avatarResult = await getAvatarByIdAction(opponentUserId);
-    if (avatarResult.success) {
-      opponentAvatar = avatarResult.avatar;
-    }
-    
-    // If not in Redis, fetch full user info from MongoDB for name
-    // Skip MongoDB lookup for guest users
-    const isGuestOpponent = opponentUserId.startsWith('guest_');
-    const isValidObjectId = !isGuestOpponent && ObjectId.isValid(opponentUserId);
-    
-    if (!opponentPlayerData && isValidObjectId) {
-      await connectDB();
-      const client = await getMongoClient();
-      const db = client.db(DB_NAME);
-      const users = db.collection('users');
-      const opponentUser = await users.findOne(
-        { _id: new ObjectId(opponentUserId) },
-        { projection: { username: 1, 'profile.firstName': 1, 'profile.lastName': 1 } }
-      );
-      
-      if (opponentUser) {
-        opponentUsername = opponentUser?.username || 'Opponent';
-        opponentName = `${opponentUser?.profile?.firstName || ''} ${opponentUser?.profile?.lastName || ''}`.trim() || opponentUsername;
-      } else {
-        // Check if it's a bot
-        const bots = db.collection('bots');
-        const bot = await bots.findOne(
-          { _id: new ObjectId(opponentUserId) },
-          { projection: { username: 1, fullName: 1 } }
-        );
-        
-        if (bot) {
-          opponentUsername = bot.username || 'Bot';
-          opponentName = bot.fullName || opponentUsername;
-        }
-      }
-    } else if (isGuestOpponent) {
-      // Guest opponent - use default values
-      opponentUsername = 'Guest';
-      opponentName = 'Guest';
-    } else if (opponentPlayerData && isValidObjectId) {
-      // Get full name from MongoDB for user
-      await connectDB();
-      const client = await getMongoClient();
-      const db = client.db(DB_NAME);
-      const users = db.collection('users');
-      const opponentUser = await users.findOne(
-        { _id: new ObjectId(opponentUserId) },
-        { projection: { 'profile.firstName': 1, 'profile.lastName': 1 } }
-      );
-      
-      if (opponentUser) {
-        opponentName = `${opponentUser?.profile?.firstName || ''} ${opponentUser?.profile?.lastName || ''}`.trim() || opponentUsername;
-      } else {
-        // Check if it's a bot
-        const bots = db.collection('bots');
-        const bot = await bots.findOne(
-          { _id: new ObjectId(opponentUserId) },
-          { projection: { fullName: 1 } }
-        );
-        
-        if (bot) {
-          opponentName = bot.fullName || opponentUsername;
-        }
-      }
-    }
+    // API already provides all data we need - extract and format
+    const problem = apiData.problem;
+    const opponentStats = apiData.opponentStats || { rating: 1200, wins: 0, losses: 0, totalMatches: 0, name: 'Opponent', username: 'Opponent', avatar: null };
+    const userStats = apiData.userStats || { rating: 1200, wins: 0, losses: 0, totalMatches: 0 };
     
     // Generate starter code if not present
-    const starterCode = problem.starterCode || generateStarterCode(problem.signature);
+    const starterCode = problem?.starterCode || (problem?.signature ? generateStarterCode(problem.signature) : {});
     
     const opponentData = {
-        userId: opponentUserId,
-      username: opponentUsername,
-      name: opponentName,
-      avatar: opponentAvatar,
-        globalRank: opponentStats.globalRank || 1234,
-        gamesWon: opponentStats.wins || 0,
-        winRate: opponentStats.totalMatches > 0 ? Math.round((opponentStats.wins / opponentStats.totalMatches) * 100) : 0,
-        rating: opponentStats.rating || 1200,
+      userId: opponentStats.userId || '',
+      username: opponentStats.username || 'Opponent',
+      name: opponentStats.name || opponentStats.username || 'Opponent',
+      avatar: opponentStats.avatar || null,
+      globalRank: opponentStats.globalRank || 1234,
+      gamesWon: opponentStats.wins || 0,
+      winRate: opponentStats.totalMatches > 0 ? Math.round((opponentStats.wins / opponentStats.totalMatches) * 100) : 0,
+      rating: opponentStats.rating || 1200,
     };
     
-    // Remove testCases from client-facing problem data (security)
-    const { testCases, solutions, ...clientProblem } = problem;
+    // Remove testCases from client-facing problem data (security) - API should already do this
+    const { testCases, solutions, ...clientProblem } = problem || {};
     
     // Recursively serialize ObjectId fields to strings - fix for React rendering error
     const serializeObjectIds = (obj: any): any => {
