@@ -697,34 +697,13 @@ import sys
 # Test runner
 if __name__ == "__main__":
     solution = Solution()
-    test_cases_raw = ${testCasesLiteral}
-    
-    # #region agent log - DEBUG: Print to stderr for Judge0 capture
-    sys.stderr.write(f"DEBUG_H1: test_cases_raw type={type(test_cases_raw).__name__}, isStr={isinstance(test_cases_raw, str)}\\n")
-    sys.stderr.write(f"DEBUG_H1: test_cases_raw preview={str(test_cases_raw)[:300]}\\n")
-    # #endregion
-    
-    if isinstance(test_cases_raw, str):
-        test_cases = json.loads(test_cases_raw)
-    else:
-        test_cases = test_cases_raw
-    
-    # #region agent log - DEBUG: Log parsed test cases
-    sys.stderr.write(f"DEBUG_H2: test_cases type={type(test_cases).__name__}, len={len(test_cases) if hasattr(test_cases, '__len__') else 'N/A'}\\n")
-    if test_cases:
-        sys.stderr.write(f"DEBUG_H2: first_item type={type(test_cases[0]).__name__}, value={str(test_cases[0])[:200]}\\n")
-    # #endregion
+    test_cases = json.loads(${testCasesLiteral})
     
     for i, test_case in enumerate(test_cases):
         input_data = test_case["input"]
         expected = test_case["output"]
         
 ${argsDeserialization}
-
-        # #region agent log - DEBUG: Log input values for each test
-        sys.stderr.write(f"DEBUG_H3: Test {i} - ${parameters.map(p => `${p.name}_type={type(${p.name}).__name__}`).join(', ')}\\n")
-        sys.stderr.write(f"DEBUG_H3: Test {i} - ${parameters.map(p => `${p.name}={${p.name}}`).join(', ')}\\n")
-        # #endregion
 ${cycleAttachment ? `${cycleAttachment}
 ` : ''}
         result = solution.${functionName}(${args})
