@@ -339,7 +339,8 @@ export async function forceBotWin(matchId: string, botUserId: string) {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const apiBase = REST_ENDPOINTS.API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
+    // Prioritize COLYSEUS_HTTP_URL for Colyseus API calls (not the frontend API_BASE)
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
     const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
     
     const headers: Record<string, string> = {
@@ -379,7 +380,8 @@ export async function getActiveMatches() {
 
   try {
     const cookieHeader = await getSessionCookieHeader();
-    const apiBase = REST_ENDPOINTS.API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
+    // Prioritize COLYSEUS_HTTP_URL for Colyseus API calls (not the frontend API_BASE)
+    const apiBase = process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
     const internalSecret = process.env.INTERNAL_SERVICE_SECRET;
     
     const headers: Record<string, string> = {
