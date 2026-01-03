@@ -87,26 +87,26 @@ export function registerQueueRoutes(router: Router) {
   router.get('/global/general-stats', rateLimitMiddleware(queueLimiter), async (ctx) => {
     try {
       const redis = getRedis();
-      const results = await redis
-        .multi()
-        .zcard(RedisKeys.eloQueue) // 0
-        .scard(RedisKeys.activeMatchesSet) // 1
-        .scard(RedisKeys.queuedPlayersSet) // 2
-        .scard(RedisKeys.humanPlayersSet) // 3
-        .scard(RedisKeys.botsDeployedSet) // 4
-        .scard(RedisKeys.botsActiveSet) // 5
-        .llen(RedisKeys.botsRotationQueue) // 6
-        .exec();
-
+      
+      // Use Promise.all instead of multi() to support Redis Cluster
+      // (multi() fails when keys are on different cluster slots)
       const [
-        [, queueSizeRaw],
-        [, activeMatchesRaw],
-        [, queuedPlayersCountRaw],
-        [, queuedHumansCountRaw],
-        [, botsDeployedCountRaw],
-        [, botsActiveCountRaw],
-        [, botRotationQueueLengthRaw],
-      ] = results || [];
+        queueSizeRaw,
+        activeMatchesRaw,
+        queuedPlayersCountRaw,
+        queuedHumansCountRaw,
+        botsDeployedCountRaw,
+        botsActiveCountRaw,
+        botRotationQueueLengthRaw,
+      ] = await Promise.all([
+        redis.zcard(RedisKeys.eloQueue),
+        redis.scard(RedisKeys.activeMatchesSet),
+        redis.scard(RedisKeys.queuedPlayersSet),
+        redis.scard(RedisKeys.humanPlayersSet),
+        redis.scard(RedisKeys.botsDeployedSet),
+        redis.scard(RedisKeys.botsActiveSet),
+        redis.llen(RedisKeys.botsRotationQueue),
+      ]);
 
       const queueSize = Number(queueSizeRaw || 0);
       const activeMatches = Number(activeMatchesRaw || 0);
