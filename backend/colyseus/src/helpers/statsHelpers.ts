@@ -106,7 +106,14 @@ export async function fetchParticipantStats(userId: string, db: Db): Promise<Par
  * Handles users, bots, and guests
  */
 export async function fetchParticipantIdentity(userId: string, db: Db): Promise<ParticipantIdentity> {
+  // #region agent log
+  console.log(`[DEBUG] fetchParticipantIdentity called - userId: ${userId}, hypothesisId: B`);
+  // #endregion
+
   if (!userId) {
+    // #region agent log
+    console.log(`[DEBUG] fetchParticipantIdentity - userId is empty/null, returning defaults, hypothesisId: B`);
+    // #endregion
     return { username: 'Opponent', fullName: 'Opponent', avatar: null };
   }
 
@@ -115,12 +122,19 @@ export async function fetchParticipantIdentity(userId: string, db: Db): Promise<
   }
 
   if (!ObjectId.isValid(userId)) {
+    // #region agent log
+    console.log(`[DEBUG] fetchParticipantIdentity - userId not valid ObjectId: ${userId}, hypothesisId: B`);
+    // #endregion
     return { username: 'Opponent', fullName: 'Opponent', avatar: null };
   }
 
   // Check bots first
   const botsCollection = db.collection('bots');
   const bot = await botsCollection.findOne({ _id: new ObjectId(userId) });
+  
+  // #region agent log
+  console.log(`[DEBUG] fetchParticipantIdentity - bot lookup result: ${bot ? `found (${bot.username})` : 'not found'}, userId: ${userId}, hypothesisId: C,E`);
+  // #endregion
   
   if (bot) {
     return {
@@ -134,6 +148,10 @@ export async function fetchParticipantIdentity(userId: string, db: Db): Promise<
   const usersCollection = db.collection('users');
   const user = await usersCollection.findOne({ _id: new ObjectId(userId) });
   
+  // #region agent log
+  console.log(`[DEBUG] fetchParticipantIdentity - user lookup result: ${user ? `found (${user.username})` : 'not found'}, userId: ${userId}, hypothesisId: C,E`);
+  // #endregion
+  
   if (user) {
     return {
       username: user.username || 'User',
@@ -142,6 +160,9 @@ export async function fetchParticipantIdentity(userId: string, db: Db): Promise<
     };
   }
 
+  // #region agent log
+  console.log(`[DEBUG] fetchParticipantIdentity - participant not found in bots or users, userId: ${userId}, hypothesisId: E`);
+  // #endregion
   return { username: 'Opponent', fullName: 'Opponent', avatar: null };
 }
 
