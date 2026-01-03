@@ -76,6 +76,10 @@ async function initializeRotationQueue(redis) {
     console.log(`Found ${existingActive.length} bots already marked as active`);
     
     const botsInMatches = new Set();
+    // Get all active matches to validate bot:current_match keys
+    const activeMatches = await redis.smembers('matches:active');
+    const activeMatchSet = new Set(activeMatches);
+    
     for (const bot of allBots) {
       const botId = bot._id.toString();
       const [reservation, isActive, currentMatch] = await Promise.all([
@@ -84,7 +88,13 @@ async function initializeRotationQueue(redis) {
         redis.get(`bot:current_match:${botId}`),
       ]);
       
-      if (reservation || isActive || currentMatch) {
+      // Validate that currentMatch actually exists in matches:active
+      // If Colyseus restarted, matches are gone but Redis keys remain stale
+      if (currentMatch && !activeMatchSet.has(currentMatch)) {
+        console.log(`[init] Bot ${botId} has stale match key ${currentMatch} (match no longer active) - cleaning up`);
+        await redis.del(`bot:current_match:${botId}`);
+        // Don't consider this bot as in a match
+      } else if (reservation || isActive || currentMatch) {
         botsInMatches.add(botId);
         if (currentMatch) {
           console.log(`Bot ${botId} is already in match ${currentMatch}`);
@@ -92,7 +102,7 @@ async function initializeRotationQueue(redis) {
       }
     }
     
-    console.log(`Found ${botsInMatches.size} bots with active matches/reservations`);
+    console.log(`Found ${botsInMatches.size} bots with active matches/reservations (validated against ${activeMatches.length} active matches)`);
     
     // Validate deployed bots - only count those that are actually in queue OR in active match
     // Clear orphaned deployed bots (marked deployed but not actually queued or active)
