@@ -214,6 +214,7 @@ export async function generateProblem(data: {
     const artifactsResponse = await openai.chat.completions.create({
       // Use the latest GPT-5.2 model for generating solutions and test cases
       model: 'gpt-5.2',
+      reasoning_effort: 'high',
       messages: [
         { role: 'system', content: PROBLEM_ARTIFACT_PROMPT },
         ...(specialInputInstructions
@@ -234,8 +235,7 @@ export async function generateProblem(data: {
           ),
         },
       ],
-      // Allow high diversity in artifacts generation
-      temperature: 1,
+      temperature: 0.7,
       response_format: { type: 'json_object' },
     });
 
