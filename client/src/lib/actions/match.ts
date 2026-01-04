@@ -451,7 +451,8 @@ export async function getMatchData(matchId: string, userId: string) {
     
     // API already provides all data we need - extract and format
     const problem = apiData.problem;
-    const opponentStats = apiData.opponentStats || { rating: 1200, wins: 0, losses: 0, totalMatches: 0, name: 'Opponent', username: 'Opponent', avatar: null };
+    // Backend sends "opponent" not "opponentStats" - fixed field name
+    const opponentStats = apiData.opponent || { rating: 1200, wins: 0, losses: 0, totalMatches: 0, name: 'Opponent', username: 'Opponent', avatar: null };
     const userStats = apiData.userStats || { rating: 1200, wins: 0, losses: 0, totalMatches: 0 };
     
     // Generate starter code if not present
