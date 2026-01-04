@@ -90,10 +90,6 @@ export function registerMatchRoutes(router: Router) {
       const matchId = (ctx.request.query as any).matchId as string;
       const userId = (ctx.request.query as any).userId as string;
 
-      // #region agent log
-      console.log(`[DEBUG] GET /match/data - matchId: ${matchId}, userId: ${userId}, hypothesisId: A`);
-      // #endregion
-
       if (!matchId || !userId) {
         ctx.status = 400;
         ctx.body = { error: 'matchId and userId required' };
@@ -120,15 +116,7 @@ export function registerMatchRoutes(router: Router) {
         ? playerEntries
         : Object.keys(playerEntries);
 
-      // #region agent log
-      console.log(`[DEBUG] match/data players structure - type: ${typeof playerEntries}, isArray: ${Array.isArray(playerEntries)}, keys: ${JSON.stringify(playerIds)}, userId: ${userId}, hypothesisId: A`);
-      // #endregion
-
       const opponentUserId = playerIds.find((id) => id !== userId) || playerIds[0];
-
-      // #region agent log
-      console.log(`[DEBUG] match/data opponentUserId resolved - opponentUserId: ${opponentUserId}, playerIds: ${JSON.stringify(playerIds)}, hypothesisId: A,B`);
-      // #endregion
 
       // Resolve opponent stats
       const opponentStats = opponentUserId
@@ -152,10 +140,6 @@ export function registerMatchRoutes(router: Router) {
         console.warn(`Failed to resolve opponent identity for ${opponentUserId}:`, error);
         return { username: 'Opponent', fullName: 'Opponent', avatar: null };
       });
-
-      // #region agent log
-      console.log(`[DEBUG] match/data identity resolved - opponentUserId: ${opponentUserId}, username: ${identity.username}, avatar: ${identity.avatar ? 'present' : 'null'}, hypothesisId: B,C,E`);
-      // #endregion
 
       opponentUsername = identity.username;
       opponentName = identity.fullName;

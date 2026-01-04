@@ -770,14 +770,6 @@ app.use(cors({
   credentials: true 
 }));
 
-// #region agent log - HTTP request logger
-app.use(async (ctx, next) => {
-  if (ctx.path.includes('match') || ctx.path.includes('queue')) {
-    console.log(`[DEBUG] HTTP ${ctx.method} ${ctx.path} - query: ${JSON.stringify(ctx.query)}, hypothesisId: HTTP`);
-  }
-  await next();
-});
-// #endregion
 
 // Health check endpoint for Kubernetes probes (registered as app middleware BEFORE router to ensure it's always accessible)
 app.use(async (ctx, next) => {
@@ -2500,10 +2492,6 @@ router.get('/match/data', async (ctx) => {
   const matchId = ctx.request.query.matchId as string | undefined;
   const userId = ctx.request.query.userId as string | undefined;
 
-  // #region agent log
-  console.log(`[DEBUG] index.ts /match/data - matchId: ${matchId}, userId: ${userId}, hypothesisId: A`);
-  // #endregion
-
   if (!matchId || !userId) {
     ctx.status = 400;
     ctx.body = { success: false, error: 'matchId_and_userId_required' };
@@ -2536,10 +2524,6 @@ router.get('/match/data', async (ctx) => {
 
     const opponentUserId = playerIds.find((id) => id !== userId) || playerIds[0];
 
-    // #region agent log
-    console.log(`[DEBUG] index.ts opponentUserId resolved - opponentUserId: ${opponentUserId}, playerIds: ${JSON.stringify(playerIds)}, userId: ${userId}, hypothesisId: A,B`);
-    // #endregion
-
     // Resolve opponent stats
     const opponentStats = opponentUserId
       ? await fetchParticipantStats(opponentUserId, db).catch((error) => {
@@ -2562,10 +2546,6 @@ router.get('/match/data', async (ctx) => {
       console.warn(`Failed to resolve opponent identity for ${opponentUserId}:`, error);
       return { username: 'Opponent', fullName: 'Opponent', avatar: null };
     });
-
-    // #region agent log
-    console.log(`[DEBUG] index.ts identity resolved - opponentUserId: ${opponentUserId}, username: ${identity.username}, fullName: ${identity.fullName}, avatar: ${identity.avatar ? 'present' : 'null'}, hypothesisId: B,C,E`);
-    // #endregion
 
     opponentUsername = identity.username;
     opponentName = identity.fullName;
@@ -2632,10 +2612,6 @@ router.get('/match/data', async (ctx) => {
         : 0,
       rating: opponentStats.rating ?? 1200,
     };
-
-    // #region agent log
-    console.log(`[DEBUG] index.ts RESPONSE - opponent: ${JSON.stringify(opponentData)}, hypothesisId: FINAL`);
-    // #endregion
 
     ctx.body = {
       success: true,
