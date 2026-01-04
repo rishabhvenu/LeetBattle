@@ -24,8 +24,6 @@ export function getRedis(): Cluster | Redis {
           })
         : [{ host, port }]; // Fallback to REDIS_HOST:REDIS_PORT as initial node
       
-      console.log(`Redis: Using CLUSTER mode with ${clusterNodes.length} initial node(s): ${clusterNodes.map(n => `${n.host}:${n.port}`).join(', ')}`);
-      
       redis = new Cluster(clusterNodes, {
             redisOptions: {
               password,
@@ -43,7 +41,6 @@ export function getRedis(): Cluster | Redis {
           });
     } else {
       // Single Redis instance mode (backward compatibility)
-      console.log(`Redis: Using STANDALONE mode with ${host}:${port}`);
       redis = new Redis({ 
         host, 
         port, 
