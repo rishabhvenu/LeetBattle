@@ -770,6 +770,15 @@ app.use(cors({
   credentials: true 
 }));
 
+// #region agent log - HTTP request logger
+app.use(async (ctx, next) => {
+  if (ctx.path.includes('match') || ctx.path.includes('queue')) {
+    console.log(`[DEBUG] HTTP ${ctx.method} ${ctx.path} - query: ${JSON.stringify(ctx.query)}, hypothesisId: HTTP`);
+  }
+  await next();
+});
+// #endregion
+
 // Health check endpoint for Kubernetes probes (registered as app middleware BEFORE router to ensure it's always accessible)
 app.use(async (ctx, next) => {
   if (ctx.path === '/health' && ctx.method === 'GET') {
