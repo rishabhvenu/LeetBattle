@@ -11,8 +11,15 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
     const redis = getRedis();
     const cacheKey = `user:${userId}:matchHistory:${page}`;
     
-    // Try cache first
-    const cached = await redis.get(cacheKey);
+    // Try cache first - wrap in separate try-catch to prevent Redis errors from blocking MongoDB query
+    let cached: string | null = null;
+    try {
+      cached = await redis.get(cacheKey);
+    } catch (redisError: any) {
+      console.warn('Redis cache error, falling back to MongoDB:', redisError?.message);
+      // Continue to MongoDB - don't let Redis errors block the query
+    }
+    
     if (cached) {
       try {
         return JSON.parse(cached);
@@ -191,8 +198,9 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
             foundInRedis = true;
           }
         }
-      } catch (error) {
-        console.warn('Could not fetch rating changes from Redis for match:', match._id.toString());
+      } catch (error: any) {
+        // Ignore Redis errors for rating changes - continue with MongoDB data
+        console.warn('Could not fetch rating changes from Redis for match:', match._id.toString(), error?.message);
       }
       
       // Fallback to MongoDB if Redis doesn't have the data
@@ -279,11 +287,16 @@ export async function getMatchHistory(userId: string, page: number = 1, limit: n
       hasMore: formattedMatches.length === limit
     };
 
-    // Cache for 5 minutes
-    await redis.setex(cacheKey, 300, JSON.stringify(result));
+    // Cache for 5 minutes - wrap in try-catch to prevent Redis errors from blocking response
+    try {
+      await redis.setex(cacheKey, 300, JSON.stringify(result));
+    } catch (cacheError: any) {
+      console.warn('Failed to cache match history:', cacheError?.message);
+      // Continue - caching failure shouldn't block the response
+    }
     
     return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching match history:', error);
     return {
       matches: [],

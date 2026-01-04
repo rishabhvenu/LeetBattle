@@ -9,21 +9,24 @@ export function getRedis(): Cluster | Redis {
     const password = process.env.REDIS_PASSWORD || undefined;
     
     // Check if Redis Cluster mode is enabled
-    // Only enable cluster if explicitly set to 'true' AND cluster nodes are provided
-    const isCluster = process.env.REDIS_CLUSTER_ENABLED === 'true' && 
-                      process.env.REDIS_CLUSTER_NODES !== undefined &&
-                      process.env.REDIS_CLUSTER_NODES.trim() !== '';
+    // Enable cluster if explicitly set to 'true' - will use REDIS_CLUSTER_NODES if provided,
+    // otherwise falls back to REDIS_HOST:REDIS_PORT as the initial node (ioredis auto-discovers)
+    const isCluster = process.env.REDIS_CLUSTER_ENABLED === 'true';
     
     if (isCluster) {
-      // Redis Cluster mode - use cluster nodes from env or single entry point
-      const clusterNodes = process.env.REDIS_CLUSTER_NODES
-        ? process.env.REDIS_CLUSTER_NODES.split(',').map(node => {
+      // Redis Cluster mode - use cluster nodes from env or REDIS_HOST:REDIS_PORT as entry point
+      // ioredis Cluster client will auto-discover other nodes from the initial connection
+      const clusterNodesEnv = process.env.REDIS_CLUSTER_NODES?.trim();
+      const clusterNodes = clusterNodesEnv
+        ? clusterNodesEnv.split(',').map(node => {
             const [h, p] = node.trim().split(':');
             return { host: h, port: parseInt(p || '6379', 10) };
           })
-        : [{ host, port }];
+        : [{ host, port }]; // Fallback to REDIS_HOST:REDIS_PORT as initial node
       
-          redis = new Cluster(clusterNodes, {
+      console.log(`Redis: Using CLUSTER mode with ${clusterNodes.length} initial node(s): ${clusterNodes.map(n => `${n.host}:${n.port}`).join(', ')}`);
+      
+      redis = new Cluster(clusterNodes, {
             redisOptions: {
               password,
               lazyConnect: true,  // Don't connect immediately - wait until first command
@@ -40,6 +43,7 @@ export function getRedis(): Cluster | Redis {
           });
     } else {
       // Single Redis instance mode (backward compatibility)
+      console.log(`Redis: Using STANDALONE mode with ${host}:${port}`);
       redis = new Redis({ 
         host, 
         port, 
