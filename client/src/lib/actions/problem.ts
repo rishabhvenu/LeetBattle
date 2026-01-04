@@ -235,7 +235,7 @@ export async function generateProblem(data: {
           ),
         },
       ],
-      temperature: 0.7,
+      temperature: 1,
       response_format: { type: 'json_object' },
     });
 
