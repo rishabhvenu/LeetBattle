@@ -128,17 +128,25 @@ export async function getUserStatsCached(userId: string) {
     // It's a bot - use bot stats
     rating = botDoc.stats?.rating ?? 1200;
     timeCoded = botDoc.stats?.timeCoded ?? 0;
-    // For bots, use a simple rank calculation (could be improved)
+    // #region agent log
+    // FIX: Count both bots AND users with higher rating for global rank
     const higherBotCount = await bots.countDocuments({ 'stats.rating': { $gt: rating } });
-    globalRank = higherBotCount + 1;
+    const higherUserCount = await users.countDocuments({ 'stats.rating': { $gt: rating } });
+    globalRank = higherBotCount + higherUserCount + 1;
+    console.log(`[Rank Debug] Bot ${userId}: rating=${rating}, higherBots=${higherBotCount}, higherUsers=${higherUserCount}, globalRank=${globalRank}`);
+    // #endregion
   } else {
     // It's a regular user - use user stats
     const userDoc = await users.findOne({ _id: userObjectId }, { projection: { 'stats.rating': 1, 'stats.timeCoded': 1 } }) as { stats?: { rating?: number; timeCoded?: number } } | null;
     rating = userDoc?.stats?.rating ?? 1200;
     timeCoded = userDoc?.stats?.timeCoded ?? 0;
-    // Compute global rank among all users by rating: count users with higher rating + 1
-    const higherCount = await users.countDocuments({ 'stats.rating': { $gt: rating } });
-    globalRank = higherCount + 1;
+    // #region agent log
+    // FIX: Count both users AND bots with higher rating for global rank (matches leaderboard)
+    const higherUserCount = await users.countDocuments({ 'stats.rating': { $gt: rating } });
+    const higherBotCount = await bots.countDocuments({ 'stats.rating': { $gt: rating } });
+    globalRank = higherUserCount + higherBotCount + 1;
+    console.log(`[Rank Debug] User ${userId}: rating=${rating}, higherUsers=${higherUserCount}, higherBots=${higherBotCount}, globalRank=${globalRank}`);
+    // #endregion
   }
 
   const stats = {
