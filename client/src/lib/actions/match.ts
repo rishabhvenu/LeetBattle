@@ -464,8 +464,8 @@ export async function getMatchData(matchId: string, userId: string) {
       name: opponentStats.name || opponentStats.username || 'Opponent',
       avatar: opponentStats.avatar || null,
       globalRank: opponentStats.globalRank || 1234,
-      gamesWon: opponentStats.wins || 0,
-      winRate: opponentStats.totalMatches > 0 ? Math.round((opponentStats.wins / opponentStats.totalMatches) * 100) : 0,
+      gamesWon: opponentStats.gamesWon || 0,  // Backend sends gamesWon, not wins
+      winRate: opponentStats.winRate || 0,     // Backend already calculates winRate
       rating: opponentStats.rating || 1200,
     };
     
