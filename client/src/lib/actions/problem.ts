@@ -211,35 +211,68 @@ export async function generateProblem(data: {
 - Do NOT rename these fields; use "pos" or "cycleIndex" exactly so the runner can detect them.`
         : '';
 
-    const artifactsResponse = await openai.chat.completions.create({
-      // Use the latest GPT-5.2 model for generating solutions and test cases
-      model: 'gpt-5.2',
-      reasoning_effort: 'high',
-      messages: [
-        { role: 'system', content: PROBLEM_ARTIFACT_PROMPT },
-        ...(specialInputInstructions
-          ? [{ role: 'system' as const, content: specialInputInstructions }]
-          : []),
-        {
-          role: 'user',
-          content: JSON.stringify(
-            {
-              problem: generatedProblem,
-              languages: GENERATION_LANGUAGES,
-              numTestCases: 15,
-              maxInputSizeHint: 30,
-              targetTimeComplexity: timeComplexity,
-            },
-            null,
-            2
-          ),
-        },
-      ],
-      temperature: 1,
-      response_format: { type: 'json_object' },
-    });
+    // #region agent log
+    console.log('[DEBUG] Before OpenAI artifacts API call', JSON.stringify({location:'problem.ts:214',message:'Before OpenAI artifacts API call',data:{model:'gpt-5.2',hasReasoningEffort:false,userContentLength:JSON.stringify({problem:generatedProblem,languages:GENERATION_LANGUAGES,numTestCases:15,maxInputSizeHint:30,targetTimeComplexity:timeComplexity},null,2).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C'}));
+    // #endregion
+
+    const artifactsApiCallStart = Date.now();
+    let artifactsResponse: any;
+    let artifactsApiError: any;
+    
+    try {
+      // Build the API call parameters - reasoning_effort is only supported for o1 models, not gpt-5.2
+      const apiParams: any = {
+        model: 'gpt-5.2',
+        messages: [
+          { role: 'system', content: PROBLEM_ARTIFACT_PROMPT },
+          ...(specialInputInstructions
+            ? [{ role: 'system' as const, content: specialInputInstructions }]
+            : []),
+          {
+            role: 'user',
+            content: JSON.stringify(
+              {
+                problem: generatedProblem,
+                languages: GENERATION_LANGUAGES,
+                numTestCases: 15,
+                maxInputSizeHint: 30,
+                targetTimeComplexity: timeComplexity,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        temperature: 1,
+        response_format: { type: 'json_object' },
+      };
+      
+      // Only add reasoning_effort for models that support it (o1 models)
+      // gpt-5.2 does NOT support reasoning_effort, so we omit it
+      
+      artifactsResponse = await openai.chat.completions.create(apiParams);
+    } catch (error: any) {
+      artifactsApiError = error;
+      // #region agent log
+      console.log('[DEBUG] OpenAI artifacts API call failed', JSON.stringify({location:'problem.ts:250',message:'OpenAI artifacts API call failed',data:{errorType:error?.constructor?.name,errorMessage:error?.message,errorCode:error?.code,errorStatus:error?.status,errorResponse:error?.response?.data,hasReasoningEffort:false},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,E'}));
+      // #endregion
+      // Provide a more descriptive error message
+      const errorMessage = error?.message || 'Unknown OpenAI API error';
+      const errorCode = error?.code || error?.status || 'UNKNOWN';
+      throw new Error(`OpenAI API error (${errorCode}): ${errorMessage}`);
+    }
+
+    const artifactsApiCallDuration = Date.now() - artifactsApiCallStart;
+    // #region agent log
+    console.log('[DEBUG] OpenAI artifacts API call succeeded', JSON.stringify({location:'problem.ts:243',message:'OpenAI artifacts API call succeeded',data:{durationMs:artifactsApiCallDuration,hasResponse:!!artifactsResponse,hasChoices:!!artifactsResponse?.choices,choicesLength:artifactsResponse?.choices?.length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'}));
+    // #endregion
 
     const artifactContent = artifactsResponse.choices[0]?.message?.content;
+    
+    // #region agent log
+    console.log('[DEBUG] After getting artifactContent', JSON.stringify({location:'problem.ts:250',message:'After getting artifactContent',data:{hasContent:!!artifactContent,contentLength:artifactContent?.length,contentPreview:artifactContent?.substring(0,200)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C,D'}));
+    // #endregion
+    
     if (!artifactContent) {
       throw new Error('OpenAI returned empty artifacts response');
     }
@@ -247,7 +280,13 @@ export async function generateProblem(data: {
     let artifacts: GeneratedArtifacts;
     try {
       artifacts = JSON.parse(artifactContent) as GeneratedArtifacts;
-    } catch (error) {
+      // #region agent log
+      console.log('[DEBUG] JSON parse succeeded', JSON.stringify({location:'problem.ts:258',message:'JSON parse succeeded',data:{hasArtifacts:!!artifacts,hasSolutions:!!artifacts?.solutions,hasTestCases:!!artifacts?.testCases,testCasesLength:artifacts?.testCases?.length,artifactsSize:JSON.stringify(artifacts).length},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'}));
+      // #endregion
+    } catch (error: any) {
+      // #region agent log
+      console.log('[DEBUG] JSON parse failed', JSON.stringify({location:'problem.ts:261',message:'JSON parse failed',data:{errorMessage:error?.message,contentLength:artifactContent?.length,contentPreview:artifactContent?.substring(0,500)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'}));
+      // #endregion
       throw new Error('Failed to parse artifacts response JSON');
     }
 
@@ -306,7 +345,7 @@ export async function generateProblem(data: {
 
     const insertResult = await problemsCollection.insertOne(problemDocument as any);
 
-    return {
+    const returnValue = {
       success: true,
       problemId: insertResult.insertedId.toString(),
       problem: {
@@ -318,7 +357,16 @@ export async function generateProblem(data: {
       verified: false,
       verificationSummary: 'Problem stored - verification pending',
     };
+
+    // #region agent log
+    console.log('[DEBUG] Before returning success response', JSON.stringify({location:'problem.ts:310',message:'Before returning success response',data:{returnValueSize:JSON.stringify(returnValue).length,hasProblem:!!returnValue.problem},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'}));
+    // #endregion
+
+    return returnValue;
   } catch (error: unknown) {
+    // #region agent log
+    console.log('[DEBUG] Error caught in generateProblem', JSON.stringify({location:'problem.ts:323',message:'Error caught in generateProblem',data:{errorType:error?.constructor?.name,errorMessage:(error as Error)?.message,errorStack:(error as Error)?.stack?.substring(0,500)},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A,B,C,D,E,F'}));
+    // #endregion
     console.error('Error generating problem:', error);
     return { success: false, error: (error as Error).message || 'Failed to generate problem' };
   }
