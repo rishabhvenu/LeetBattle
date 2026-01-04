@@ -163,7 +163,7 @@ export default function ProblemManagement() {
         setTimeComplexity('O(n)');
         loadUnverifiedProblems();
       } else {
-        toast.error(result.error || 'Failed to generate problem');
+        toast.error('error' in result ? result.error : 'Failed to generate problem');
       }
     } catch (error) {
       console.error('Error generating problem:', error);
