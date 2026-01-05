@@ -98,12 +98,6 @@ export async function getLeaderboardData(page: number = 1, limit: number = 10) {
       isBot: Boolean(entry.isBot),
     }));
 
-    // #region agent log
-    const botsInPage = usersPage.filter(u => u.isBot).length;
-    const humansInPage = usersPage.filter(u => !u.isBot).length;
-    fetch('http://127.0.0.1:7244/ingest/ca6a8763-761a-486d-b90c-f61e3733ef71',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'leaderboard.ts:87',message:'Leaderboard data fetched',data:{page,limit:validLimit,totalEntries,userCount,botCount,botsInPage,humansInPage,topRatings:usersPage.slice(0,5).map(u=>({username:u.username,rating:u.rating,isBot:u.isBot}))},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
-
     const payload = { users: usersPage, totalPages };
 
     // Cache the result for 60 seconds

@@ -335,7 +335,8 @@
           // Optional: Comma-separated list of cluster nodes (e.g., "node1:6379,node2:6379")
           // If not set, uses REDIS_HOST:REDIS_PORT as entry point
           REDIS_CLUSTER_NODES: process.env.REDIS_CLUSTER_NODES || '',
-          // Colyseus backend URLs
+          // Colyseus backend URLs (COLYSEUS_HTTP_URL is runtime-read, NEXT_PUBLIC_ are build-time)
+          COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || process.env.COLYSEUS_HTTP_URL || '',
           NEXT_PUBLIC_API_BASE: process.env.NEXT_PUBLIC_API_BASE || '',
           NEXT_PUBLIC_COLYSEUS_HTTP_URL: process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '',
           NEXT_PUBLIC_COLYSEUS_WS_URL: process.env.NEXT_PUBLIC_COLYSEUS_WS_URL || '',

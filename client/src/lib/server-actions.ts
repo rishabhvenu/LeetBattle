@@ -80,7 +80,9 @@ function roundToNearestEstimate(num: number): number {
 
 export async function getGeneralStats() {
   try {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || '';
+    // Use COLYSEUS_HTTP_URL (runtime env var) first, then fall back to NEXT_PUBLIC_ vars
+    // NEXT_PUBLIC_ vars are baked in at build time; COLYSEUS_HTTP_URL is read at runtime
+    const apiBase = process.env.COLYSEUS_HTTP_URL || process.env.NEXT_PUBLIC_COLYSEUS_HTTP_URL || process.env.NEXT_PUBLIC_API_BASE || '';
     const response = await fetch(`${apiBase}/global/general-stats`, {
       method: 'GET',
       headers: {
