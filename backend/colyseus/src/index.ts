@@ -589,6 +589,9 @@ router.post('/guest/match/claim', async (ctx) => {
 
 // Bot rotation endpoints
 router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) => {
+  // #region agent log
+  console.log('[DEBUG-A] rotation config endpoint called', JSON.stringify({body:ctx.request.body,redisHost:process.env.REDIS_HOST,redisPort:process.env.REDIS_PORT}));
+  // #endregion
   try {
     const { maxDeployed } = ctx.request.body as { maxDeployed: number };
     
@@ -598,10 +601,19 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
       return;
     }
     
+    // #region agent log
+    console.log('[DEBUG-E] validation passed', JSON.stringify({maxDeployed,hasRedisHost:!!process.env.REDIS_HOST,hasRedisPort:!!process.env.REDIS_PORT}));
+    // #endregion
+    
     // Create a separate Redis connection for admin operations
     if (!process.env.REDIS_HOST || !process.env.REDIS_PORT) {
       throw new Error('REDIS_HOST and REDIS_PORT environment variables are required');
     }
+    
+    // #region agent log
+    console.log('[DEBUG-A2] creating redis connection', JSON.stringify({host:process.env.REDIS_HOST,port:process.env.REDIS_PORT}));
+    // #endregion
+    
     const redis = new Redis({
       host: process.env.REDIS_HOST,
       port: parseInt(process.env.REDIS_PORT, 10),
@@ -609,11 +621,19 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
       maxRetriesPerRequest: 3,
     });
     
+    // #region agent log
+    console.log('[DEBUG-B] redis created, getting mongo client');
+    // #endregion
+    
     // Get total bots count
     const mongoClient = await getMongoClient();
     const db = mongoClient.db(DB_NAME);
     const bots = db.collection('bots');
     const totalBots = await bots.countDocuments({});
+    
+    // #region agent log
+    console.log('[DEBUG-C] mongo count done', JSON.stringify({totalBots,maxDeployed}));
+    // #endregion
     
     // Update rotation config
     await redis.hset(RedisKeys.botsRotationConfig, {
@@ -621,17 +641,28 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
       totalBots: totalBots.toString()
     });
     
+    // #region agent log
+    console.log('[DEBUG-D] hset done, publishing to channel');
+    // #endregion
+    
     // Notify bot service to update rotation
     await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ 
       type: 'rotateConfig', 
       maxDeployed 
     }));
     
+    // #region agent log
+    console.log('[DEBUG-SUCCESS] rotation config updated successfully');
+    // #endregion
+    
     ctx.body = {
       success: true,
       message: `Rotation config updated: maxDeployed = ${maxDeployed}`
     };
   } catch (error: any) {
+    // #region agent log
+    console.log('[DEBUG-ERROR] CAUGHT ERROR in rotation config', JSON.stringify({errorMessage:error?.message,errorStack:error?.stack,errorName:error?.name}));
+    // #endregion
     console.error('Error updating rotation config:', error);
     ctx.status = 500;
     ctx.body = { success: false, error: 'Failed to update rotation config' };
