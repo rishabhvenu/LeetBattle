@@ -966,6 +966,9 @@ export function generateBatchJavaRunner(
         sb.append("]");
         System.out.println(sb.toString());
       }`;
+    } else if (javaReturnType.includes('[][]')) {
+      // Handle 2D arrays - need deepToString for proper serialization
+      outputCode = `System.out.println("Test ${index}: " + java.util.Arrays.deepToString(result${index}));`;
     } else if (javaReturnType.includes('[]')) {
       outputCode = `System.out.println("Test ${index}: " + java.util.Arrays.toString(result${index}));`;
     } else {
@@ -1023,6 +1026,8 @@ export function generateBatchCppRunner(
     const typeMap: Record<string, string> = {
       'int[]': 'vector<int>',
       'string[]': 'vector<string>',
+      'int[][]': 'vector<vector<int>>',
+      'string[][]': 'vector<vector<string>>',
       'int': 'int',
       'string': 'string',
       'boolean': 'bool',
