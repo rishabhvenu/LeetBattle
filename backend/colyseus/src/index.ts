@@ -589,9 +589,6 @@ router.post('/guest/match/claim', async (ctx) => {
 
 // Bot rotation endpoints
 router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) => {
-  // #region agent log
-  console.log('[DEBUG-A] rotation config endpoint called', JSON.stringify({body:ctx.request.body}));
-  // #endregion
   try {
     const { maxDeployed } = ctx.request.body as { maxDeployed: number };
     
@@ -601,19 +598,8 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
       return;
     }
     
-    // #region agent log
-    console.log('[DEBUG-E] validation passed', JSON.stringify({maxDeployed}));
-    // #endregion
-    
-    // Use the cluster-aware Redis connection instead of standalone
-    // #region agent log
-    console.log('[DEBUG-FIX] using getRedis() cluster-aware connection');
-    // #endregion
+    // Use the cluster-aware Redis connection
     const redis = getRedis();
-    
-    // #region agent log
-    console.log('[DEBUG-B] redis obtained, getting mongo client');
-    // #endregion
     
     // Get total bots count
     const mongoClient = await getMongoClient();
@@ -621,19 +607,11 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
     const bots = db.collection('bots');
     const totalBots = await bots.countDocuments({});
     
-    // #region agent log
-    console.log('[DEBUG-C] mongo count done', JSON.stringify({totalBots,maxDeployed}));
-    // #endregion
-    
     // Update rotation config
     await redis.hset(RedisKeys.botsRotationConfig, {
       maxDeployed: maxDeployed.toString(),
       totalBots: totalBots.toString()
     });
-    
-    // #region agent log
-    console.log('[DEBUG-D] hset done, publishing to channel');
-    // #endregion
     
     // Notify bot service to update rotation
     await redis.publish(RedisKeys.botsCommandsChannel, JSON.stringify({ 
@@ -641,18 +619,11 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
       maxDeployed 
     }));
     
-    // #region agent log
-    console.log('[DEBUG-SUCCESS] rotation config updated successfully');
-    // #endregion
-    
     ctx.body = {
       success: true,
       message: `Rotation config updated: maxDeployed = ${maxDeployed}`
     };
   } catch (error: any) {
-    // #region agent log
-    console.log('[DEBUG-ERROR] CAUGHT ERROR in rotation config', JSON.stringify({errorMessage:error?.message,errorStack:error?.stack,errorName:error?.name}));
-    // #endregion
     console.error('Error updating rotation config:', error);
     ctx.status = 500;
     ctx.body = { success: false, error: 'Failed to update rotation config' };
