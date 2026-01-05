@@ -489,9 +489,21 @@ export function generateCppRunner(
 ): string {
   const { functionName, parameters, returnType } = signature;
   
-  // Check if we need helper functions for complex data types
-  const needsHelpers = hasComplexDataTypes(signature);
-  const helpers = needsHelpers ? getHelpersForLanguage('cpp') : '';
+  // Check if we need helper functions for complex data types OR boolean serialization
+  const needsComplexHelpers = hasComplexDataTypes(signature);
+  const needsBoolHelper = returnType.toLowerCase() === 'boolean' || returnType === 'bool';
+  
+  // If we only need bool serialization, add just the serializeBool function
+  // If we need complex helpers, include all helpers (which includes serializeBool)
+  let helpers = '';
+  if (needsComplexHelpers) {
+    helpers = getHelpersForLanguage('cpp');
+  } else if (needsBoolHelper) {
+    helpers = `std::string serializeBool(bool value) {
+    return value ? "true" : "false";
+}
+`;
+  }
   
   // Map type names to C++ types
   const mapType = (type: string): string => {
@@ -989,9 +1001,21 @@ export function generateBatchCppRunner(
 ): string {
   const { functionName, parameters, returnType } = signature;
   
-  // Check if we need helper functions for complex data types
-  const needsHelpers = hasComplexDataTypes(signature);
-  const helpers = needsHelpers ? getHelpersForLanguage('cpp') : '';
+  // Check if we need helper functions for complex data types OR boolean serialization
+  const needsComplexHelpers = hasComplexDataTypes(signature);
+  const needsBoolHelper = returnType.toLowerCase() === 'boolean' || returnType === 'bool';
+  
+  // If we only need bool serialization, add just the serializeBool function
+  // If we need complex helpers, include all helpers (which includes serializeBool)
+  let helpers = '';
+  if (needsComplexHelpers) {
+    helpers = getHelpersForLanguage('cpp');
+  } else if (needsBoolHelper) {
+    helpers = `std::string serializeBool(bool value) {
+    return value ? "true" : "false";
+}
+`;
+  }
   
   // Map return type to C++ type
   const mapReturnType = (type: string): string => {
