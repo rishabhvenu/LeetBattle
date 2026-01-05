@@ -590,7 +590,7 @@ router.post('/guest/match/claim', async (ctx) => {
 // Bot rotation endpoints
 router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) => {
   // #region agent log
-  console.log('[DEBUG-A] rotation config endpoint called', JSON.stringify({body:ctx.request.body,redisHost:process.env.REDIS_HOST,redisPort:process.env.REDIS_PORT}));
+  console.log('[DEBUG-A] rotation config endpoint called', JSON.stringify({body:ctx.request.body}));
   // #endregion
   try {
     const { maxDeployed } = ctx.request.body as { maxDeployed: number };
@@ -602,27 +602,17 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
     }
     
     // #region agent log
-    console.log('[DEBUG-E] validation passed', JSON.stringify({maxDeployed,hasRedisHost:!!process.env.REDIS_HOST,hasRedisPort:!!process.env.REDIS_PORT}));
+    console.log('[DEBUG-E] validation passed', JSON.stringify({maxDeployed}));
     // #endregion
     
-    // Create a separate Redis connection for admin operations
-    if (!process.env.REDIS_HOST || !process.env.REDIS_PORT) {
-      throw new Error('REDIS_HOST and REDIS_PORT environment variables are required');
-    }
-    
+    // Use the cluster-aware Redis connection instead of standalone
     // #region agent log
-    console.log('[DEBUG-A2] creating redis connection', JSON.stringify({host:process.env.REDIS_HOST,port:process.env.REDIS_PORT}));
+    console.log('[DEBUG-FIX] using getRedis() cluster-aware connection');
     // #endregion
-    
-    const redis = new Redis({
-      host: process.env.REDIS_HOST,
-      port: parseInt(process.env.REDIS_PORT, 10),
-      password: process.env.REDIS_PASSWORD,
-      maxRetriesPerRequest: 3,
-    });
+    const redis = getRedis();
     
     // #region agent log
-    console.log('[DEBUG-B] redis created, getting mongo client');
+    console.log('[DEBUG-B] redis obtained, getting mongo client');
     // #endregion
     
     // Get total bots count
