@@ -112,7 +112,8 @@ async function handleRotationConfigChange(newMaxDeployed) {
   try {
     console.log(`Updating rotation config: maxDeployed = ${newMaxDeployed}`);
     
-    // Update config in Redis
+    // Update config in Redis - use minDeployed to match what deployment logic reads
+    await redis.hset('bots:rotation:config', 'minDeployed', newMaxDeployed.toString());
     await redis.hset('bots:rotation:config', 'maxDeployed', newMaxDeployed.toString());
     
     // Get current deployed count

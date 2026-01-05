@@ -607,8 +607,9 @@ router.post('/admin/bots/rotation/config', adminAuthMiddleware(), async (ctx) =>
     const bots = db.collection('bots');
     const totalBots = await bots.countDocuments({});
     
-    // Update rotation config
+    // Update rotation config - use minDeployed to match what bots service reads
     await redis.hset(RedisKeys.botsRotationConfig, {
+      minDeployed: maxDeployed.toString(),
       maxDeployed: maxDeployed.toString(),
       totalBots: totalBots.toString()
     });
