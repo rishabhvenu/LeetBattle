@@ -22,7 +22,7 @@ if [ -f "index.new.js" ]; then
   echo "  ✓ Bot service using refactored modules"
 fi
 cd ../..
-docker build -t codeclashers-bots:dev ./backend/bots 2>&1 | tail -5
+docker build -f backend/bots/Dockerfile -t codeclashers-bots:dev ./backend 2>&1 | tail -5
 
 echo "✓ Docker images built"
 echo ""

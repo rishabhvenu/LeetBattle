@@ -27,7 +27,7 @@ fi
 echo ""
 echo "📦 Building Bots..."
 if [ -f "backend/bots/Dockerfile" ]; then
-    docker build -t "$BOTS_IMAGE" ./backend/bots
+    docker build -f backend/bots/Dockerfile -t "$BOTS_IMAGE" ./backend
     echo "   ✅ Built: $BOTS_IMAGE"
 else
     echo "   ⚠️  Skipping: backend/bots/Dockerfile not found"

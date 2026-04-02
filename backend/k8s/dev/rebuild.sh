@@ -43,7 +43,7 @@ echo ""
 # Build Bots
 if [ -f "backend/bots/Dockerfile" ]; then
   echo -e "${GREEN}Building Bots...${NC}"
-  docker build -t codeclashers-bots:dev ./backend/bots
+  docker build -f backend/bots/Dockerfile -t codeclashers-bots:dev ./backend
   echo -e "${GREEN}✅ Bots image built${NC}"
 else
   echo -e "${YELLOW}⚠️  Bots Dockerfile not found, skipping...${NC}"

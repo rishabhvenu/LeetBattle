@@ -126,10 +126,13 @@ function loadRedisScripts(redisClient) {
   const fs = require('fs');
   const path = require('path');
   try {
-    const matchBotLua = fs.readFileSync(
-      path.join(__dirname, '../colyseus/src/lib/redis-scripts/matchBot.lua'),
-      'utf8'
+    const bundledLua = path.join(__dirname, 'redis-scripts/matchBot.lua');
+    const colyseusLua = path.join(
+      __dirname,
+      '../../colyseus/src/lib/redis-scripts/matchBot.lua'
     );
+    const matchBotLuaPath = fs.existsSync(bundledLua) ? bundledLua : colyseusLua;
+    const matchBotLua = fs.readFileSync(matchBotLuaPath, 'utf8');
     redisClient.defineCommand('matchBot', {
       numberOfKeys: 1,
       lua: matchBotLua,

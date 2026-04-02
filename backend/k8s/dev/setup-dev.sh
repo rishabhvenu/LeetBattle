@@ -49,7 +49,7 @@ if [ "${BUILD_IMAGES:-true}" = "true" ]; then
   # Build Bots
   if [ -f "backend/bots/Dockerfile" ]; then
     echo "  Building Bots..."
-    docker build -t codeclashers-bots:dev ./backend/bots
+    docker build -f backend/bots/Dockerfile -t codeclashers-bots:dev ./backend
   fi
 fi
 
