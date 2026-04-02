@@ -20,7 +20,7 @@ images:
   - name: ghcr.io/rishabhvenu/codeclashers-colyseus
     newTag: latest
   - name: ghcr.io/rishabhvenu/codeclashers-bots
-    newTag: latest
+    newTag: e6276e2
   - name: ghcr.io/rishabhvenu/codeclashers-judge0-api-arm64
     newTag: latest
   - name: ghcr.io/rishabhvenu/codeclashers-judge0-worker-arm64
