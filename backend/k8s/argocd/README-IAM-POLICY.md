@@ -106,5 +106,5 @@ The secret doesn't exist in Secrets Manager.
 
 - [AWS Secrets Manager](https://docs.aws.amazon.com/secretsmanager/)
 - [GitHub Actions OIDC](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
-- [Migration Plan](../../context/backend/environment-variables.md)
+- [Migration Plan](../../docs/backend/environment-variables.md)
 

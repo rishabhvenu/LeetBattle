@@ -1,4 +1,4 @@
-# Backend Context Overview
+# Backend docs
 
 Index for backend documentation covering deployment, development, and architecture.
 
@@ -11,7 +11,6 @@ Index for backend documentation covering deployment, development, and architectu
 | `deployment.md` | Complete deployment guide for Kubernetes (k3s) on Oracle Cloud VM |
 | `local-development.md` | Local dev environment setup with Docker Desktop or k3s |
 | `environment-variables.md` | All environment variables for frontend and backend services |
-| `refactoring-plans.md` | Planned refactoring for large "god files" (index.ts, MatchRoom, etc.) |
 
 ---
 
@@ -32,7 +31,7 @@ Index for backend documentation covering deployment, development, and architectu
 
 | Document | Description |
 |----------|-------------|
-| `README-JUDGE0-LIMITATION.md` | ARM64 limitations and mitigation options for Judge0 |
+| `judge0-arm64.md` | ARM64 limitations and mitigation options for Judge0 |
 
 ---
 
@@ -45,25 +44,6 @@ The backend uses atomic operations to prevent race conditions:
 3. **Leadership Election** - Atomic `SET NX` with proper error handling
 4. **Circuit Breaker** - Protects Judge0 from overload with state machine
 5. **Submission Queue** - Rate limiting and backpressure for Judge0 submissions
-
----
-
-## Modular Architecture
-
-**Bot Service** (`backend/bots/`):
-- Split from 1,264-line monolith into focused modules:
-  - `index.js` (~200 lines) - Orchestration
-  - `lib/config.js` - Configuration & validation
-  - `lib/leaderElection.js` - Leadership with error handling
-  - `lib/matchmaking.js` - Bot deployment & rotation
-  - `lib/apiClient.js` - HTTP client for Colyseus
-  - `lib/queueCleanup.js` - Queue cleanup utilities
-
-**Frontend Actions** (completed):
-- See `../frontend/refactoring-complete.md` for the completed actions module refactoring
-
-**Remaining Refactoring** (planned):
-- See `refactoring-plans.md` for index.ts, MatchRoom.ts, codeRunner.ts, QueueRoom.ts
 
 ---
 

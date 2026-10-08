@@ -67,13 +67,13 @@ Judge0 server/worker deployments.
   ```bash
   kubectl delete pod -n codeclashers-dev -l app=judge0-worker
   ```
-- For ARM64 limitations see `context/backend/README-JUDGE0-LIMITATION.md`
+- For ARM64 limitations see `docs/backend/judge0-arm64.md`
 
 ## Related Files
 
 - `backend/colyseus/src/lib/judge0.ts`
 - `backend/k8s/deployments/judge0-server.yaml`
 - `backend/k8s/deployments/judge0-worker.yaml`
-- `context/backend/README-PROD.md`
+- `docs/backend/deployment.md`
 
 

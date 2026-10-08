@@ -1,4 +1,4 @@
-# Frontend Context Overview
+# Frontend docs
 
 Index for frontend documentation covering the Next.js application and infrastructure.
 
@@ -11,7 +11,6 @@ Index for frontend documentation covering the Next.js application and infrastruc
 | `app-architecture.md` | High-level map of the Next.js app structure and rendering strategy |
 | `api-integration.md` | REST endpoints, server actions, and environment variables |
 | `match-experience.md` | Queue through post-match UI flow, Colyseus WebSocket lifecycle |
-| `refactoring-complete.md` | Completed actions module refactoring (4,693 lines → modular) |
 
 ---
 
@@ -62,7 +61,7 @@ client/src/
 - **REST endpoints** defined in `constants/RestEndpoints.tsx`
 - **Server actions** in `lib/actions/` (modular structure)
 - **Colyseus WebSocket** lives in match components (`MatchClient.tsx`)
-- **Session handling** via NextAuth middleware
+- **Session handling** via a session cookie backed by a MongoDB `sessions` collection
 
 ### Key Technologies
 
@@ -73,9 +72,7 @@ client/src/
 
 ---
 
-## Refactored Actions Structure
-
-The monolithic `actions.ts` has been split into focused modules:
+## Server actions
 
 | Module | Purpose |
 |--------|---------|
@@ -88,4 +85,4 @@ The monolithic `actions.ts` has been split into focused modules:
 | `actions/admin.ts` | Admin functions (user management) |
 | `actions/matchHistory.ts` | Match history retrieval |
 
-All existing imports continue to work via re-exports in `actions/index.ts`.
+`actions/index.ts` re-exports every module.

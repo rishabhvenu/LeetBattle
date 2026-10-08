@@ -174,7 +174,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.pas
 
 ## Documentation
 
-For complete documentation, see: [`context/backend/argocd.md`](../../../context/backend/argocd.md)
+For complete documentation, see: [`docs/backend/argocd.md`](../../../docs/backend/argocd.md)
 
 ## Uninstall
 

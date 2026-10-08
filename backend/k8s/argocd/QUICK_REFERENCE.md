@@ -138,7 +138,7 @@ kubectl logs -n argocd deployment/argocd-image-updater --tail=20
 
 ## Documentation
 
-- **Full Guide**: `context/backend/argocd.md`
+- **Full Guide**: `docs/backend/argocd.md`
 - **Quick Start**: `backend/k8s/argocd/README.md`
 - **Summary**: `ARGOCD_IMPLEMENTATION_SUMMARY.md`
 

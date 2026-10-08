@@ -46,7 +46,7 @@ to Colyseus, renders state transitions, and handles guest/user divergence.
 - **Queue stuck:** Inspect action return values, verify `queued` and
   `already_in_match` events handled in `MatchQueue`
 - **Judge0 result missing:** Confirm server action resolved; inspect backend
-  `MatchRoom` logs and see `context/backend/judge0-runbook.md`
+  `MatchRoom` logs and see `docs/backend/judge0-runbook.md`
 - **Guest flow loops:** Validate cookies and session fallback in
   `middleware.ts`
 
@@ -59,8 +59,8 @@ to Colyseus, renders state transitions, and handles guest/user divergence.
 
 ## Related Docs
 
-- `context/frontend/app-architecture.md`
-- `context/backend/matchmaking-flow.md`
-- `context/backend/judge0-runbook.md`
+- `docs/frontend/app-architecture.md`
+- `docs/backend/matchmaking-flow.md`
+- `docs/backend/judge0-runbook.md`
 
 

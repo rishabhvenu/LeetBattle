@@ -280,7 +280,7 @@ export AWS_REGION=us-east-1
 ## Related Documentation
 
 - [IAM Policy Setup](../../backend/k8s/argocd/README-IAM-POLICY.md)
-- [Environment Variables Reference](../../context/backend/environment-variables.md)
+- [Environment Variables Reference](../../docs/backend/environment-variables.md)
 - [AWS Secrets Manager Docs](https://docs.aws.amazon.com/secretsmanager/)
 - [GitHub OIDC Docs](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)
 

@@ -107,7 +107,7 @@ The bot service is now split into focused modules:
 
 **Emergency bots missing**
 - Confirm Colyseus published `playerQueued` commands; see
-  `context/backend/matchmaking-flow.md`
+  `docs/backend/matchmaking-flow.md`
 - Check `bots:nudges` subscription logs
 
 ## Helpful Commands
@@ -128,8 +128,8 @@ node backend/bots/lib/queueCleanup.js --force
 
 ## Related Docs
 
-- `context/backend/matchmaking-flow.md`
-- `context/backend/judge0-runbook.md`
+- `docs/backend/matchmaking-flow.md`
+- `docs/backend/judge0-runbook.md`
 - `backend/bots/__tests__/queueCleanup.test.js`
 
 

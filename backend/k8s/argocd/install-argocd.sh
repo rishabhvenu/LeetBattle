@@ -81,7 +81,7 @@ echo ""
 echo "5. Monitor the deployment:"
 echo "   kubectl get application -n argocd -w"
 echo ""
-echo "For detailed instructions, see: context/backend/argocd.md"
+echo "For detailed instructions, see: docs/backend/argocd.md"
 echo ""
 
 

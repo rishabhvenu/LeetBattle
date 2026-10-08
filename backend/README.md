@@ -61,8 +61,8 @@ kubectl apply -k .
 - **Redis** - 6-node cluster in Kubernetes
 - **AWS S3** - Avatar storage (no MinIO in production)
 
-**See:** [`Production Setup`](../context/backend/README-PROD.md) for the complete deployment guide, plus
-[`deployment runbook`](../context/backend/deployment-runbook.md) for pipeline details.
+**See:** [`Production Setup`](../docs/backend/deployment.md) for the complete deployment guide, plus
+[`deployment runbook`](../docs/backend/deployment.md) for pipeline details.
 
 **Note:** `docker-compose.yml` is deprecated. Use Kubernetes for both development and production.
 
@@ -154,7 +154,7 @@ colyseus/
 └── package.json
 ```
 
-**Matchmaking Flow:** (Full detail in [`context/backend/matchmaking-flow.md`](../context/backend/matchmaking-flow.md))
+**Matchmaking Flow:** (Full detail in [`docs/backend/matchmaking-flow.md`](../docs/backend/matchmaking-flow.md))
 1. Players join queue via `/queue/enqueue` (adds to Redis sorted set)
 2. Background matchmaker polls every 1 second
 3. **Dynamic ELO-based pairing** with progressive threshold expansion (±50 to ±250 based on wait time)
@@ -170,7 +170,7 @@ colyseus/
 4. Creator starts match when ready
 5. Match transitions to competitive match with same rules
 
-**Guest Mode Flow:** (See [`context/frontend/match-experience.md`](../context/frontend/match-experience.md) for UI)
+**Guest Mode Flow:** (See [`docs/frontend/match-experience.md`](../docs/frontend/match-experience.md) for UI)
 1. Unauthenticated player starts a guest session (7-day cookie)
 2. Guest automatically matched with bot opponent
 3. Guest completes match

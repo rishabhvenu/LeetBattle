@@ -83,6 +83,6 @@ Every 5 seconds `runMatchmakingCycle()` does:
 
 - `backend/colyseus/src/lib/matchCreation.ts` – actual match creation workflow
 - `backend/bots/index.js` – bot service that responds to queue commands
-- `context/backend/bot-lifecycle.md` – deeper dive on bot orchestration
+- `docs/backend/bot-lifecycle.md` – deeper dive on bot orchestration
 
 

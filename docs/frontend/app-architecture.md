@@ -25,7 +25,7 @@ client/
 │   ├── types/                    # Type declarations
 │   └── middleware.ts             # Auth + routing guards
 ├── public/                       # Static assets (logo, audio cues)
-└── infra/                        # CDK infrastructure (see context/frontend/infra)
+└── infra/                        # CDK infrastructure (see docs/frontend/infra)
 ```
 
 ## Rendering Strategy
@@ -60,9 +60,9 @@ client/
 
 ## Related Docs
 
-- `context/frontend/overview.md`
-- `context/frontend/match-experience.md`
-- `context/frontend/api-integration.md`
+- `docs/frontend/overview.md`
+- `docs/frontend/match-experience.md`
+- `docs/frontend/api-integration.md`
 - `README.md` (root project overview)
 
 

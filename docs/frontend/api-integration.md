@@ -11,7 +11,7 @@ endpoints, server actions, and environment variables.
 - `MONGODB_URI`, `REDIS_HOST`, `REDIS_PORT` – used server-side for actions
 - `NEXTAUTH_URL`, `NEXTAUTH_SECRET` – authentication callbacks
 
-Refer to `context/backend/ENV_VAR_AUDIT.md` for full inventory.
+Refer to `docs/backend/environment-variables.md` for full inventory.
 
 ## REST Endpoints
 
@@ -56,9 +56,9 @@ errors if missing.
 
 ## Related Docs
 
-- `context/frontend/app-architecture.md`
-- `context/frontend/match-experience.md`
-- `context/backend/matchmaking-flow.md`
-- `context/backend/deployment-runbook.md`
+- `docs/frontend/app-architecture.md`
+- `docs/frontend/match-experience.md`
+- `docs/backend/matchmaking-flow.md`
+- `docs/backend/deployment.md`
 
 
